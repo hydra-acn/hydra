@@ -1,0 +1,4 @@
+nmap <F9> :up<CR>:call VimuxRunCommand("clear; cargo build --release")<CR>
+nmap <F10> :up<CR>:call VimuxRunCommand("clear; cargo build")<CR>
+nmap <F11> :up<CR>:call VimuxRunCommand("clear; cargo test")<CR>
+

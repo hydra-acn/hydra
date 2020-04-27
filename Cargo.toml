@@ -1,0 +1,14 @@
+[package]
+name = "hydra"
+version = "0.1.0"
+authors = ["David Schatz <david.schatz@tu-ilmenau.de>"]
+edition = "2018"
+
+[dependencies]
+openssl-sys = "^0.9"
+openssl = "^0.10"
+hex = "^0.4"
+
+[build-dependencies]
+cc = "*"
+pkg-config = "*"
