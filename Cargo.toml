@@ -12,6 +12,5 @@ tonic = "^0.2"
 prost = "^0.6"
 
 [build-dependencies]
-cc = "*"
-pkg-config = "*"
+cmake = "^0.1"
 tonic-build = "^0.2"
