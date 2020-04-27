@@ -21,4 +21,6 @@ fn main() {
     x448_build.compile("x448");
 
     println!("cargo:rustc-link-lib=crypto");
+
+    tonic_build::compile_protos("protobuf/directory.proto").expect("Failed to generate gRPC");
 }

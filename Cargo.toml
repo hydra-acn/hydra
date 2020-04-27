@@ -8,7 +8,10 @@ edition = "2018"
 openssl-sys = "^0.9"
 openssl = "^0.10"
 hex = "^0.4"
+tonic = "^0.2"
+prost = "^0.6"
 
 [build-dependencies]
 cc = "*"
 pkg-config = "*"
+tonic-build = "^0.2"
