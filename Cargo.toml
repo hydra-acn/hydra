@@ -10,6 +10,8 @@ openssl = "^0.10"
 hex = "^0.4"
 tonic = "^0.2"
 prost = "^0.6"
+tokio = { version = "^0.2", features = ["macros", "rt-threaded"] }
+log = "^0.4"
 
 [build-dependencies]
 cmake = "^0.1"

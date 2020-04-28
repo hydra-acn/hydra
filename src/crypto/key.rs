@@ -32,7 +32,7 @@ impl Key {
 
     /// generate key from hex string
     /// TODO not safe yet (the string itself will not be overriden)
-    pub fn from_hex_str(hex: String) -> Result<Self, Error> {
+    pub fn from_hex_str(hex: &str) -> Result<Self, Error> {
         match hex::decode(&hex) {
             Ok(vec) => Ok(Key { key: vec }),
             Err(e) => return Err(Error::InputError(e.to_string())),
@@ -44,8 +44,14 @@ impl Key {
         &(self.key[0]) as *const u8
     }
 
+    /// return size bytes
     pub fn size(&self) -> usize {
         self.key.len()
+    }
+
+    /// TODO only for public keys
+    pub fn clone_to_vec(&self) -> Vec<u8> {
+        self.key.clone()
     }
 }
 
