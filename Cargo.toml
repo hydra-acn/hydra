@@ -11,7 +11,9 @@ hex = "^0.4"
 tonic = "^0.2"
 prost = "^0.6"
 tokio = { version = "^0.2", features = ["macros", "rt-threaded"] }
+async-stream = "^0.2"
 futures-core = "^0.3"
+futures-util = "^0.3"
 log = "^0.4"
 
 [build-dependencies]

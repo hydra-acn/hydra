@@ -1,4 +1,5 @@
 use futures_core::stream::Stream;
+use futures_util::StreamExt;
 use hydra::crypto::key::Key;
 use hydra::crypto::x448;
 use hydra::directory_grpc::*;
@@ -13,7 +14,7 @@ use tonic::{transport::Server, Code, Request, Response, Status};
 pub struct Service {
     mix_map: Mutex<HashMap<String, MixInfo>>,
     _current_epoch_no: Mutex<u32>,
-    _next_free_epoch_no: Mutex<u32>,
+    next_free_epoch_no: Mutex<u32>,
 }
 
 #[tonic::async_trait]
@@ -58,14 +59,41 @@ impl directory_server::Directory for Service {
         Ok(Response::new(reply))
     }
 
-    type AddStaticDhStream =
-        Pin<Box<dyn Stream<Item = Result<DhReply, Status>> + Send + Sync + 'static>>;
+    async fn add_static_dh(&self, req: Request<DhMessage>) -> Result<Response<DhReply>, Status> {
+        let msg = req.into_inner();
+        let fingerprint = msg.fingerprint.clone();
 
-    async fn add_static_dh(
-        &self,
-        _req: Request<tonic::Streaming<DhMessage>>,
-    ) -> Result<Response<Self::AddStaticDhStream>, Status> {
-        unimplemented!();
+        let mut epoch_no = 0;
+        let pk = Key::move_from_vec(msg.public_dh);
+        {
+            let mut mix_map =
+                unwrap_to_internal_err(self.mix_map.lock(), "Could not acquire a lock")?;
+
+            let existence_result = match mix_map.contains_key(&fingerprint) {
+                true => Ok(()),
+                false => Err(()),
+            };
+            unwrap_to_invalid_req(existence_result, "Not registered");
+            let mix_info = mix_map
+                .get_mut(&fingerprint)
+                .expect("Checked existance before");
+
+            {
+                let next_free_epoch_no = unwrap_to_internal_err(
+                    self.next_free_epoch_no.lock(),
+                    "Could not acquire a lock",
+                )?;
+                epoch_no = *next_free_epoch_no + (mix_info.dh_queue.len() as u32);
+            }
+            mix_info.dh_queue.push_back(pk);
+        }
+
+        let reply = DhReply {
+            counter: msg.counter,
+            epoch_no: epoch_no,
+        };
+
+        Ok(Response::new(reply))
     }
 
     type QueryDirectoryStream =
