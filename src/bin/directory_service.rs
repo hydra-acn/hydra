@@ -115,12 +115,8 @@ struct MixInfo {
 }
 
 fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), Status> {
-    let (pk, sk) = unwrap_to_internal_err(x448::generate_keypair(), "Failed to generate key pair")?;
-
-    let s = unwrap_to_internal_err(
-        x448::generate_shared_secret(&pk_mix, &sk),
-        "Failed to derive shared secret",
-    )?;
+    let (pk, sk) = x448::generate_keypair()?;
+    let s = x448::generate_shared_secret(&pk_mix, &sk)?;
     Ok((pk, s))
 }
 

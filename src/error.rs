@@ -1,6 +1,7 @@
 //! Hydra errors
 
 use std::fmt;
+use tonic;
 
 #[derive(Debug)]
 pub enum Error {
@@ -23,3 +24,10 @@ impl fmt::Display for Error {
         }
     }
 }
+
+impl std::convert::From<Error> for tonic::Status {
+    fn from(e: Error) -> Self {
+        tonic::Status::new(tonic::Code::Internal, e.to_string())
+    }
+}
+

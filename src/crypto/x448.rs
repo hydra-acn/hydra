@@ -6,10 +6,7 @@ use crate::error::Error;
 
 /// return Ok((pk, sk)) on success
 pub fn generate_keypair() -> Result<(Key, Key), Error> {
-    let sk = match Key::new(SCALAR_SIZE) {
-        Ok(k) => k,
-        Err(e) => return Err(e),
-    };
+    let sk = Key::new(SCALAR_SIZE)?;
     let mut pk_vec = vec![0u8; POINT_SIZE];
     unsafe {
         x448_derive_public_key(&mut (pk_vec[0]) as *mut u8, sk.head_ptr());
