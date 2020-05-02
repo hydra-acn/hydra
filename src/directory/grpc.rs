@@ -1,18 +1,25 @@
-use crate::crypto::key::Key;
-use crate::directory_grpc::*;
 use futures_core::stream::Stream;
 use log::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
 
-use super::state::{key_exchange, MixInfo};
+use super::state::{key_exchange, MixInfo, State};
+use crate::crypto::key::Key;
+use crate::directory_grpc::*;
 
 pub struct Service {
-    mix_map: Mutex<HashMap<String, MixInfo>>,
-    _current_epoch_no: Mutex<u32>,
-    next_free_epoch_no: Mutex<u32>,
+    state: Arc<State>,
+}
+
+impl Deref for Service {
+    type Target = Arc<State>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
 }
 
 #[tonic::async_trait]

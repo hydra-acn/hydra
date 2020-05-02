@@ -1,7 +1,14 @@
 use crate::crypto::key::Key;
 use crate::crypto::x448;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::collections::VecDeque;
+use std::sync::Mutex;
+
+pub struct State {
+    pub mix_map: Mutex<HashMap<String, MixInfo>>,
+    pub current_epoch_no: Mutex<u32>,
+    pub next_free_epoch_no: Mutex<u32>,
+}
 
 pub struct MixInfo {
     pub fingerprint: String,
