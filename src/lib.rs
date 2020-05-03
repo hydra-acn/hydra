@@ -2,7 +2,7 @@ pub mod crypto;
 pub mod directory;
 pub mod error;
 
-mod directory_grpc {
+pub mod tonic_directory {
     tonic::include_proto!("directory");
 }
 

@@ -8,10 +8,16 @@ use tonic::{Code, Request, Response, Status};
 
 use super::state::{key_exchange, MixInfo, State};
 use crate::crypto::key::Key;
-use crate::directory_grpc::*;
+use crate::tonic_directory::*;
 
 pub struct Service {
     state: Arc<State>,
+}
+
+impl Service {
+    pub fn new(state: Arc<State>) -> Self {
+        Service { state: state }
+    }
 }
 
 impl Deref for Service {
