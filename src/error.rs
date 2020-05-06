@@ -11,6 +11,8 @@ pub enum Error {
     SizeMismatch(String),
     /// error due to wrong user input
     InputError(String),
+    /// something external went wrong
+    ExternalError(String),
 }
 
 impl std::error::Error for Error {}
@@ -21,6 +23,7 @@ impl fmt::Display for Error {
             Error::OpenSslError(msg) => write!(f, "OpenSSL error: {}", msg),
             Error::SizeMismatch(msg) => write!(f, "Size mismatch: {}", msg),
             Error::InputError(msg) => write!(f, "Input error: {}", msg),
+            Error::ExternalError(msg) => write!(f, "External error: {}", msg),
         }
     }
 }
@@ -30,4 +33,3 @@ impl std::convert::From<Error> for tonic::Status {
         tonic::Status::new(tonic::Code::Internal, e.to_string())
     }
 }
-

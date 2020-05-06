@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tonic::transport::Server;
 
 use hydra::directory::grpc::Service;
-use hydra::directory::state::State;
+use hydra::directory::state::{self, State};
 use hydra::tonic_directory::directory_server::DirectoryServer;
 
 #[tokio::main]
@@ -24,8 +24,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(DirectoryServer::new(service))
         .serve(local_addr);
 
-    let server_handle = tokio::spawn(server);
-    let _ = server_handle.await?;
+    let grpc_handle = tokio::spawn(server);
+    let update_handle = tokio::spawn(state::update_loop(state.clone()));
+
+    match tokio::try_join!(update_handle, grpc_handle) {
+        Ok(_) => (),
+        Err(e) => error!("Something failed: {}", e)
+    }
 
     info!("Stopping gracefully");
     Ok(())
