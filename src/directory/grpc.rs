@@ -28,6 +28,30 @@ impl Deref for Service {
     }
 }
 
+macro_rules! rethrow_as {
+    ($res:expr, $code:expr, $msg:expr) => {
+        match $res {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                warn!("{}: {:?}", $msg, e);
+                Err(Status::new($code, $msg))
+            }
+        }?
+    };
+}
+
+macro_rules! rethrow_as_internal {
+    ($res:expr, $msg:expr) => {
+        rethrow_as!($res, Code::Internal, $msg)
+    };
+}
+
+macro_rules! rethrow_as_invalid {
+    ($res:expr, $msg:expr) => {
+        rethrow_as!($res, Code::InvalidArgument, $msg)
+    };
+}
+
 #[tonic::async_trait]
 impl directory_server::Directory for Service {
     async fn register(
@@ -41,18 +65,18 @@ impl directory_server::Directory for Service {
         let fingerprint = msg.fingerprint;
         let socket_addr_str = format!("{}:{}", &msg.address, &msg.port);
         let socket_addr =
-            unwrap_to_invalid_req(socket_addr_str.parse(), "IP address or port invalid")?;
+            rethrow_as_invalid!(socket_addr_str.parse(), "IP address or port invalid");
 
         {
             let mut mix_map =
-                unwrap_to_internal_err(self.mix_map.lock(), "Could not acquire a lock")?;
+                rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
             // check if mix already exists
             let existence_result = match mix_map.contains_key(&fingerprint) {
                 false => Ok(()),
                 true => Err(()),
             };
-            unwrap_to_invalid_req(existence_result, "Alreadey registered")?;
+            rethrow_as_invalid!(existence_result, "Already registered");
 
             let mix = Mix {
                 fingerprint: fingerprint.clone(),
@@ -79,22 +103,22 @@ impl directory_server::Directory for Service {
         let pk = Key::move_from_vec(msg.public_dh);
         {
             let mut mix_map =
-                unwrap_to_internal_err(self.mix_map.lock(), "Could not acquire a lock")?;
+                rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
             let existence_result = match mix_map.contains_key(&fingerprint) {
                 true => Ok(()),
                 false => Err(()),
             };
-            unwrap_to_invalid_req(existence_result, "Not registered")?;
+            rethrow_as_invalid!(existence_result, "Not registered");
             let mix = mix_map
                 .get_mut(&fingerprint)
                 .expect("Checked existance before");
 
             {
-                let next_free_epoch_no = unwrap_to_internal_err(
+                let next_free_epoch_no = rethrow_as_internal!(
                     self.next_free_epoch_no.lock(),
-                    "Could not acquire a lock",
-                )?;
+                    "Could not acquire a lock"
+                );
                 epoch_no = *next_free_epoch_no + (mix.dh_queue.len() as u32);
             }
             mix.dh_queue.push_back(pk);
@@ -117,32 +141,5 @@ impl directory_server::Directory for Service {
         _req: Request<DirectoryRequest>,
     ) -> Result<Response<Self::QueryDirectoryStream>, Status> {
         unimplemented!();
-    }
-}
-
-// TODO avoid code duplication?
-fn unwrap_to_invalid_req<S, T>(res: Result<S, T>, msg: &str) -> Result<S, Status>
-where
-    T: std::fmt::Debug,
-{
-    match res {
-        Ok(r) => Ok(r),
-        Err(e) => {
-            warn!("{}: {:?}", msg, e);
-            Err(Status::new(Code::InvalidArgument, msg))
-        }
-    }
-}
-
-fn unwrap_to_internal_err<S, T>(res: Result<S, T>, msg: &str) -> Result<S, Status>
-where
-    T: std::fmt::Debug,
-{
-    match res {
-        Ok(r) => Ok(r),
-        Err(e) => {
-            error!("{}: {:?}", msg, e);
-            Err(Status::new(Code::Internal, msg))
-        }
     }
 }
