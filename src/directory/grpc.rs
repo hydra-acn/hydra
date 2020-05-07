@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
 
-use super::state::{key_exchange, MixInfo, State};
+use super::state::{key_exchange, Mix, State};
 use crate::crypto::key::Key;
 use crate::tonic_directory::*;
 
@@ -54,19 +54,20 @@ impl directory_server::Directory for Service {
             };
             unwrap_to_invalid_req(existence_result, "Alreadey registered")?;
 
-            let mix_info = MixInfo {
+            let mix = Mix {
                 fingerprint: fingerprint.clone(),
                 shared_key: s,
                 socket_addr: socket_addr,
                 dh_queue: VecDeque::new(),
             };
 
-            mix_map.insert(fingerprint.clone(), mix_info);
+            mix_map.insert(fingerprint.clone(), mix);
         }
 
         let reply = RegisterReply {
             public_dh: pk.clone_to_vec(),
         };
+        info!("Registered new mix: {}", &fingerprint);
         Ok(Response::new(reply))
     }
 
@@ -85,7 +86,7 @@ impl directory_server::Directory for Service {
                 false => Err(()),
             };
             unwrap_to_invalid_req(existence_result, "Not registered")?;
-            let mix_info = mix_map
+            let mix = mix_map
                 .get_mut(&fingerprint)
                 .expect("Checked existance before");
 
@@ -94,9 +95,9 @@ impl directory_server::Directory for Service {
                     self.next_free_epoch_no.lock(),
                     "Could not acquire a lock",
                 )?;
-                epoch_no = *next_free_epoch_no + (mix_info.dh_queue.len() as u32);
+                epoch_no = *next_free_epoch_no + (mix.dh_queue.len() as u32);
             }
-            mix_info.dh_queue.push_back(pk);
+            mix.dh_queue.push_back(pk);
         }
 
         let reply = DhReply {
@@ -104,11 +105,12 @@ impl directory_server::Directory for Service {
             epoch_no: epoch_no,
         };
 
+        info!("Added new public DH key for mix {}", &fingerprint);
         Ok(Response::new(reply))
     }
 
     type QueryDirectoryStream =
-        Pin<Box<dyn Stream<Item = Result<DirectoryReply, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<EpochInfo, Status>> + Send + Sync + 'static>>;
 
     async fn query_directory(
         &self,

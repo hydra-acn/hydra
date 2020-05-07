@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tonic::transport::Server;
 
 use hydra::directory::grpc::Service;
-use hydra::directory::state::{self, State};
+use hydra::directory::state::{self, State, Config};
 use hydra::tonic_directory::directory_server::DirectoryServer;
 
 #[tokio::main]
@@ -16,7 +16,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     info!("Starting directory service");
 
-    let state = Arc::new(State::new());
+    let path_length = 3u8;
+
+    let cfg = Config {
+        epochs_in_advance: 10,
+        path_length,
+        round_duration: 2 * (path_length + 1) - 1,
+        round_waiting: 12,
+    };
+    let state = Arc::new(State::new(cfg));
 
     let service = Service::new(state.clone());
     let local_addr = "127.0.0.1:4242".parse()?;
