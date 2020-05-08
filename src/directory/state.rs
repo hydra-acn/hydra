@@ -1,6 +1,6 @@
 use crate::crypto::key::Key;
 use crate::crypto::x448;
-use crate::epoch::{current_epoch_no, EpochNo, EPOCH_DURATION, MAX_EPOCH_NO};
+use crate::epoch::{current_epoch_no, EpochNo, COMMUNICATION_DURATION, MAX_EPOCH_NO};
 
 use crate::tonic_directory::{EpochInfo, MixInfo};
 use log::*;
@@ -80,11 +80,11 @@ fn update(state: Arc<State>, current_epoch_no: EpochNo) {
 
     // add new epoch information
     let mut epoch_no = current_epoch_no;
-    let mut setup_start_time = epoch_no as u64 * EPOCH_DURATION as u64;
-    let mut communication_start_time = setup_start_time + EPOCH_DURATION as u64;
+    let mut setup_start_time = epoch_no as u64 * COMMUNICATION_DURATION as u64;
+    let mut communication_start_time = setup_start_time + COMMUNICATION_DURATION as u64;
     let cfg = &state.config;
     let number_of_rounds =
-        (EPOCH_DURATION as u32) / (cfg.round_duration + cfg.round_waiting) as u32;
+        (COMMUNICATION_DURATION as u32) / (cfg.round_duration + cfg.round_waiting) as u32;
 
     while epoch_queue.len() < cfg.epochs_in_advance.into() {
         let mut mixes = Vec::new();
@@ -110,8 +110,8 @@ fn update(state: Arc<State>, current_epoch_no: EpochNo) {
             mixes,
         };
         epoch_no += 1;
-        setup_start_time += EPOCH_DURATION as u64;
-        communication_start_time += EPOCH_DURATION as u64;
+        setup_start_time += COMMUNICATION_DURATION as u64;
+        communication_start_time += COMMUNICATION_DURATION as u64;
         epoch_queue.push_back(epoch_info);
     }
 }
