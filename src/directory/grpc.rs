@@ -1,8 +1,6 @@
-use futures_core::stream::Stream;
 use log::*;
 use std::collections::VecDeque;
 use std::ops::Deref;
-use std::pin::Pin;
 use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
 
@@ -68,8 +66,7 @@ impl directory_server::Directory for Service {
             rethrow_as_invalid!(socket_addr_str.parse(), "IP address or port invalid");
 
         {
-            let mut mix_map =
-                rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
+            let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
             // check if mix already exists
             let existence_result = match mix_map.contains_key(&fingerprint) {
@@ -102,8 +99,7 @@ impl directory_server::Directory for Service {
         let epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
         {
-            let mut mix_map =
-                rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
+            let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
             let existence_result = match mix_map.contains_key(&fingerprint) {
                 true => Ok(()),
@@ -133,13 +129,19 @@ impl directory_server::Directory for Service {
         Ok(Response::new(reply))
     }
 
-    type QueryDirectoryStream =
-        Pin<Box<dyn Stream<Item = Result<EpochInfo, Status>> + Send + Sync + 'static>>;
-
     async fn query_directory(
         &self,
         _req: Request<DirectoryRequest>,
-    ) -> Result<Response<Self::QueryDirectoryStream>, Status> {
-        unimplemented!();
+    ) -> Result<Response<DirectoryReply>, Status> {
+        let epoch_queue = rethrow_as_internal!(self.epochs.read(), "Acquiring a lock failed");
+        let mut epoch_infos = Vec::new();
+        for epoch in epoch_queue.iter() {
+            epoch_infos.push(epoch.clone());
+        }
+
+        let reply = DirectoryReply {
+            epochs: epoch_infos,
+        };
+        Ok(Response::new(reply))
     }
 }

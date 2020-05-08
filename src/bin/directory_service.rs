@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         epochs_in_advance: 10,
         path_length,
         round_duration: 2 * (path_length + 1) - 1,
-        round_waiting: 12,
+        round_waiting: 13,
     };
     let state = Arc::new(State::new(cfg));
 
