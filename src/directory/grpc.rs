@@ -2,10 +2,12 @@ use log::*;
 use std::collections::VecDeque;
 use std::ops::Deref;
 use std::sync::Arc;
+use tonic::transport::Server;
 use tonic::{Code, Request, Response, Status};
 
 use super::state::{key_exchange, Mix, State};
 use crate::crypto::key::Key;
+use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
 
 pub struct Service {
@@ -24,6 +26,18 @@ impl Deref for Service {
     fn deref(&self) -> &Self::Target {
         &self.state
     }
+}
+
+pub fn spawn_service(
+    state: Arc<State>,
+    addr: std::net::SocketAddr,
+) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
+    let service = Service::new(state.clone());
+    let server = Server::builder()
+        .add_service(DirectoryServer::new(service))
+        .serve(addr);
+
+    tokio::spawn(server)
 }
 
 macro_rules! rethrow_as {
