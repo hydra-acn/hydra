@@ -37,6 +37,17 @@ pub struct Config {
     pub round_waiting: u8,
 }
 
+impl Config {
+    pub fn default() -> Self {
+        Config {
+            epochs_in_advance: 10,
+            path_length: 3,
+            round_duration: 7,
+            round_waiting: 13,
+        }
+    }
+}
+
 pub struct Mix {
     pub fingerprint: String,
     pub shared_key: Key,
