@@ -1,5 +1,4 @@
 use log::*;
-use simplelog::{LevelFilter, TermLogger, TerminalMode};
 use std::sync::Arc;
 
 use hydra::directory::grpc;
@@ -7,11 +6,7 @@ use hydra::directory::state::{self, State};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    TermLogger::init(
-        LevelFilter::Debug,
-        simplelog::Config::default(),
-        TerminalMode::Mixed,
-    )?;
+    hydra::log::init();
     info!("Starting directory service");
 
     let state = Arc::new(State::default());
