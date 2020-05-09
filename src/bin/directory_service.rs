@@ -3,7 +3,7 @@ use simplelog::{LevelFilter, TermLogger, TerminalMode};
 use std::sync::Arc;
 
 use hydra::directory::grpc;
-use hydra::directory::state::{self, Config, State};
+use hydra::directory::state::{self, State};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,8 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     info!("Starting directory service");
 
-    let cfg = Config::default();
-    let state = Arc::new(State::new(cfg));
+    let state = Arc::new(State::default());
 
     // TODO use real address
     let local_addr = "127.0.0.1:4242".parse()?;

@@ -28,6 +28,10 @@ impl State {
             epochs: RwLock::new(VecDeque::new()),
         }
     }
+
+    pub fn default() -> Self {
+        State::new(Config::default())
+    }
 }
 
 pub struct Config {
