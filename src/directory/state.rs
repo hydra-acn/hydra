@@ -125,7 +125,6 @@ pub async fn update_loop(state: Arc<State>) {
         state.update();
 
         // wait till next update
-        let timer = tokio::spawn(time::delay_for(Duration::from_secs(5)));
-        timer.await.expect("Waiting for timer failed");
+        time::delay_for(Duration::from_secs(5)).await;
     }
 }

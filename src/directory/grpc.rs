@@ -1,5 +1,7 @@
+use futures_util::future;
 use log::*;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::ops::Deref;
 use std::sync::Arc;
 use tonic::transport::Server;
@@ -32,12 +34,21 @@ pub fn spawn_service(
     state: Arc<State>,
     addr: std::net::SocketAddr,
 ) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
-    let service = Service::new(state.clone());
-    let server = Server::builder()
-        .add_service(DirectoryServer::new(service))
-        .serve(addr);
+    spawn_service_with_shutdown::<future::Ready<()>>(state.clone(), addr, None)
+}
 
-    tokio::spawn(server)
+pub fn spawn_service_with_shutdown<F: Future<Output = ()> + Send + 'static>(
+    state: Arc<State>,
+    addr: std::net::SocketAddr,
+    shutdown_signal: Option<F>,
+) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
+    let service = Service::new(state.clone());
+    let builder = Server::builder().add_service(DirectoryServer::new(service));
+
+    match shutdown_signal {
+        Some(s) => tokio::spawn(builder.serve_with_shutdown(addr, s)),
+        None => tokio::spawn(builder.serve(addr)),
+    }
 }
 
 macro_rules! rethrow_as {
