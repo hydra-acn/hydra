@@ -32,6 +32,61 @@ impl State {
     pub fn default() -> Self {
         State::new(Config::default())
     }
+
+    pub fn update(self: &Self) {
+        let current_epoch_no = current_epoch_no();
+        if current_epoch_no == MAX_EPOCH_NO {
+            panic!("End of time reached!");
+        }
+        info!("Updating epochs, current epoch is {}", current_epoch_no);
+        let mut epoch_queue = self.epochs.write().expect("Acquiring lock failed");
+
+        // clear old epoch information
+        while let Some(front) = epoch_queue.front() {
+            if front.epoch_no <= current_epoch_no {
+                epoch_queue.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        // add new epoch information
+        let mut epoch_no = current_epoch_no;
+        let mut setup_start_time = epoch_no as u64 * COMMUNICATION_DURATION as u64;
+        let mut communication_start_time = setup_start_time + COMMUNICATION_DURATION as u64;
+        let cfg = &self.config;
+        let number_of_rounds =
+            (COMMUNICATION_DURATION as u32) / (cfg.round_duration + cfg.round_waiting) as u32;
+
+        while epoch_queue.len() < cfg.epochs_in_advance.into() {
+            let mut mixes = Vec::new();
+            let mut mix_map = self.mix_map.lock().expect("Acquiring lock failed");
+            for (_, mix) in mix_map.iter_mut() {
+                if let Some(pk) = mix.dh_queue.pop_front() {
+                    let info = MixInfo {
+                        address: mix.socket_addr.ip().to_string(),
+                        port: mix.socket_addr.port() as u32,
+                        public_dh: pk.clone_to_vec(),
+                    };
+                    mixes.push(info);
+                } // else: the mix has no DH keys left
+            }
+            let epoch_info = EpochInfo {
+                epoch_no,
+                setup_start_time,
+                communication_start_time,
+                round_duration: cfg.round_duration.into(),
+                round_waiting: cfg.round_waiting.into(),
+                number_of_rounds,
+                path_length: cfg.path_length.into(),
+                mixes,
+            };
+            epoch_no += 1;
+            setup_start_time += COMMUNICATION_DURATION as u64;
+            communication_start_time += COMMUNICATION_DURATION as u64;
+            epoch_queue.push_back(epoch_info);
+        }
+    }
 }
 
 pub struct Config {
@@ -65,68 +120,12 @@ pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), tonic::Status> {
     Ok((pk, s))
 }
 
-pub async fn update_loop(state: Arc<State>) -> () {
+pub async fn update_loop(state: Arc<State>) {
     loop {
-        let current_epoch_no = current_epoch_no();
-        if current_epoch_no == MAX_EPOCH_NO {
-            warn!("End of time reached, stopping ...");
-            break;
-        }
-        update(state.clone(), current_epoch_no);
+        state.update();
 
         // wait till next update
         let timer = tokio::spawn(time::delay_for(Duration::from_secs(5)));
         timer.await.expect("Waiting for timer failed");
-    }
-}
-
-fn update(state: Arc<State>, current_epoch_no: EpochNo) {
-    info!("Updating epochs, current epoch is {}", current_epoch_no);
-    let mut epoch_queue = state.epochs.write().expect("Acquiring lock failed");
-
-    // clear old epoch information
-    while let Some(front) = epoch_queue.front() {
-        if front.epoch_no <= current_epoch_no {
-            epoch_queue.pop_front();
-        } else {
-            break;
-        }
-    }
-
-    // add new epoch information
-    let mut epoch_no = current_epoch_no;
-    let mut setup_start_time = epoch_no as u64 * COMMUNICATION_DURATION as u64;
-    let mut communication_start_time = setup_start_time + COMMUNICATION_DURATION as u64;
-    let cfg = &state.config;
-    let number_of_rounds =
-        (COMMUNICATION_DURATION as u32) / (cfg.round_duration + cfg.round_waiting) as u32;
-
-    while epoch_queue.len() < cfg.epochs_in_advance.into() {
-        let mut mixes = Vec::new();
-        let mut mix_map = state.mix_map.lock().expect("Acquiring lock failed");
-        for (_, mix) in mix_map.iter_mut() {
-            if let Some(pk) = mix.dh_queue.pop_front() {
-                let info = MixInfo {
-                    address: mix.socket_addr.ip().to_string(),
-                    port: mix.socket_addr.port() as u32,
-                    public_dh: pk.clone_to_vec(),
-                };
-                mixes.push(info);
-            } // else: the mix has no DH keys left
-        }
-        let epoch_info = EpochInfo {
-            epoch_no,
-            setup_start_time,
-            communication_start_time,
-            round_duration: cfg.round_duration.into(),
-            round_waiting: cfg.round_waiting.into(),
-            number_of_rounds,
-            path_length: cfg.path_length.into(),
-            mixes,
-        };
-        epoch_no += 1;
-        setup_start_time += COMMUNICATION_DURATION as u64;
-        communication_start_time += COMMUNICATION_DURATION as u64;
-        epoch_queue.push_back(epoch_info);
     }
 }
