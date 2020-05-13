@@ -1,7 +1,10 @@
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
 cargo test:
-    stage: test
-    only:
-        refs:
-            - master
+  stage: test
+  only:
+    refs:
+      - master
     script: cargo test
     timeout: 5m

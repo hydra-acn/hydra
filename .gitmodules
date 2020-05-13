@@ -1,6 +1,6 @@
 [submodule "protobuf"]
 	path = protobuf
-	url = https://telematik.prakinf.tu-ilmenau.de/gitlab/dschatz/hydra-grpc.git
+	url = ../hydra-grpc.git
 [submodule "include/x448"]
 	path = include/x448
-	url = https://telematik.prakinf.tu-ilmenau.de/gitlab/dschatz/x448.git
+	url = ../x448.git
