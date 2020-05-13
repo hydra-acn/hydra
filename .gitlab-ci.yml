@@ -1,6 +1,10 @@
 variables:
     GIT_SUBMODULE_STRATEGY: recursive
 
+cache:
+    paths:
+        - target/
+
 cargo test:
     stage: test
     only:
