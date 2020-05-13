@@ -33,6 +33,10 @@ impl State {
         State::new(Config::default())
     }
 
+    pub fn config(self: &Self) -> &Config {
+        &self.config
+    }
+
     pub fn update(self: &Self) {
         let current_epoch_no = current_epoch_no();
         if current_epoch_no == MAX_EPOCH_NO {

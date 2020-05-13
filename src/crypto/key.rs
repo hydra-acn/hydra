@@ -53,6 +53,11 @@ impl Key {
     pub fn clone_to_vec(&self) -> Vec<u8> {
         self.key.clone()
     }
+
+    /// TODO only for public keys
+    pub fn borrow_vec(&self) -> &[u8] {
+        &self.key
+    }
 }
 
 impl Drop for Key {
