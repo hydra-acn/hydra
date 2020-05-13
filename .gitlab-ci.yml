@@ -5,10 +5,14 @@ cache:
     paths:
         - target/
 
-cargo test:
+coverage:
     stage: test
     only:
         refs:
             - master
-    script: cargo test
+    script: cargo tarpaulin --exclude-files "include/*" --exclude-files "tests/*" -o Html
+    artifacts:
+        expire_in: 8 weeks
+        paths:
+            - tarpaulin-report.html
     timeout: 5m
