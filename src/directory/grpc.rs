@@ -156,12 +156,15 @@ impl directory_server::Directory for Service {
 
     async fn query_directory(
         &self,
-        _req: Request<DirectoryRequest>,
+        req: Request<DirectoryRequest>,
     ) -> Result<Response<DirectoryReply>, Status> {
         let epoch_queue = rethrow_as_internal!(self.epochs.read(), "Acquiring a lock failed");
         let mut epoch_infos = Vec::new();
+        let min_epoch_no = req.into_inner().min_epoch_no;
         for epoch in epoch_queue.iter() {
-            epoch_infos.push(epoch.clone());
+            if epoch.epoch_no >= min_epoch_no {
+                epoch_infos.push(epoch.clone());
+            }
         }
 
         let reply = DirectoryReply {
