@@ -1,7 +1,8 @@
 //! x448 key exchange (Diffie Hellman with Curve448)
 
+pub use super::x448_bindings::{POINT_SIZE};
 use super::key::Key;
-use super::x448_bindings::{self, x448_derive_public_key, x448_int, POINT_SIZE, SCALAR_SIZE};
+use super::x448_bindings::{self, x448_derive_public_key, x448_int, SCALAR_SIZE};
 use crate::error::Error;
 
 /// return Ok((pk, sk)) on success
