@@ -17,16 +17,16 @@ pub fn generate_keypair() -> Result<(Key, Key), Error> {
 
 /// generate shared secret
 pub fn generate_shared_secret(pk: &Key, sk: &Key) -> Result<Key, Error> {
-    if pk.size() != POINT_SIZE {
+    if pk.len() != POINT_SIZE {
         return Err(Error::SizeMismatch(format!(
             "Public key has wrong size: {}",
-            pk.size()
+            pk.len()
         )));
     }
-    if sk.size() != POINT_SIZE {
+    if sk.len() != POINT_SIZE {
         return Err(Error::SizeMismatch(format!(
             "Secret key has wrong size: {}",
-            sk.size()
+            sk.len()
         )));
     }
     let mut s_vec = vec![0u8; POINT_SIZE];

@@ -44,8 +44,8 @@ impl Key {
         &(self.key[0]) as *const u8
     }
 
-    /// return size bytes
-    pub fn size(&self) -> usize {
+    /// return size in bytes
+    pub fn len(&self) -> usize {
         self.key.len()
     }
 
@@ -71,6 +71,6 @@ mod tests {
     fn generate_random_key() {
         let size = 1337;
         let key = Key::new(size).expect("Key gen failed");
-        assert_eq!(key.size(), size);
+        assert_eq!(key.len(), size);
     }
 }
