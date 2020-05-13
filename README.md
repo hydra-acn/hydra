@@ -1,0 +1,1 @@
+[Coverage report](https://telematik.prakinf.tu-ilmenau.de/gitlab/dschatz/hydra/-/jobs/artifacts/master/raw/tarpaulin-report.html?job=coverage)
