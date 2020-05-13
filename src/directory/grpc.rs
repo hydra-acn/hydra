@@ -9,6 +9,7 @@ use tonic::{Code, Request, Response, Status};
 
 use super::state::{key_exchange, Mix, State};
 use crate::crypto::key::Key;
+use crate::crypto::x448;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
 
@@ -75,6 +76,16 @@ macro_rules! rethrow_as_invalid {
     };
 }
 
+fn validity_check(check: bool, msg: &str) -> Result<(), Status> {
+    match check {
+        true => Ok(()),
+        false => {
+            warn!("{}", msg);
+            Err(Status::new(Code::InvalidArgument, msg))
+        }
+    }
+}
+
 #[tonic::async_trait]
 impl directory_server::Directory for Service {
     async fn register(
@@ -94,11 +105,7 @@ impl directory_server::Directory for Service {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
             // check if mix already exists
-            let existence_result = match mix_map.contains_key(&fingerprint) {
-                false => Ok(()),
-                true => Err(()),
-            };
-            rethrow_as_invalid!(existence_result, "Already registered");
+            validity_check(!mix_map.contains_key(&fingerprint), "Already registered")?;
 
             let mix = Mix {
                 fingerprint: fingerprint.clone(),
@@ -123,14 +130,12 @@ impl directory_server::Directory for Service {
 
         let epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
+        validity_check(pk.len() == x448::POINT_SIZE, "x448 pk has wrong size")?;
+
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
-            let existence_result = match mix_map.contains_key(&fingerprint) {
-                true => Ok(()),
-                false => Err(()),
-            };
-            rethrow_as_invalid!(existence_result, "Not registered");
+            validity_check(mix_map.contains_key(&fingerprint), "Not registered")?;
             let mix = mix_map
                 .get_mut(&fingerprint)
                 .expect("Checked existance before");
