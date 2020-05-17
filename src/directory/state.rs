@@ -5,7 +5,7 @@ use crate::epoch::{current_epoch_no, EpochNo, COMMUNICATION_DURATION, MAX_EPOCH_
 use crate::tonic_directory::{EpochInfo, MixInfo};
 use log::*;
 use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::time::{self, Duration};
 
@@ -68,8 +68,8 @@ impl State {
             for (_, mix) in mix_map.iter_mut() {
                 if let Some(pk) = mix.dh_queue.pop_front() {
                     let info = MixInfo {
-                        address: mix.socket_addr.ip().to_string(),
-                        port: mix.socket_addr.port() as u32,
+                        address: crate::net::ip_addr_to_vec(&mix.addr),
+                        port: mix.port as u32,
                         public_dh: pk.clone_to_vec(),
                     };
                     mixes.push(info);
@@ -114,7 +114,8 @@ impl Config {
 pub struct Mix {
     pub fingerprint: String,
     pub shared_key: Key,
-    pub socket_addr: SocketAddr,
+    pub addr: IpAddr,
+    pub port: u16,
     pub dh_queue: VecDeque<Key>,
 }
 

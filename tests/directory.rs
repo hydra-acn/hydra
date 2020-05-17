@@ -7,6 +7,7 @@ use hydra::tonic_directory::directory_client::DirectoryClient;
 use hydra::tonic_directory::{DhMessage, DirectoryRequest, RegisterRequest};
 
 use std::collections::BTreeMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::runtime::Builder;
 use tokio::time::{self, Duration};
@@ -25,9 +26,7 @@ fn integration() {
 
         // TODO use ephemeral port
         let port = 4242u16;
-        let local_addr = format!("127.0.0.1:{}", port)
-            .parse()
-            .expect("This address should be valid");
+        let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
         let timeout = time::delay_for(Duration::from_secs(2));
         let grpc_handle =
             grpc::spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout));
@@ -54,8 +53,10 @@ async fn client_task(state: Arc<State>, port: u16) {
         register_mix(&mut client, i).await;
     }
 
-    // and some successful sends of public DH keys
-    let mut pk_map: BTreeMap<(String, u32), Key> = BTreeMap::new();
+    // mapping (mix index, counter) to their sent public keys
+    let mut pk_map: BTreeMap<(u8, u32), Key> = BTreeMap::new();
+
+    // test some successful sends of public DH keys
     for i in 1..=m {
         for ctr in 0..config.epochs_in_advance - 1 {
             send_pk(&mut client, i, ctr.into(), &mut pk_map).await;
@@ -68,7 +69,7 @@ async fn client_task(state: Arc<State>, port: u16) {
 
     // test bad address
     let mut bad_info = create_register_request(m + 1, &dummy_key);
-    bad_info.address = "256.0.0.1".to_string();
+    bad_info.address = vec![127, 0, 0, 1];
     expect_fail(&client.register(Request::new(bad_info)).await);
 
     // test bad port
@@ -142,11 +143,12 @@ async fn client_task(state: Arc<State>, port: u16) {
 
         for mix in epoch.mixes.iter() {
             assert_eq!(mix.port, 1337);
-            assert!(mix.address.contains("10.0.0."));
+            assert_eq!(mix.address.len(), 4);
+            assert_eq!(mix.address[..3], [10, 0, 0]);
             assert_eq!(
                 mix.public_dh,
                 pk_map
-                    .get(&(mix.address.clone(), i as u32))
+                    .get(&(mix.address[3], i as u32))
                     .expect("pk map broken?")
                     .borrow_vec(),
                 "Wrong pk"
@@ -199,7 +201,7 @@ async fn send_pk(
     client: &mut DirectoryClient<tonic::transport::Channel>,
     index: u8,
     counter: u32,
-    map: &mut BTreeMap<(String, u32), Key>,
+    map: &mut BTreeMap<(u8, u32), Key>,
 ) {
     let pk = Key::new(x448::POINT_SIZE).expect("Key gen failed");
     let reply = client
@@ -208,13 +210,13 @@ async fn send_pk(
         .expect("Adding DH key failed")
         .into_inner();
     assert_eq!(reply.counter, counter);
-    map.insert((format!("10.0.0.{}", index), counter), pk);
+    map.insert((index, counter), pk);
 }
 
 fn create_register_request(index: u8, pk: &Key) -> RegisterRequest {
     RegisterRequest {
         fingerprint: format!("mix-{}", index),
-        address: format!("10.0.0.{}", index),
+        address: vec![10, 0, 0, index],
         port: 1337,
         public_dh: pk.clone_to_vec(),
     }

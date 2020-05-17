@@ -1,3 +1,4 @@
+pub mod net;
 pub mod crypto;
 pub mod directory;
 pub mod epoch;

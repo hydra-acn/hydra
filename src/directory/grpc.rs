@@ -70,7 +70,7 @@ macro_rules! rethrow_as_internal {
     };
 }
 
-macro_rules! rethrow_as_invalid {
+macro_rules! _rethrow_as_invalid {
     ($res:expr, $msg:expr) => {
         rethrow_as!($res, Code::InvalidArgument, $msg)
     };
@@ -97,9 +97,10 @@ impl directory_server::Directory for Service {
         let (pk, s) = key_exchange(&pk_mix)?;
 
         let fingerprint = msg.fingerprint;
-        let socket_addr_str = format!("{}:{}", &msg.address, &msg.port);
-        let socket_addr =
-            rethrow_as_invalid!(socket_addr_str.parse(), "IP address or port invalid");
+        let addr = crate::net::ip_addr_from_vec(&msg.address)?;
+        // TODO in nightly rust, there is a complete is_global() (routable)
+        validity_check(!addr.is_loopback(), "Invalid IP address")?;
+        validity_check(msg.port <= std::u16::MAX as u32, "Port is not valid")?;
 
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
@@ -110,7 +111,8 @@ impl directory_server::Directory for Service {
             let mix = Mix {
                 fingerprint: fingerprint.clone(),
                 shared_key: s,
-                socket_addr: socket_addr,
+                addr,
+                port: msg.port as u16, // checked range above
                 dh_queue: VecDeque::new(),
             };
 
