@@ -1,5 +1,8 @@
 //! shared gRPC functionality
 
+use log::warn;
+use tonic::{Code, Status};
+
 #[macro_export]
 /// given the identifiers of the service type, its state type and the server type (from tonic),
 /// this macro generates the boilerplate that
@@ -73,4 +76,15 @@ macro_rules! _rethrow_as_invalid {
     ($res:expr, $msg:expr) => {
         rethrow_as!($res, Code::InvalidArgument, $msg)
     };
+}
+
+/// convert bool to Result<(), tonic::Status>, with "invalid argument" error code
+pub fn valid_request_check(check: bool, msg: &str) -> Result<(), Status> {
+    match check {
+        true => Ok(()),
+        false => {
+            warn!("{}", msg);
+            Err(Status::new(Code::InvalidArgument, msg))
+        }
+    }
 }

@@ -8,21 +8,12 @@ use tonic::{Code, Request, Response, Status};
 use super::state::{key_exchange, Mix, State};
 use crate::crypto::key::Key;
 use crate::crypto::x448;
+use crate::grpc::valid_request_check;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
 use crate::{define_grpc_service, rethrow_as_internal};
 
 define_grpc_service!(Service, State, DirectoryServer);
-
-fn validity_check(check: bool, msg: &str) -> Result<(), Status> {
-    match check {
-        true => Ok(()),
-        false => {
-            warn!("{}", msg);
-            Err(Status::new(Code::InvalidArgument, msg))
-        }
-    }
-}
 
 #[tonic::async_trait]
 impl directory_server::Directory for Service {
@@ -37,15 +28,15 @@ impl directory_server::Directory for Service {
         let fingerprint = msg.fingerprint;
         let addr = crate::net::ip_addr_from_vec(&msg.address)?;
         // TODO in nightly rust, there is a complete is_global() (routable)
-        validity_check(!addr.is_loopback(), "Invalid IP address")?;
-        validity_check(msg.entry_port <= std::u16::MAX as u32, "Port is not valid")?;
-        validity_check(msg.relay_port <= std::u16::MAX as u32, "Port is not valid")?;
+        valid_request_check(!addr.is_loopback(), "Invalid IP address")?;
+        valid_request_check(msg.entry_port <= std::u16::MAX as u32, "Port is not valid")?;
+        valid_request_check(msg.relay_port <= std::u16::MAX as u32, "Port is not valid")?;
 
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
             // check if mix already exists
-            validity_check(!mix_map.contains_key(&fingerprint), "Already registered")?;
+            valid_request_check(!mix_map.contains_key(&fingerprint), "Already registered")?;
 
             let mix = Mix {
                 fingerprint: fingerprint.clone(),
@@ -72,12 +63,12 @@ impl directory_server::Directory for Service {
 
         let epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
-        validity_check(pk.len() == x448::POINT_SIZE, "x448 pk has wrong size")?;
+        valid_request_check(pk.len() == x448::POINT_SIZE, "x448 pk has wrong size")?;
 
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
-            validity_check(mix_map.contains_key(&fingerprint), "Not registered")?;
+            valid_request_check(mix_map.contains_key(&fingerprint), "Not registered")?;
             let mix = mix_map
                 .get_mut(&fingerprint)
                 .expect("Checked existance before");
