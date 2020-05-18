@@ -100,7 +100,8 @@ impl directory_server::Directory for Service {
         let addr = crate::net::ip_addr_from_vec(&msg.address)?;
         // TODO in nightly rust, there is a complete is_global() (routable)
         validity_check(!addr.is_loopback(), "Invalid IP address")?;
-        validity_check(msg.port <= std::u16::MAX as u32, "Port is not valid")?;
+        validity_check(msg.entry_port <= std::u16::MAX as u32, "Port is not valid")?;
+        validity_check(msg.relay_port <= std::u16::MAX as u32, "Port is not valid")?;
 
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
@@ -112,7 +113,8 @@ impl directory_server::Directory for Service {
                 fingerprint: fingerprint.clone(),
                 shared_key: s,
                 addr,
-                port: msg.port as u16, // checked range above
+                entry_port: msg.entry_port as u16, // checked range above
+                relay_port: msg.relay_port as u16, // checked range above
                 dh_queue: VecDeque::new(),
             };
 

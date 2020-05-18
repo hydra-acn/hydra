@@ -74,7 +74,12 @@ async fn client_task(state: Arc<State>, port: u16) {
 
     // test bad port
     let mut bad_info = create_register_request(m + 1, &dummy_key);
-    bad_info.port = (std::u16::MAX as u32) + 1;
+    bad_info.entry_port = (std::u16::MAX as u32) + 1;
+    expect_fail(&client.register(Request::new(bad_info)).await);
+
+    // test another bad port
+    let mut bad_info = create_register_request(m + 1, &dummy_key);
+    bad_info.relay_port = (std::u16::MAX as u32) + 1;
     expect_fail(&client.register(Request::new(bad_info)).await);
 
     // test bad key len during registration
@@ -142,7 +147,8 @@ async fn client_task(state: Arc<State>, port: u16) {
         );
 
         for mix in epoch.mixes.iter() {
-            assert_eq!(mix.port, 1337);
+            assert_eq!(mix.entry_port, 4242);
+            assert_eq!(mix.relay_port, 1337);
             assert_eq!(mix.address.len(), 4);
             assert_eq!(mix.address[..3], [10, 0, 0]);
             assert_eq!(
@@ -217,7 +223,8 @@ fn create_register_request(index: u8, pk: &Key) -> RegisterRequest {
     RegisterRequest {
         fingerprint: format!("mix-{}", index),
         address: vec![10, 0, 0, index],
-        port: 1337,
+        entry_port: 4242,
+        relay_port: 1337,
         public_dh: pk.clone_to_vec(),
     }
 }

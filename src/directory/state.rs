@@ -69,7 +69,8 @@ impl State {
                 if let Some(pk) = mix.dh_queue.pop_front() {
                     let info = MixInfo {
                         address: crate::net::ip_addr_to_vec(&mix.addr),
-                        port: mix.port as u32,
+                        entry_port: mix.entry_port as u32,
+                        relay_port: mix.relay_port as u32,
                         public_dh: pk.clone_to_vec(),
                     };
                     mixes.push(info);
@@ -115,7 +116,8 @@ pub struct Mix {
     pub fingerprint: String,
     pub shared_key: Key,
     pub addr: IpAddr,
-    pub port: u16,
+    pub entry_port: u16,
+    pub relay_port: u16,
     pub dh_queue: VecDeque<Key>,
 }
 
