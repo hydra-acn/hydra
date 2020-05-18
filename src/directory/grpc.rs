@@ -1,9 +1,7 @@
 use futures_util::future;
 use log::*;
 use std::collections::VecDeque;
-use std::future::Future;
 use std::ops::Deref;
-use std::sync::Arc;
 use tonic::transport::Server;
 use tonic::{Code, Request, Response, Status};
 
@@ -12,69 +10,9 @@ use crate::crypto::key::Key;
 use crate::crypto::x448;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
+use crate::{define_grpc_service, rethrow_as_internal};
 
-pub struct Service {
-    state: Arc<State>,
-}
-
-impl Service {
-    pub fn new(state: Arc<State>) -> Self {
-        Service { state: state }
-    }
-}
-
-impl Deref for Service {
-    type Target = Arc<State>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
-}
-
-pub fn spawn_service(
-    state: Arc<State>,
-    addr: std::net::SocketAddr,
-) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
-    spawn_service_with_shutdown::<future::Ready<()>>(state.clone(), addr, None)
-}
-
-pub fn spawn_service_with_shutdown<F: Future<Output = ()> + Send + 'static>(
-    state: Arc<State>,
-    addr: std::net::SocketAddr,
-    shutdown_signal: Option<F>,
-) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
-    let service = Service::new(state.clone());
-    let builder = Server::builder().add_service(DirectoryServer::new(service));
-
-    match shutdown_signal {
-        Some(s) => tokio::spawn(builder.serve_with_shutdown(addr, s)),
-        None => tokio::spawn(builder.serve(addr)),
-    }
-}
-
-macro_rules! rethrow_as {
-    ($res:expr, $code:expr, $msg:expr) => {
-        match $res {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                warn!("{}: {:?}", $msg, e);
-                Err(Status::new($code, $msg))
-            }
-        }?
-    };
-}
-
-macro_rules! rethrow_as_internal {
-    ($res:expr, $msg:expr) => {
-        rethrow_as!($res, Code::Internal, $msg)
-    };
-}
-
-macro_rules! _rethrow_as_invalid {
-    ($res:expr, $msg:expr) => {
-        rethrow_as!($res, Code::InvalidArgument, $msg)
-    };
-}
+define_grpc_service!(Service, State, DirectoryServer);
 
 fn validity_check(check: bool, msg: &str) -> Result<(), Status> {
     match check {
