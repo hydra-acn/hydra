@@ -5,5 +5,6 @@ fn main() {
     println!("cargo:rustc-link-lib=static=x448");
 
     // compile protobuf files
-    tonic_build::compile_protos("protobuf/directory.proto").expect("Failed to generate gRPC");
+    tonic_build::compile_protos("protobuf/directory.proto").expect("Failed to generate directory gRPC");
+    tonic_build::compile_protos("protobuf/mix.proto").expect("Failed to generate mix gRPC");
 }

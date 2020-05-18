@@ -1,17 +1,15 @@
-use futures_util::future;
 use log::*;
 use std::collections::VecDeque;
-use std::ops::Deref;
-use tonic::transport::Server;
-use tonic::{Code, Request, Response, Status};
+use tonic::{Request, Response, Status};
 
-use super::state::{key_exchange, Mix, State};
 use crate::crypto::key::Key;
 use crate::crypto::x448;
 use crate::grpc::valid_request_check;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
 use crate::{define_grpc_service, rethrow_as_internal};
+
+use super::state::{key_exchange, Mix, State};
 
 define_grpc_service!(Service, State, DirectoryServer);
 

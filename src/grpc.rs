@@ -1,6 +1,5 @@
 //! shared gRPC functionality
 
-use log::warn;
 use tonic::{Code, Status};
 
 #[macro_export]
@@ -15,7 +14,7 @@ macro_rules! define_grpc_service {
             state: std::sync::Arc<$state_type>,
         }
 
-        impl Deref for Service {
+        impl std::ops::Deref for Service {
             type Target = std::sync::Arc<$state_type>;
 
             fn deref(&self) -> &Self::Target {
@@ -27,7 +26,11 @@ macro_rules! define_grpc_service {
             state: std::sync::Arc<State>,
             addr: std::net::SocketAddr,
         ) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
-            spawn_service_with_shutdown::<future::Ready<()>>(state.clone(), addr, None)
+            spawn_service_with_shutdown::<futures_util::future::Ready<()>>(
+                state.clone(),
+                addr,
+                None,
+            )
         }
 
         pub fn spawn_service_with_shutdown<F: std::future::Future<Output = ()> + Send + 'static>(
@@ -38,7 +41,8 @@ macro_rules! define_grpc_service {
             let service = $service_type {
                 state: state.clone(),
             };
-            let builder = Server::builder().add_service($server_type::new(service));
+            let builder =
+                tonic::transport::Server::builder().add_service($server_type::new(service));
 
             match shutdown_signal {
                 Some(s) => tokio::spawn(builder.serve_with_shutdown(addr, s)),
@@ -49,13 +53,14 @@ macro_rules! define_grpc_service {
 }
 
 #[macro_export]
-/// convert Result<S, F> to Result<S, tonic::Status> using the given error code and message
+/// convert Result<S, F> to Result<S, tonic::Status> using the given error code and message and
+/// unwrap with "?"
 macro_rules! rethrow_as {
     ($res:expr, $code:expr, $msg:expr) => {
         match $res {
             Ok(r) => Ok(r),
             Err(e) => {
-                warn!("{}: {:?}", $msg, e);
+                log::warn!("{}: {:?}", $msg, e);
                 Err(tonic::Status::new($code, $msg))
             }
         }?
@@ -63,18 +68,19 @@ macro_rules! rethrow_as {
 }
 
 #[macro_export]
-/// convert Result<S, F> to Result<S, tonic::Status> with "internal" error code
+/// convert Result<S, F> to Result<S, tonic::Status> with "internal" error code and unwrap with "?"
 macro_rules! rethrow_as_internal {
     ($res:expr, $msg:expr) => {
-        crate::rethrow_as!($res, Code::Internal, $msg)
+        crate::rethrow_as!($res, tonic::Code::Internal, $msg)
     };
 }
 
 #[macro_export]
-/// convert Result<S, F> to Result<S, tonic::Status> with "invalid argument" error code
+/// convert Result<S, F> to Result<S, tonic::Status> with "invalid argument" error code and unwrap
+/// with "?"
 macro_rules! _rethrow_as_invalid {
     ($res:expr, $msg:expr) => {
-        rethrow_as!($res, Code::InvalidArgument, $msg)
+        rethrow_as!($res, tonic::Code::InvalidArgument, $msg)
     };
 }
 
@@ -83,7 +89,7 @@ pub fn valid_request_check(check: bool, msg: &str) -> Result<(), Status> {
     match check {
         true => Ok(()),
         false => {
-            warn!("{}", msg);
+            log::warn!("{}", msg);
             Err(Status::new(Code::InvalidArgument, msg))
         }
     }
