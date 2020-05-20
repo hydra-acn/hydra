@@ -3,6 +3,7 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 
 pub type Token = u64;
+pub type CircuitId = u64;
 
 /// Decode bytes as little-endian u64
 ///
