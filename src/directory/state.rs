@@ -132,6 +132,6 @@ pub async fn update_loop(state: Arc<State>) {
         state.update();
 
         // wait till next update
-        time::delay_for(Duration::from_secs(5)).await;
+        time::delay_for(Duration::from_secs(60)).await;
     }
 }

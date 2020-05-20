@@ -18,3 +18,7 @@ pub fn token_from_bytes(raw: &[u8; 8]) -> Token {
     rdr.read_u64::<LittleEndian>()
         .expect("Why should this fail?")
 }
+
+pub fn hydra_version() -> &'static str {
+    option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
+}
