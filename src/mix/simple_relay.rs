@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use log::*;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryInto;
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
@@ -16,7 +18,31 @@ struct TimestampedCell {
     cell: Cell,
 }
 
-type CellMap = BTreeMap<Token, Vec<TimestampedCell>>;
+impl Ord for TimestampedCell {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.timestamp.cmp(&other.timestamp) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Equal => self.cell.circuit_id.cmp(&other.cell.circuit_id),
+        }
+    }
+}
+
+impl PartialOrd for TimestampedCell {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for TimestampedCell {}
+
+impl PartialEq for TimestampedCell {
+    fn eq(&self, other: &Self) -> bool {
+        self.timestamp == other.timestamp && self.cell.circuit_id == other.cell.circuit_id
+    }
+}
+
+type CellMap = BTreeMap<Token, BTreeSet<TimestampedCell>>;
 
 pub struct State {
     cells: Arc<RwLock<CellMap>>,
@@ -83,10 +109,12 @@ impl Service {
 
         let mut map = rethrow_as_internal!(self.cells.write(), "Could not acquire lock");
         match map.get_mut(&token) {
-            Some(cell_vec) => cell_vec.push(ts_cell),
+            Some(cell_set) => cell_set.insert(ts_cell),
             None => {
-                map.insert(token, vec![ts_cell]);
-                ()
+                let mut set = BTreeSet::new();
+                set.insert(ts_cell);
+                map.insert(token, set);
+                true
             }
         };
         Ok(())
@@ -108,5 +136,34 @@ impl Service {
             }
         }
         Ok(cells)
+    }
+}
+
+/// endless-loop that deletes old cells (older than 24 hours)
+pub async fn garbage_collector(state: Arc<State>) {
+    loop {
+        // cleanup every hour
+        delay_for(Duration::from_secs(3600)).await;
+
+        {
+            let mut map = match state.cells.write() {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Acquiring lock for cleanup failed: {}", e);
+                    continue;
+                }
+            };
+            for (_, cell_set) in map.iter_mut() {
+                let split_cell = TimestampedCell {
+                    timestamp: current_time_in_secs() - 24 * 3600,
+                    cell: Cell {
+                        circuit_id: 0,
+                        round_no: 0,
+                        onion: vec![],
+                    },
+                };
+                *cell_set = cell_set.split_off(&split_cell);
+            }
+        }
     }
 }
