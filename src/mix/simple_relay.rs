@@ -45,13 +45,13 @@ impl PartialEq for TimestampedCell {
 type CellMap = BTreeMap<Token, BTreeSet<TimestampedCell>>;
 
 pub struct State {
-    cells: Arc<RwLock<CellMap>>,
+    cells: RwLock<CellMap>,
 }
 
 impl State {
     pub fn new() -> Self {
         State {
-            cells: Arc::new(RwLock::new(CellMap::new())),
+            cells: RwLock::new(CellMap::new()),
         }
     }
 }

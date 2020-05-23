@@ -57,6 +57,7 @@ impl directory_server::Directory for Service {
 
     async fn add_static_dh(&self, req: Request<DhMessage>) -> Result<Response<DhReply>, Status> {
         let msg = req.into_inner();
+        // TODO security check freshness (counter > last counter) and integrity
         let fingerprint = msg.fingerprint.clone();
 
         let epoch_no;
