@@ -45,7 +45,8 @@ impl State {
         info!("Updating epochs, current epoch is {}", current_epoch_no);
         let mut epoch_queue = self.epochs.write().expect("Acquiring lock failed");
 
-        // clear old epoch information
+        // clear old epoch information (includes the current epoch, because it's too late to send
+        // setup packets now)
         while let Some(front) = epoch_queue.front() {
             if front.epoch_no <= current_epoch_no {
                 epoch_queue.pop_front();
@@ -54,8 +55,11 @@ impl State {
             }
         }
 
-        // add new epoch information
-        let mut epoch_no = current_epoch_no;
+        // add new epoch information (starting with the next uncommited epoch)
+        let mut epoch_no = match epoch_queue.back() {
+            Some(e) => e.epoch_no + 1,
+            None => current_epoch_no + 1,
+        };
         let mut setup_start_time = epoch_no as u64 * COMMUNICATION_DURATION as u64;
         let mut communication_start_time = setup_start_time + COMMUNICATION_DURATION as u64;
         let cfg = &self.config;
@@ -86,10 +90,10 @@ impl State {
                 path_length: cfg.path_length.into(),
                 mixes,
             };
+            epoch_queue.push_back(epoch_info);
             epoch_no += 1;
             setup_start_time += COMMUNICATION_DURATION as u64;
             communication_start_time += COMMUNICATION_DURATION as u64;
-            epoch_queue.push_back(epoch_info);
         }
     }
 }
