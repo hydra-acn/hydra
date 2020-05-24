@@ -4,11 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryInto;
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 
 use crate::defs::{token_from_bytes, CircuitId, Token};
 use crate::epoch::current_time_in_secs;
 use crate::grpc::valid_request_check;
+use crate::mix::directory_client::Client;
 use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
 use crate::tonic_mix::{Cell, CellVector, LongPoll, SendAck, SimplePoll};
 use crate::{define_grpc_service, rethrow_as_internal};
@@ -45,12 +46,14 @@ impl PartialEq for TimestampedCell {
 type CellMap = BTreeMap<Token, BTreeSet<TimestampedCell>>;
 
 pub struct State {
+    dir_client: Arc<Client>,
     cells: RwLock<CellMap>,
 }
 
 impl State {
-    pub fn new() -> Self {
+    pub fn new(dir_client: Arc<Client>) -> Self {
         State {
+            dir_client,
             cells: RwLock::new(CellMap::new()),
         }
     }
@@ -88,9 +91,14 @@ impl SimpleRelay for Service {
             valid_request_check(false, "You have to send a cell for long polling")?;
         }
 
-        // TODO calculate correct waiting time till end of round
-        let wait_ms = 10 * 1000u64;
-        delay_for(Duration::from_millis(wait_ms)).await;
+        let next_receive_in = match self.dir_client.next_receive_in() {
+            Some(d) => d,
+            None => {
+                warn!("We are not in an active communication phase!?");
+                return Err(Status::new(Code::Internal, "Don't know the current epoch"));
+            }
+        };
+        delay_for(next_receive_in).await;
         let reply = CellVector {
             cells: self.get_matching_cells(&poll.tokens, circuit_id)?,
         };
@@ -145,6 +153,7 @@ pub async fn garbage_collector(state: Arc<State>) {
         // cleanup every hour
         delay_for(Duration::from_secs(3600)).await;
 
+        info!("Garbage collector strikes again!");
         {
             let mut map = match state.cells.write() {
                 Ok(m) => m,

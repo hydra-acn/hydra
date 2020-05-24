@@ -1,7 +1,7 @@
 use log::*;
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::Status;
@@ -15,42 +15,44 @@ use crate::tonic_directory::{DhMessage, DirectoryRequest, EpochInfo, RegisterReq
 type Connection = DirectoryClient<tonic::transport::Channel>;
 
 pub struct Config {
-    addr: IpAddr,
-    entry_port: u16,
-    relay_port: u16,
-    directory_addr: SocketAddr,
+    pub addr: IpAddr,
+    pub entry_port: u16,
+    pub relay_port: u16,
+    pub directory_addr: SocketAddr,
 }
 
 pub struct Client {
     fingerprint: String,
     /// long term secret key for communication with the directory server
-    _sk: Key,
+    sk: Key,
     /// long term public key for communication with the directory server
     pk: Key,
     config: Config,
     endpoint: String,
+    /// shared key with the directory server
+    shared_key: RwLock<Option<Key>>,
     epochs: RwLock<BTreeMap<EpochNo, EpochInfo>>,
     /// ephemeral keys
     keys: RwLock<BTreeMap<EpochNo, (Key, Key)>>,
-    key_count: RefCell<u32>,
+    key_count: AtomicU32,
 }
 
 impl Client {
-    /// param addr of the directory server
     pub fn new(config: Config) -> Self {
         // TODO sync to disk
         let (pk, sk) = x448::generate_keypair().expect("Generation of long-term key pair failed");
         let dir_addr = &config.directory_addr;
-        let endpoint = format!("{}:{}", dir_addr.ip().to_string(), dir_addr.port());
+        let endpoint = format!("http://{}:{}", dir_addr.ip().to_string(), dir_addr.port());
         Client {
             fingerprint: format!("{}:{}", config.addr, config.entry_port),
-            _sk: sk,
+            sk: sk,
             pk,
             config,
             endpoint,
+            shared_key: RwLock::new(None),
             epochs: RwLock::new(BTreeMap::new()),
             keys: RwLock::new(BTreeMap::new()),
-            key_count: RefCell::new(0),
+            key_count: AtomicU32::new(0),
         }
     }
 
@@ -61,6 +63,17 @@ impl Client {
         for (_, epoch) in epoch_map.iter() {
             if epoch.setup_start_time > current_time {
                 return Some(epoch.setup_start_time);
+            }
+        }
+        None
+    }
+
+    /// if we are currently in a communication phase, return the duration till next receive
+    pub fn next_receive_in(&self) -> Option<Duration> {
+        let epoch_map = self.epochs.read().expect("Lock failure");
+        for (_, epoch) in epoch_map.iter() {
+            if let Some(d) = epoch.next_receive_in() {
+                return Some(d);
             }
         }
         None
@@ -82,9 +95,18 @@ impl Client {
             public_dh: self.pk.clone_to_vec(),
         };
         match conn.register(request).await {
-            Ok(_) => info!("Registration successful"),
+            Ok(r) => {
+                info!("Registration successful");
+                let pk = Key::move_from_vec(r.into_inner().public_dh);
+                match x448::generate_shared_secret(&pk, &self.sk) {
+                    Ok(s) => *self.shared_key.write().expect("Lock failure") = Some(s),
+                    Err(e) => warn!(".. but key exchange with directory failed: {}", e),
+                }
+            }
             Err(status) => match status.code() {
-                tonic::Code::InvalidArgument => info!("Seems like we are already registered"),
+                tonic::Code::InvalidArgument if status.message().contains("registered") => {
+                    info!("Seems like we are already registered")
+                }
                 _ => panic!("Register failed with unexpected reason: {}", status),
             },
         };
@@ -140,7 +162,13 @@ impl Client {
             warn!("Directory response is empty");
         }
         let number_of_epochs = directory.epochs.len();
+        debug!("Fetched directory with {} epochs", number_of_epochs);
         for epoch in directory.epochs {
+            debug!(
+                ".. epoch {} has {} mixes",
+                epoch.epoch_no,
+                epoch.mixes.len()
+            );
             epoch_map.insert(epoch.epoch_no, epoch);
         }
         Ok(number_of_epochs)
@@ -151,7 +179,7 @@ impl Client {
         let (pk, sk) = x448::generate_keypair().expect("keygen failed");
         let dh_msg = DhMessage {
             fingerprint: self.fingerprint.clone(),
-            counter: *self.key_count.borrow(),
+            counter: self.key_count.load(Ordering::Relaxed),
             public_dh: pk.clone_to_vec(),
             auth_tag: Vec::new(), // TODO gen auth tag
         };
@@ -164,7 +192,7 @@ impl Client {
         };
         let mut key_map = self.keys.write().expect("Lock failure");
         key_map.insert(epoch_no, (pk, sk));
-        *self.key_count.borrow_mut() += 1;
+        self.key_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 
