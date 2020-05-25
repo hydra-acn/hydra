@@ -10,7 +10,9 @@ use crate::crypto::key::Key;
 use crate::crypto::x448;
 use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::tonic_directory::directory_client::DirectoryClient;
-use crate::tonic_directory::{DhMessage, DirectoryRequest, EpochInfo, RegisterRequest};
+use crate::tonic_directory::{
+    DhMessage, DirectoryRequest, EpochInfo, RegisterRequest, UnregisterRequest,
+};
 
 type Connection = DirectoryClient<tonic::transport::Channel>;
 
@@ -117,6 +119,18 @@ impl Client {
         for _ in 0..2 * epochs_in_advance {
             self.create_ephemeral_dh(&mut conn).await;
         }
+    }
+
+    pub async fn unregister(&self) {
+        let mut conn = DirectoryClient::connect(self.endpoint.clone())
+            .await
+            .expect("Connection for unregistration failed");
+        let request = UnregisterRequest {
+            fingerprint: self.fingerprint.clone(),
+            // TODO set auth tag appropriately
+            auth_tag: Vec::new(),
+        };
+        conn.unregister(request).await.expect("Unregistration failed");
     }
 
     /// update includes fetching the directory and sending more ephemeral keys if necessary

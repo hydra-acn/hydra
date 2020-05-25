@@ -35,11 +35,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let garbage_handle = tokio::spawn(garbage_collector(state.clone()));
     let dir_client_handle = tokio::spawn(directory_client::run(dir_client.clone()));
 
+    // TODO catch SIGINT and gracefully shutdown like for errors?
     match tokio::try_join!(grpc_handle, garbage_handle, dir_client_handle) {
         Ok(_) => (),
         Err(e) => error!("Something failed: {}", e),
     }
 
-    info!("Stopping gracefully");
+    info!("Stopping gracefully by unregistering at the directory service");
+    dir_client.unregister().await;
     Ok(())
 }
