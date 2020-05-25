@@ -25,6 +25,8 @@ impl directory_server::Directory for Service {
 
         let fingerprint = msg.fingerprint;
         let addr = crate::net::ip_addr_from_vec(&msg.address)?;
+        // TODO security check that request is from the announced address (probably not possible in
+        // the current version of Tonic)
         // TODO in nightly rust, there is a complete is_global() (routable)
         valid_request_check(!addr.is_loopback(), "Invalid IP address")?;
         valid_request_check(msg.entry_port <= std::u16::MAX as u32, "Port is not valid")?;
@@ -34,7 +36,10 @@ impl directory_server::Directory for Service {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
 
             // check if mix already exists
-            valid_request_check(!mix_map.contains_key(&fingerprint), "Already registered")?;
+            valid_request_check(
+                !mix_map.contains_key(&fingerprint),
+                "Fingerprint already registered",
+            )?;
 
             let mix = Mix {
                 fingerprint: fingerprint.clone(),
@@ -53,6 +58,30 @@ impl directory_server::Directory for Service {
         };
         info!("Registered new mix: {}", &fingerprint);
         Ok(Response::new(reply))
+    }
+
+    async fn unregister(
+        &self,
+        req: Request<UnregisterRequest>,
+    ) -> Result<Response<UnregisterAck>, Status> {
+        let fingerprint = req.into_inner().fingerprint;
+        // TODO security check auth tag
+        let removed;
+        {
+            let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Lock failure");
+            removed = mix_map.remove(&fingerprint);
+        }
+        match removed {
+            Some(_) => {
+                // update epochs to not include this mix anymore
+                let mut epoch_queue = rethrow_as_internal!(self.epochs.write(), "Lock failure");
+                for epoch in epoch_queue.iter_mut() {
+                    epoch.mixes.retain(|v| v.fingerprint != fingerprint);
+                }
+            }
+            None => valid_request_check(false, "Not registered")?,
+        }
+        Ok(Response::new(UnregisterAck {}))
     }
 
     async fn add_static_dh(&self, req: Request<DhMessage>) -> Result<Response<DhReply>, Status> {

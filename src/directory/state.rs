@@ -76,6 +76,7 @@ impl State {
                         entry_port: mix.entry_port as u32,
                         relay_port: mix.relay_port as u32,
                         public_dh: pk.clone_to_vec(),
+                        fingerprint: mix.fingerprint.clone(),
                     };
                     mixes.push(info);
                 } // else: the mix has no DH keys left
