@@ -84,6 +84,37 @@ macro_rules! _rethrow_as_invalid {
     };
 }
 
+#[macro_export]
+/// unwrap Option<T> or throw tonic::Status using the given error code and message with "?"
+macro_rules! unwrap_or_throw {
+    ($res:expr, $code:expr, $msg:expr) => {
+        match $res {
+            Some(r) => Ok(r),
+            None => {
+                log::warn!("Unwrap failed, throwing: {}", $msg);
+                Err(tonic::Status::new($code, $msg))
+            }
+        }?
+    };
+}
+
+#[macro_export]
+/// unwrap Option<T> or throw tonic::Status with "internal" error using the given message with "?"
+macro_rules! unwrap_or_throw_internal {
+    ($res:expr, $msg:expr) => {
+        crate::unwrap_or_throw!($res, tonic::Code::Internal, $msg)
+    };
+}
+
+#[macro_export]
+/// unwrap Option<T> or throw tonic::Status with "invalid argument" error using the given message
+/// with "?"
+macro_rules! unwrap_or_throw_invalid {
+    ($res:expr, $msg:expr) => {
+        crate::unwrap_or_throw!($res, tonic::Code::InvalidArgument, $msg)
+    };
+}
+
 /// convert bool to Result<(), tonic::Status>, with "invalid argument" error code
 pub fn valid_request_check(check: bool, msg: &str) -> Result<(), Status> {
     match check {

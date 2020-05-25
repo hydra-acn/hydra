@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryInto;
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
-use tonic::{Code, Request, Response, Status};
+use tonic::{Request, Response, Status};
 
 use crate::defs::{dummy_cell, token_from_bytes, CircuitId, Token};
 use crate::epoch::current_time_in_secs;
@@ -12,7 +12,9 @@ use crate::grpc::valid_request_check;
 use crate::mix::directory_client::Client;
 use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
 use crate::tonic_mix::{Cell, CellVector, LongPoll, SendAck, SimplePoll};
-use crate::{define_grpc_service, rethrow_as_internal};
+use crate::{
+    define_grpc_service, rethrow_as_internal, unwrap_or_throw_internal, unwrap_or_throw_invalid,
+};
 
 #[derive(Clone)]
 struct TimestampedCell {
@@ -83,22 +85,15 @@ impl SimpleRelay for Service {
         req: Request<LongPoll>,
     ) -> Result<Response<CellVector>, Status> {
         let poll = req.into_inner();
-        let circuit_id;
-        if let Some(cell) = poll.cell {
-            circuit_id = cell.circuit_id;
-            self.insert_cell(cell)?;
-        } else {
-            circuit_id = 0; // silence compiler
-            valid_request_check(false, "You have to send a cell for long polling")?;
-        }
+        let circuit_id =
+            unwrap_or_throw_invalid!(poll.cell, "You have to send a cell for long polling")
+                .circuit_id;
 
-        let next_receive_in = match self.dir_client.next_receive_in() {
-            Some(d) => d,
-            None => {
-                warn!("We are not in an active communication phase!?");
-                return Err(Status::new(Code::Internal, "Don't know the current epoch"));
-            }
-        };
+        let next_receive_in = unwrap_or_throw_internal!(
+            self.dir_client.next_receive_in(),
+            "Failed to calculate next receive time"
+        );
+        debug!("Next receive in {:?}", next_receive_in);
         delay_for(next_receive_in).await;
         let reply = CellVector {
             cells: self.extract_matching_cells(&poll.tokens, circuit_id)?,
