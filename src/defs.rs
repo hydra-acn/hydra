@@ -1,6 +1,10 @@
 //! Various definitions and helper functions
 
+use ctrlc;
 use openssl::rand::rand_bytes;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::time::{delay_for, Duration};
 
 use crate::tonic_mix::Cell;
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -30,11 +34,26 @@ pub fn hydra_version() -> &'static str {
 }
 
 pub fn dummy_cell(cid: CircuitId, r: RoundNo) -> Cell {
-    let mut c = Cell {
+    let mut dummy = Cell {
         circuit_id: cid,
         round_no: r,
         onion: vec![0; ONION_SIZE],
     };
-    rand_bytes(&mut c.onion).expect("Could not randomize dummy cell, better crash now");
-    c
+    rand_bytes(&mut dummy.onion).expect("Could not randomize dummy cell, better crash now");
+    dummy
+}
+
+/// usage: spawn the handler on a separate thread and catch the panic it throws after catching SIGINT
+pub async fn sigint_handler() {
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    })
+    .expect("Setting Ctrl-C handler failed");
+    while running.load(Ordering::SeqCst) {
+        delay_for(Duration::from_millis(500)).await;
+    }
+    log::info!("Caught SIGINT");
+    panic!("Interrupted");
 }

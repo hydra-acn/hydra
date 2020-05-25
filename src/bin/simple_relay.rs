@@ -2,6 +2,7 @@ use clap::clap_app;
 use log::*;
 use std::sync::Arc;
 
+use hydra::defs::sigint_handler;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::simple_relay::{garbage_collector, spawn_service, State};
 
@@ -34,9 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_handle = spawn_service(state.clone(), local_addr);
     let garbage_handle = tokio::spawn(garbage_collector(state.clone()));
     let dir_client_handle = tokio::spawn(directory_client::run(dir_client.clone()));
+    let sigint_handle = tokio::spawn(sigint_handler());
 
-    // TODO catch SIGINT and gracefully shutdown like for errors?
-    match tokio::try_join!(grpc_handle, garbage_handle, dir_client_handle) {
+    match tokio::try_join!(grpc_handle, garbage_handle, dir_client_handle, sigint_handle) {
         Ok(_) => (),
         Err(e) => error!("Something failed: {}", e),
     }
