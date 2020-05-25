@@ -1,9 +1,14 @@
 //! Various definitions and helper functions
 
+use openssl::rand::rand_bytes;
+
+use crate::tonic_mix::Cell;
 use byteorder::{LittleEndian, ReadBytesExt};
 
 pub type Token = u64;
 pub type CircuitId = u64;
+pub type RoundNo = u32;
+pub const ONION_SIZE: usize = 256;
 
 /// Decode bytes as little-endian u64
 ///
@@ -22,4 +27,14 @@ pub fn token_from_bytes(raw: &[u8; 8]) -> Token {
 
 pub fn hydra_version() -> &'static str {
     option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
+}
+
+pub fn dummy_cell(cid: CircuitId, r: RoundNo) -> Cell {
+    let mut c = Cell {
+        circuit_id: cid,
+        round_no: r,
+        onion: vec![0; ONION_SIZE],
+    };
+    rand_bytes(&mut c.onion).expect("Could not randomize dummy cell, better crash now");
+    c
 }
