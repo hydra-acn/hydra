@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::{Code, Request, Response, Status};
 
-use crate::defs::{token_from_bytes, CircuitId, Token};
+use crate::defs::{dummy_cell, token_from_bytes, CircuitId, Token};
 use crate::epoch::current_time_in_secs;
 use crate::grpc::valid_request_check;
 use crate::mix::directory_client::Client;
@@ -14,6 +14,7 @@ use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
 use crate::tonic_mix::{Cell, CellVector, LongPoll, SendAck, SimplePoll};
 use crate::{define_grpc_service, rethrow_as_internal};
 
+#[derive(Clone)]
 struct TimestampedCell {
     timestamp: u64,
     cell: Cell,
@@ -72,7 +73,7 @@ impl SimpleRelay for Service {
     async fn receive(&self, req: Request<SimplePoll>) -> Result<Response<CellVector>, Status> {
         let msg = req.into_inner();
         let reply = CellVector {
-            cells: self.get_matching_cells(&msg.tokens, msg.circuit_id)?,
+            cells: self.extract_matching_cells(&msg.tokens, msg.circuit_id)?,
         };
         Ok(Response::new(reply))
     }
@@ -100,7 +101,7 @@ impl SimpleRelay for Service {
         };
         delay_for(next_receive_in).await;
         let reply = CellVector {
-            cells: self.get_matching_cells(&poll.tokens, circuit_id)?,
+            cells: self.extract_matching_cells(&poll.tokens, circuit_id)?,
         };
         Ok(Response::new(reply))
     }
@@ -128,20 +129,32 @@ impl Service {
         Ok(())
     }
 
-    /// return all cells we know that match one of the requsted tokens but have a different circuit
-    /// id than cid
-    fn get_matching_cells(&self, tokens: &[Token], cid: CircuitId) -> Result<Vec<Cell>, Status> {
+    /// delete and return all cells we know that match one of the requested tokens but have a
+    /// different circuit id than cid; if no cells match, return one dummy cell
+    fn extract_matching_cells(
+        &self,
+        tokens: &[Token],
+        cid: CircuitId,
+    ) -> Result<Vec<Cell>, Status> {
         let mut cells = Vec::new();
-        let map = rethrow_as_internal!(self.cells.read(), "Could not acquire lock");
+        let mut map = rethrow_as_internal!(self.cells.write(), "Could not acquire lock");
         for t in tokens {
-            if let Some(cells_for_t) = map.get(&t) {
-                for ts_cell in cells_for_t {
+            if let Some(cells_for_t) = map.get_mut(&t) {
+                let mut to_remove = BTreeSet::new();
+                for ts_cell in cells_for_t.iter() {
                     let cell = &ts_cell.cell;
                     if cell.circuit_id != cid {
+                        to_remove.insert(ts_cell.clone());
                         cells.push(cell.clone());
                     }
                 }
+                for c in to_remove {
+                    cells_for_t.remove(&c);
+                }
             }
+        }
+        if cells.len() == 0 {
+            cells.push(dummy_cell(cid, 42)); // note: round_no (42) is wayne here
         }
         Ok(cells)
     }
