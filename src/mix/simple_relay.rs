@@ -11,9 +11,9 @@ use crate::epoch::current_time_in_secs;
 use crate::grpc::valid_request_check;
 use crate::mix::directory_client::Client;
 use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
-use crate::tonic_mix::{Cell, CellVector, LongPoll, SendAck, SimplePoll};
+use crate::tonic_mix::*;
 use crate::{
-    define_grpc_service, rethrow_as_internal, unwrap_or_throw_internal, unwrap_or_throw_invalid,
+    define_grpc_service, rethrow_as_internal, unwrap_or_throw_invalid,
 };
 
 #[derive(Clone)]
@@ -66,38 +66,16 @@ define_grpc_service!(Service, State, SimpleRelayServer);
 
 #[tonic::async_trait]
 impl SimpleRelay for Service {
-    async fn send(&self, req: Request<Cell>) -> Result<Response<SendAck>, Status> {
-        let cell = req.into_inner();
-        self.insert_cell(cell)?;
-        Ok(Response::new(SendAck {}))
-    }
-
-    async fn receive(&self, req: Request<SimplePoll>) -> Result<Response<CellVector>, Status> {
-        let msg = req.into_inner();
-        let reply = CellVector {
-            cells: self.extract_matching_cells(&msg.tokens, msg.circuit_id)?,
-        };
-        Ok(Response::new(reply))
-    }
-
-    async fn send_and_long_poll(
+    async fn send_and_receive(
         &self,
-        req: Request<LongPoll>,
+        req: Request<RelayRequest>,
     ) -> Result<Response<CellVector>, Status> {
-        let poll = req.into_inner();
-        let circuit_id =
-            unwrap_or_throw_invalid!(poll.cell, "You have to send a cell for long polling")
-                .circuit_id;
-
-        let next_receive_in = unwrap_or_throw_internal!(
-            self.dir_client.next_receive_in(),
-            "Failed to calculate next receive time"
-        );
-        debug!("Next receive in {:?}", next_receive_in);
-        delay_for(next_receive_in).await;
+        let msg = req.into_inner();
+        let cell = unwrap_or_throw_invalid!(msg.cell, "You have to send a cell each round");
         let reply = CellVector {
-            cells: self.extract_matching_cells(&poll.tokens, circuit_id)?,
+            cells: self.extract_matching_cells(&msg.tokens, cell.circuit_id)?,
         };
+        self.insert_cell(cell)?;
         Ok(Response::new(reply))
     }
 }
