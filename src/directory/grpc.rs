@@ -1,14 +1,14 @@
 use log::*;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet};
 use tonic::{Request, Response, Status};
 
 use crate::crypto::key::Key;
 use crate::crypto::x448;
-use crate::epoch::current_epoch_no;
+use crate::epoch::{current_epoch_no, EpochNo};
 use crate::grpc::valid_request_check;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
-use crate::{define_grpc_service, rethrow_as_internal};
+use crate::{define_grpc_service, rethrow_as_internal, unwrap_or_throw_invalid};
 
 use super::state::{key_exchange, Mix, State};
 
@@ -48,7 +48,7 @@ impl directory_server::Directory for Service {
                 addr,
                 entry_port: msg.entry_port as u16, // checked range above
                 relay_port: msg.relay_port as u16, // checked range above
-                dh_queue: VecDeque::new(),
+                dh_map: BTreeMap::new(),
             };
 
             mix_map.insert(fingerprint.clone(), mix);
@@ -91,7 +91,6 @@ impl directory_server::Directory for Service {
         let fingerprint = msg.fingerprint.clone();
 
         let next_free_epoch_no;
-        let epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
         valid_request_check(pk.len() == x448::POINT_SIZE, "x448 pk has wrong size")?;
 
@@ -103,21 +102,26 @@ impl directory_server::Directory for Service {
             }
         }
 
+        let mut use_epoch_no;
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Lock failure");
+            let mix = unwrap_or_throw_invalid!(mix_map.get_mut(&fingerprint), "Not registered?");
 
-            valid_request_check(mix_map.contains_key(&fingerprint), "Not registered")?;
-            let mix = mix_map
-                .get_mut(&fingerprint)
-                .expect("Checked existance before");
-
-            epoch_no = next_free_epoch_no + (mix.dh_queue.len() as u32);
-            mix.dh_queue.push_back(pk);
+            let allocated_epochs: BTreeSet<EpochNo> = mix.dh_map.keys().cloned().collect();
+            use_epoch_no = next_free_epoch_no;
+            loop {
+                if allocated_epochs.contains(&use_epoch_no) {
+                    use_epoch_no += 1;
+                } else {
+                    break;
+                }
+            }
+            mix.dh_map.insert(use_epoch_no, pk);
         }
 
         let reply = DhReply {
             counter: msg.counter,
-            epoch_no: epoch_no,
+            epoch_no: use_epoch_no,
         };
 
         info!("Added new public DH key for mix {}", &fingerprint);

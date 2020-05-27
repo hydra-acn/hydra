@@ -1,10 +1,10 @@
 use crate::crypto::key::Key;
 use crate::crypto::x448;
-use crate::epoch::{current_epoch_no, COMMUNICATION_DURATION, MAX_EPOCH_NO};
-
+use crate::epoch::{current_epoch_no, EpochNo, COMMUNICATION_DURATION, MAX_EPOCH_NO};
 use crate::tonic_directory::{EpochInfo, MixInfo};
+
 use log::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::time::{self, Duration};
@@ -68,16 +68,23 @@ impl State {
             let mut mixes = Vec::new();
             let mut mix_map = self.mix_map.lock().expect("Acquiring lock failed");
             for (_, mix) in mix_map.iter_mut() {
-                if let Some(pk) = mix.dh_queue.pop_front() {
-                    let info = MixInfo {
-                        address: crate::net::ip_addr_to_vec(&mix.addr),
-                        entry_port: mix.entry_port as u32,
-                        relay_port: mix.relay_port as u32,
-                        public_dh: pk.clone_to_vec(),
-                        fingerprint: mix.fingerprint.clone(),
-                    };
-                    mixes.push(info);
-                } // else: the mix has no DH keys left
+                // note: remove because we do not need it again
+                match mix.dh_map.remove(&epoch_no) {
+                    Some(pk) => {
+                        let info = MixInfo {
+                            address: crate::net::ip_addr_to_vec(&mix.addr),
+                            entry_port: mix.entry_port as u32,
+                            relay_port: mix.relay_port as u32,
+                            public_dh: pk.clone_to_vec(),
+                            fingerprint: mix.fingerprint.clone(),
+                        };
+                        mixes.push(info);
+                    }
+                    None => warn!(
+                        "Don't have a DH key for mix {} in epoch {}",
+                        &mix.fingerprint, &epoch_no
+                    ),
+                }
             }
             let epoch_info = EpochInfo {
                 epoch_no,
@@ -121,7 +128,7 @@ pub struct Mix {
     pub addr: IpAddr,
     pub entry_port: u16,
     pub relay_port: u16,
-    pub dh_queue: VecDeque<Key>,
+    pub dh_map: BTreeMap<EpochNo, Key>,
 }
 
 pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), tonic::Status> {
