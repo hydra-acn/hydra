@@ -4,6 +4,7 @@ use tonic::{Request, Response, Status};
 
 use crate::crypto::key::Key;
 use crate::crypto::x448;
+use crate::epoch::current_epoch_no;
 use crate::grpc::valid_request_check;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
@@ -89,25 +90,28 @@ impl directory_server::Directory for Service {
         // TODO security check freshness (counter > last counter) and integrity
         let fingerprint = msg.fingerprint.clone();
 
+        let next_free_epoch_no;
         let epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
         valid_request_check(pk.len() == x448::POINT_SIZE, "x448 pk has wrong size")?;
 
         {
-            let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
+            let epoch_queue = rethrow_as_internal!(self.epochs.read(), "Lock failure");
+            next_free_epoch_no = match epoch_queue.back() {
+                Some(e) => e.epoch_no + 1,
+                None => current_epoch_no() + 1,
+            }
+        }
+
+        {
+            let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Lock failure");
 
             valid_request_check(mix_map.contains_key(&fingerprint), "Not registered")?;
             let mix = mix_map
                 .get_mut(&fingerprint)
                 .expect("Checked existance before");
 
-            {
-                let next_free_epoch_no = rethrow_as_internal!(
-                    self.next_free_epoch_no.lock(),
-                    "Could not acquire a lock"
-                );
-                epoch_no = *next_free_epoch_no + (mix.dh_queue.len() as u32);
-            }
+            epoch_no = next_free_epoch_no + (mix.dh_queue.len() as u32);
             mix.dh_queue.push_back(pk);
         }
 

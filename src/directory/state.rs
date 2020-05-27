@@ -1,6 +1,6 @@
 use crate::crypto::key::Key;
 use crate::crypto::x448;
-use crate::epoch::{current_epoch_no, EpochNo, COMMUNICATION_DURATION, MAX_EPOCH_NO};
+use crate::epoch::{current_epoch_no, COMMUNICATION_DURATION, MAX_EPOCH_NO};
 
 use crate::tonic_directory::{EpochInfo, MixInfo};
 use log::*;
@@ -11,7 +11,6 @@ use tokio::time::{self, Duration};
 
 pub struct State {
     pub mix_map: Mutex<HashMap<String, Mix>>,
-    pub next_free_epoch_no: Mutex<EpochNo>,
     config: Config,
     pub epochs: RwLock<VecDeque<EpochInfo>>,
 }
@@ -23,7 +22,6 @@ impl State {
 
         State {
             mix_map: Mutex::new(HashMap::new()),
-            next_free_epoch_no: Mutex::new(current_epoch_no + 1),
             config: config,
             epochs: RwLock::new(VecDeque::new()),
         }
