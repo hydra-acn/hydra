@@ -9,7 +9,6 @@ use tonic::{Request, Response, Status};
 use crate::defs::{dummy_cell, token_from_bytes, CircuitId, Token};
 use crate::epoch::current_time_in_secs;
 use crate::grpc::valid_request_check;
-use crate::mix::directory_client::Client;
 use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
 use crate::tonic_mix::*;
 use crate::{
@@ -49,14 +48,12 @@ impl PartialEq for TimestampedCell {
 type CellMap = BTreeMap<Token, BTreeSet<TimestampedCell>>;
 
 pub struct State {
-    dir_client: Arc<Client>,
     cells: RwLock<CellMap>,
 }
 
 impl State {
-    pub fn new(dir_client: Arc<Client>) -> Self {
+    pub fn new() -> Self {
         State {
-            dir_client,
             cells: RwLock::new(CellMap::new()),
         }
     }

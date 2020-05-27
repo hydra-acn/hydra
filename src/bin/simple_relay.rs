@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let dir_client = Arc::new(Client::new(dir_cfg));
-    let state = Arc::new(State::new(dir_client.clone()));
+    let state = Arc::new(State::new());
 
     let grpc_handle = spawn_service(state.clone(), local_addr);
     let garbage_handle = tokio::spawn(garbage_collector(state.clone()));
