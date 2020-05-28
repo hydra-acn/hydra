@@ -119,12 +119,15 @@ impl directory_server::Directory for Service {
             mix.dh_map.insert(use_epoch_no, pk);
         }
 
+        info!(
+            "Added new public DH key for mix {}, assigned it epoch {}",
+            &fingerprint, &use_epoch_no
+        );
+
         let reply = DhReply {
             counter: msg.counter,
             epoch_no: use_epoch_no,
         };
-
-        info!("Added new public DH key for mix {}", &fingerprint);
         Ok(Response::new(reply))
     }
 

@@ -81,8 +81,10 @@ impl State {
                         mixes.push(info);
                     }
                     None => warn!(
-                        "Don't have a DH key for mix {} in epoch {}",
-                        &mix.fingerprint, &epoch_no
+                        "Don't have a DH key for mix {} in epoch {} (have {} non-matching)",
+                        &mix.fingerprint,
+                        &epoch_no,
+                        mix.dh_map.len(),
                     ),
                 }
             }
