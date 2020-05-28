@@ -33,3 +33,14 @@ impl std::convert::From<Error> for tonic::Status {
         tonic::Status::new(tonic::Code::Internal, e.to_string())
     }
 }
+
+impl std::convert::From<openssl::error::ErrorStack> for Error {
+    fn from(stack: openssl::error::ErrorStack) -> Self {
+        let mut msg = "[".to_string();
+        for e in stack.errors() {
+            msg.push_str(&format!("{}, ", e));
+        }
+        msg.push_str("]");
+        Error::OpenSslError(msg)
+    }
+}
