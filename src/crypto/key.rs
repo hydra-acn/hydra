@@ -54,8 +54,7 @@ impl Key {
         self.key.clone()
     }
 
-    /// TODO only for public keys
-    pub fn borrow_vec(&self) -> &[u8] {
+    pub fn borrow_raw(&self) -> &[u8] {
         &self.key
     }
 }

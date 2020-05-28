@@ -156,7 +156,7 @@ async fn client_task(state: Arc<State>, port: u16) {
                 pk_map
                     .get(&(mix.address[3], i as u32))
                     .expect("pk map broken?")
-                    .borrow_vec(),
+                    .borrow_raw(),
                 "Wrong pk"
             );
         }
