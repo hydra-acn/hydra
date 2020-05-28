@@ -117,7 +117,7 @@ impl Client {
             .fetch(&mut conn)
             .await
             .expect("Fetching directory for the first time failed");
-        let goal = cmp::min(12, epochs_in_advance + 2);
+        let goal = cmp::max(12, epochs_in_advance + 2);
         for _ in 0..goal {
             self.create_ephemeral_dh(&mut conn).await;
         }
@@ -159,7 +159,7 @@ impl Client {
         };
         // send more ephemeral keys if necessary
         let sent_keys = self.keys.read().expect("Lock failure").len();
-        let goal = cmp::min(12, epochs_in_advance + 2);
+        let goal = cmp::max(12, epochs_in_advance + 2);
         if sent_keys < goal {
             for _ in 0..(goal - sent_keys) {
                 self.create_ephemeral_dh(&mut conn).await;
