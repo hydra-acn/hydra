@@ -141,9 +141,8 @@ pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), tonic::Status> {
 
 pub async fn update_loop(state: Arc<State>) {
     loop {
-        state.update();
-
         // wait till next update
-        time::delay_for(Duration::from_secs(60)).await;
+        time::delay_for(Duration::from_secs(120)).await;
+        state.update();
     }
 }
