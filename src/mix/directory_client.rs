@@ -130,7 +130,9 @@ impl Client {
             // TODO set auth tag appropriately
             auth_tag: Vec::new(),
         };
-        conn.unregister(request).await.expect("Unregistration failed");
+        conn.unregister(request)
+            .await
+            .expect("Unregistration failed");
     }
 
     /// update includes fetching the directory and sending more ephemeral keys if necessary
@@ -155,8 +157,9 @@ impl Client {
         };
         // send more ephemeral keys if necessary
         let sent_keys = self.keys.read().expect("Lock failure").len();
-        if epochs_in_advance > sent_keys {
-            for _ in 0..epochs_in_advance - sent_keys {
+        let goal = epochs_in_advance + 2;
+        if sent_keys < goal {
+            for _ in 0..(goal - sent_keys) {
                 self.create_ephemeral_dh(&mut conn).await;
             }
         }
