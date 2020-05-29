@@ -15,12 +15,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Simple relay for cells without onion encryption")
         (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
+        (@arg directory: -d --directory "Address and port of directory service, default 141.24.207.69:9000")
     )
     .get_matches();
 
-    // TODO don't hardcode address
-    let directory_addr = "141.24.207.69:9000".parse()?;
     let local_addr: std::net::SocketAddr = args.value_of("sockAddr").unwrap().parse()?;
+    let directory_addr = args
+        .value_of("directory")
+        .unwrap_or("141.24.207.69:9000")
+        .parse()?;
 
     let dir_cfg = directory_client::Config {
         addr: local_addr.ip(),
@@ -37,7 +40,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir_client_handle = tokio::spawn(directory_client::run(dir_client.clone()));
     let sigint_handle = tokio::spawn(sigint_handler());
 
-    match tokio::try_join!(grpc_handle, garbage_handle, dir_client_handle, sigint_handle) {
+    match tokio::try_join!(
+        grpc_handle,
+        garbage_handle,
+        dir_client_handle,
+        sigint_handle
+    ) {
         Ok(_) => (),
         Err(e) => error!("Something failed: {}", e),
     }
