@@ -216,6 +216,17 @@ impl Client {
         key_map.insert(epoch_no, (pk, sk));
         self.key_count.fetch_add(1, Ordering::Relaxed);
     }
+
+    /// check if we own a ephemeral DH key for the given epoch
+    pub fn has_ephemeral_key(&self, epoch_no: &EpochNo) -> bool {
+        match self.keys.read() {
+            Ok(map) => map.contains_key(epoch_no),
+            Err(e) => {
+                error!("Lock failure: {}", e);
+                false
+            }
+        }
+    }
 }
 
 pub async fn run(client: Arc<Client>) {

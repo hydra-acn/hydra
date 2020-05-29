@@ -11,6 +11,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 
 pub type Token = u64;
 pub type CircuitId = u64;
+pub type CircuitIdSet = std::collections::BTreeSet<CircuitId>;
 pub type RoundNo = u32;
 pub const ONION_SIZE: usize = 256;
 
