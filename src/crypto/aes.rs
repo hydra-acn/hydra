@@ -1,11 +1,11 @@
-///! AES specific crypto
+//! AES specific crypto
 use openssl::symm;
 
 use crate::crypto::key::Key;
 use crate::error::Error;
 
 /// AES-256-GCM context (static key)
-struct Aes256Gcm {
+pub struct Aes256Gcm {
     key: Key,
 }
 
