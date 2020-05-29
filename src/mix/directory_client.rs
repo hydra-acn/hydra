@@ -21,6 +21,7 @@ pub struct Config {
     pub addr: IpAddr,
     pub entry_port: u16,
     pub relay_port: u16,
+    pub rendezvous_port: u16,
     pub directory_addr: SocketAddr,
 }
 
@@ -95,6 +96,7 @@ impl Client {
             address: addr_vec,
             entry_port: self.config.entry_port as u32,
             relay_port: self.config.relay_port as u32,
+            rendezvous_port: self.config.rendezvous_port as u32,
             public_dh: self.pk.clone_to_vec(),
         };
         match conn.register(request).await {

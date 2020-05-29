@@ -75,6 +75,7 @@ impl State {
                             address: crate::net::ip_addr_to_vec(&mix.addr),
                             entry_port: mix.entry_port as u32,
                             relay_port: mix.relay_port as u32,
+                            rendezvous_port: mix.rendezvous_port as u32,
                             public_dh: pk.clone_to_vec(),
                             fingerprint: mix.fingerprint.clone(),
                         };
@@ -130,6 +131,7 @@ pub struct Mix {
     pub addr: IpAddr,
     pub entry_port: u16,
     pub relay_port: u16,
+    pub rendezvous_port: u16,
     pub dh_map: BTreeMap<EpochNo, Key>,
 }
 

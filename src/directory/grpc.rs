@@ -32,6 +32,10 @@ impl directory_server::Directory for Service {
         valid_request_check(!addr.is_loopback(), "Invalid IP address")?;
         valid_request_check(msg.entry_port <= std::u16::MAX as u32, "Port is not valid")?;
         valid_request_check(msg.relay_port <= std::u16::MAX as u32, "Port is not valid")?;
+        valid_request_check(
+            msg.rendezvous_port <= std::u16::MAX as u32,
+            "Port is not valid",
+        )?;
 
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Could not acquire a lock");
@@ -48,6 +52,7 @@ impl directory_server::Directory for Service {
                 addr,
                 entry_port: msg.entry_port as u16, // checked range above
                 relay_port: msg.relay_port as u16, // checked range above
+                rendezvous_port: msg.rendezvous_port as u16, // checked range above
                 dh_map: BTreeMap::new(),
             };
 

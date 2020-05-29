@@ -225,6 +225,7 @@ fn create_register_request(index: u8, pk: &Key) -> RegisterRequest {
         address: vec![10, 0, 0, index],
         entry_port: 4242,
         relay_port: 1337,
+        rendezvous_port: 1337,
         public_dh: pk.clone_to_vec(),
     }
 }

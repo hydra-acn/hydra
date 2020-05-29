@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         addr: local_addr.ip(),
         entry_port: local_addr.port(),
         relay_port: local_addr.port(),
+        rendezvous_port: local_addr.port() + 100,
         directory_addr,
     };
 
