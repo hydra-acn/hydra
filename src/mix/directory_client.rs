@@ -174,11 +174,12 @@ impl Client {
         let query = DirectoryRequest { min_epoch_no: 0 };
         let directory = conn.query_directory(query).await?.into_inner();
         let mut epoch_map = self.epochs.write().expect("Lock failure");
-        if let Some(oldest_epoch) = directory.epochs.first() {
-            // delete old epochs from our maps
-            *epoch_map = epoch_map.split_off(&oldest_epoch.epoch_no);
+        if let Some(next_epoch) = directory.epochs.first() {
+            // delete old epochs from our maps (but keep current, which is not in the directory)
+            let current_epoch_no = &(next_epoch.epoch_no - 1);
+            *epoch_map = epoch_map.split_off(current_epoch_no);
             let mut key_map = self.keys.write().expect("Lock failure");
-            *key_map = key_map.split_off(&oldest_epoch.epoch_no);
+            *key_map = key_map.split_off(current_epoch_no);
         } else {
             warn!("Directory response is empty");
         }
