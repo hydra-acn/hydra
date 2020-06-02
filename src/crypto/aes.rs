@@ -109,11 +109,13 @@ mod tests {
 
         // test failing authentication (wrong tag)
         tag_buf[0] += 1;
-        ctx.decrypt(&iv, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf).unwrap_err();
+        ctx.decrypt(&iv, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
+            .unwrap_err();
 
         // test failing authentication (wrong ciphertext)
         tag_buf[0] -= 1;
         ct_buf[5] -= 1;
-        ctx.decrypt(&iv, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf).unwrap_err();
+        ctx.decrypt(&iv, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
+            .unwrap_err();
     }
 }
