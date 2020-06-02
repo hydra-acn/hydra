@@ -7,9 +7,6 @@ cache:
 
 coverage:
     stage: test
-    only:
-        refs:
-            - master
     script: cargo tarpaulin --exclude-files "include/*" --exclude-files "tests/*" -o Html
     artifacts:
         expire_in: 8 weeks
