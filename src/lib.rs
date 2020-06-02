@@ -1,8 +1,8 @@
-pub mod grpc;
 pub mod crypto;
 pub mod defs;
 pub mod epoch;
 pub mod error;
+pub mod grpc;
 pub mod log;
 pub mod net;
 

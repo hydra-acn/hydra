@@ -8,10 +8,6 @@ pub fn init() {
         filter = LevelFilter::Info;
     }
 
-    TermLogger::init(
-        filter,
-        simplelog::Config::default(),
-        TerminalMode::Mixed,
-    )
-    .expect("Initializing Hydra logging failed");
+    TermLogger::init(filter, simplelog::Config::default(), TerminalMode::Mixed)
+        .expect("Initializing Hydra logging failed");
 }
