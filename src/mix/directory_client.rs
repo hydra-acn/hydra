@@ -60,16 +60,27 @@ impl Client {
         }
     }
 
-    /// return the start time of the next epoch setup (as UNIX time in seconds)
-    pub fn next_setup_start(&self) -> Option<u64> {
+    // TODO performance: should store infos inside Arcs to avoid copy (key material is big!)
+    pub fn get_epoch_info(&self, epoch_no: EpochNo) -> Option<EpochInfo> {
+        let map = self.epochs.read().expect("Lock failure");
+        map.get(&epoch_no).cloned()
+    }
+
+    /// return info about the epoch that starts next (based on setup start time)
+    pub fn next_epoch_info(&self) -> Option<EpochInfo> {
         let current_time = current_time_in_secs();
         let epoch_map = self.epochs.read().expect("Lock failure");
         for (_, epoch) in epoch_map.iter() {
             if epoch.setup_start_time > current_time {
-                return Some(epoch.setup_start_time);
+                return Some(epoch.clone());
             }
         }
         None
+    }
+
+    /// return the start time of the next epoch setup (as UNIX time in seconds)
+    pub fn next_setup_start(&self) -> Option<u64> {
+        self.next_epoch_info().map(|epoch| epoch.setup_start_time)
     }
 
     /// if we are currently in a communication phase, return the duration till next receive
@@ -83,6 +94,7 @@ impl Client {
         None
     }
 
+    /// note: registration also includes the first fetch
     pub async fn register(&self) {
         let mut conn = DirectoryClient::connect(self.endpoint.clone())
             .await

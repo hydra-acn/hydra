@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use hydra::defs::sigint_handler;
 use hydra::mix::directory_client::{self, Client};
+use hydra::mix::epoch_worker::{self, Worker};
 use hydra::mix::simple_relay;
 
 #[tokio::main]
@@ -54,10 +55,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         // real mix
-        unimplemented!();
+        let worker = Arc::new(Worker::new(dir_client.clone()));
+        let main_handle = tokio::spawn(epoch_worker::run(worker.clone()));
+        // XXX spawn grpc service as well
+
+        match tokio::try_join!(sigint_handle, dir_client_handle, main_handle) {
+            Ok(_) => (),
+            Err(e) => error!("Something failed: {}", e),
+        }
     }
 
     info!("Stopping gracefully by unregistering at the directory service");
     dir_client.unregister().await;
+    info!("Unregistration successful");
     Ok(())
 }

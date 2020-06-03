@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
 
-use crate::tonic_directory::EpochInfo;
+pub use crate::tonic_directory::EpochInfo;
 
 pub type EpochNo = u32;
 
