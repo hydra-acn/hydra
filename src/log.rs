@@ -1,4 +1,4 @@
-use simplelog::{LevelFilter, TermLogger, TerminalMode};
+use simplelog::{LevelFilter, TermLogger, TerminalMode, ConfigBuilder};
 
 pub fn init() {
     let filter;
@@ -8,6 +8,7 @@ pub fn init() {
         filter = LevelFilter::Info;
     }
 
-    TermLogger::init(filter, simplelog::Config::default(), TerminalMode::Mixed)
+    let cfg = ConfigBuilder::new().set_time_format_str("%H:%M:%S%.6f").build();
+    TermLogger::init(filter, cfg, TerminalMode::Mixed)
         .expect("Initializing Hydra logging failed");
 }
