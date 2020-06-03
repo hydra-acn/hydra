@@ -1,9 +1,8 @@
-use log::*;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use tonic::{Code, Request, Response, Status};
 
-use crate::defs::{CircuitId, CircuitIdSet};
+use crate::defs::CircuitIdSet;
 use crate::epoch::EpochNo;
 use crate::grpc::valid_request_check;
 use crate::mix::directory_client;
@@ -17,7 +16,7 @@ type CellRxQueue = tokio::sync::mpsc::UnboundedSender<Cell>;
 pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_rx_queues: Vec<SetupRxQueue>,
-    cell_rx_queues: Vec<CellRxQueue>,
+    _cell_rx_queues: Vec<CellRxQueue>,
     used_circuit_ids: Mutex<BTreeMap<EpochNo, CircuitIdSet>>,
 }
 
@@ -30,7 +29,7 @@ impl State {
         State {
             dir_client,
             setup_rx_queues,
-            cell_rx_queues,
+            _cell_rx_queues: cell_rx_queues,
             used_circuit_ids: Mutex::new(BTreeMap::new()),
         }
     }
@@ -61,7 +60,7 @@ impl Mix for Service {
             if already_in_use == true {
                 return Err(Status::new(
                     Code::AlreadyExists,
-                    "Circuit Id already in use",
+                    format!("Circuit Id {} already in use", &pkt.circuit_id),
                 ));
             }
         }
@@ -71,18 +70,18 @@ impl Mix for Service {
         Ok(Response::new(SetupAck {}))
     }
 
-    async fn send_and_receive(&self, req: Request<Cell>) -> Result<Response<CellVector>, Status> {
+    async fn send_and_receive(&self, _req: Request<Cell>) -> Result<Response<CellVector>, Status> {
         unimplemented!();
     }
 
     async fn late_poll(
         &self,
-        req: Request<LatePollRequest>,
+        _req: Request<LatePollRequest>,
     ) -> Result<Response<CellVector>, Status> {
         unimplemented!();
     }
 
-    async fn relay(&self, req: Request<Cell>) -> Result<Response<RelayAck>, Status> {
+    async fn relay(&self, _req: Request<Cell>) -> Result<Response<RelayAck>, Status> {
         unimplemented!();
     }
 }
