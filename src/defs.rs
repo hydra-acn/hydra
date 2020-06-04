@@ -62,9 +62,11 @@ pub fn dummy_cell(cid: CircuitId, r: RoundNo) -> Cell {
     dummy
 }
 
-/// usage: spawn the handler on a separate thread and catch the panic it throws after catching SIGINT
-pub async fn sigint_handler() {
-    let running = Arc::new(AtomicBool::new(true));
+/// Usage: create an `AtomicBool` with value `true` and spawn the handler on a separate thread. As
+/// soon as `SIGINT` is catched, two things will happen (both may be helpful for cleanup):
+/// 1. the thread the handler ran own panics -> catch and cleanup
+/// 2. the `AtomicBool` is set to false -> poll and cleanup
+pub async fn sigint_handler(running: Arc<AtomicBool>) {
     let r = running.clone();
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);

@@ -1,5 +1,6 @@
 use clap::clap_app;
 use log::*;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -22,7 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .get_matches();
 
-    let sigint_handle = tokio::spawn(sigint_handler());
+    let running = Arc::new(AtomicBool::new(true));
+    let sigint_handle = tokio::spawn(sigint_handler(running.clone()));
 
     // directory client config
     let mix_addr: std::net::SocketAddr = args.value_of("sockAddr").unwrap().parse()?;
@@ -82,11 +84,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // setup main worker
         let worker = Arc::new(Worker::new(
+            running.clone(),
             dir_client.clone(),
             setup_rx_queue_receivers,
             cell_rx_queue_receivers,
         ));
-        let main_handle = tokio::spawn(epoch_worker::run(worker.clone()));
+        let main_handle = tokio::task::spawn_blocking(move || epoch_worker::run(worker.clone()));
 
         match tokio::try_join!(sigint_handle, dir_client_handle, grpc_handle, main_handle) {
             Ok(_) => (),
@@ -97,5 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Stopping gracefully by unregistering at the directory service");
     dir_client.unregister().await;
     info!("Unregistration successful");
+    // TODO security this most likely does not terminate the worker gracefully, keys might be
+    // leaked -> better use a channel to signal shutdown
     Ok(())
 }

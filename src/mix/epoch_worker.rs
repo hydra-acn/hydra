@@ -2,8 +2,10 @@
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Mutex};
-use tokio::time::{delay_for, Duration};
+use std::thread::sleep;
+use tokio::time::Duration;
 
 use super::circuit::Circuit;
 use super::directory_client;
@@ -15,9 +17,9 @@ type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacket>;
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacket>>;
 
-// TODO most mutex should be redundant if we know what we are doing
-// -> use unsafe to increase performance? (e.g. a "forced" Send variant of RefCell instead?)
+// TODO most mutex should be redundant because we are in a single threaded context now
 pub struct Worker {
+    running: Arc<AtomicBool>,
     dir_client: Arc<directory_client::Client>,
     setup_rx_queues: Mutex<Vec<SetupRxQueue>>,
     _cell_rx_queues: Mutex<Vec<CellRxQueue>>,
@@ -26,11 +28,13 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(
+        running: Arc<AtomicBool>,
         dir_client: Arc<directory_client::Client>,
         setup_rx_queues: Vec<SetupRxQueue>,
         cell_rx_queues: Vec<CellRxQueue>,
     ) -> Self {
         Worker {
+            running: running.clone(),
             dir_client,
             setup_rx_queues: Mutex::new(setup_rx_queues),
             _cell_rx_queues: Mutex::new(cell_rx_queues),
@@ -39,7 +43,7 @@ impl Worker {
     }
 
     /// endless loop for processing the epochs, starting with the upcomming epoch (setup)
-    pub async fn run(&self) {
+    pub fn run(&self) {
         let first_epoch;
         // poll directory client till we get an answer
         loop {
@@ -51,7 +55,7 @@ impl Worker {
                 None => (),
             }
             // don't poll too hard
-            delay_for(Duration::from_secs(1)).await;
+            sleep(Duration::from_secs(1));
         }
 
         info!(
@@ -68,8 +72,7 @@ impl Worker {
         // "endless" processing of epochs; life as a mix never gets boring!
         loop {
             // note: process_epoch waits till the start of the epoch(s) automatically
-            self.process_epoch(&setup_epoch, &communication_epoch, is_first)
-                .await;
+            self.process_epoch(&setup_epoch, &communication_epoch, is_first);
 
             // one more epoch done, some more to come!
             is_first = false;
@@ -82,7 +85,7 @@ impl Worker {
         }
     }
 
-    async fn process_epoch(
+    fn process_epoch(
         &self,
         setup_epoch: &EpochInfo,
         communication_epoch: &EpochInfo,
@@ -112,17 +115,20 @@ impl Worker {
             .get_private_ephemeral_key(&setup_epoch.epoch_no);
 
         for round_no in 0..communication_epoch.number_of_rounds {
+            if self.running.load(atomic::Ordering::SeqCst) == false {
+                // quick and dirty panic because we shall stop
+                panic!("You told us to panic!")
+            }
             // TODO move waiting inside the process functions?
             // wait till start of next round
             let wait_time = next_round_start
                 .checked_sub(current_time())
                 .expect("Did not finish last setup in time?");
-            delay_for(wait_time).await;
+            sleep(wait_time);
             next_round_start += interval;
 
             if is_first == false {
-                self.process_communication_round(&communication_epoch, round_no)
-                    .await;
+                self.process_communication_round(&communication_epoch, round_no);
             } else {
                 info!(
                     "We would process round {} now, but nothing to do in our first epoch",
@@ -134,24 +140,24 @@ impl Worker {
             let wait_time = next_round_end
                 .checked_sub(current_time())
                 .expect("Did not finish round in time?");
-            delay_for(wait_time).await;
+            sleep(wait_time);
             next_round_end += interval;
 
             let setup_layer = round_no;
             if setup_layer < setup_epoch.path_length {
                 match &maybe_sk {
-                    Some(sk) => self.process_setup_layer(&setup_epoch, setup_layer, &sk).await,
+                    Some(sk) => self.process_setup_layer(&setup_epoch, setup_layer, &sk),
                     None => warn!("We could setup layer {} of epoch {} now, but we don't have the matching ephemeral key", setup_layer, setup_epoch.epoch_no)
                 }
             }
         }
     }
 
-    async fn process_communication_round(&self, epoch: &EpochInfo, round_no: u32) {
+    fn process_communication_round(&self, epoch: &EpochInfo, round_no: u32) {
         info!("Processing round {} of epoch {}", round_no, epoch.epoch_no);
     }
 
-    async fn process_setup_layer(&self, epoch: &EpochInfo, layer: u32, sk: &Key) {
+    fn process_setup_layer(&self, epoch: &EpochInfo, layer: u32, sk: &Key) {
         info!(
             "Processing setup layer {} of epoch {}",
             layer, epoch.epoch_no
@@ -234,6 +240,7 @@ fn insert_pending_setup_pkt(map: &mut PendingSetupMap, pkt: SetupPacket) {
     }
 }
 
-pub async fn run(worker: Arc<Worker>) {
-    worker.run().await;
+pub fn run(worker: Arc<Worker>) {
+    info!("Starting to run now");
+    worker.run();
 }
