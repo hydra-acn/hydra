@@ -8,7 +8,9 @@ use crate::grpc::valid_request_check;
 use crate::mix::directory_client;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
 use crate::tonic_mix::*;
-use crate::{define_grpc_service, rethrow_as_internal, unwrap_or_throw_internal};
+use crate::{
+    define_grpc_service, rethrow_as_internal, unwrap_or_throw_internal, unwrap_or_throw_invalid,
+};
 
 type SetupRxQueue = tokio::sync::mpsc::UnboundedSender<SetupPacket>;
 type CellRxQueue = tokio::sync::mpsc::UnboundedSender<Cell>;
@@ -41,6 +43,7 @@ define_grpc_service!(Service, State, MixServer);
 impl Mix for Service {
     async fn setup_circuit(&self, req: Request<SetupPacket>) -> Result<Response<SetupAck>, Status> {
         let pkt = req.into_inner();
+        unwrap_or_throw_invalid!(pkt.ttl(), "Your setup packet has a strange size");
         valid_request_check(
             self.dir_client.has_ephemeral_key(&pkt.epoch_no),
             "Seems like we are not part of the given epoch",

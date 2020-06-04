@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::{delay_for, Duration};
 
-use crate::tonic_mix::Cell;
+use crate::tonic_mix::{Cell, SetupPacket};
 use byteorder::{LittleEndian, ReadBytesExt};
 
 pub type Token = u64;
@@ -32,6 +32,24 @@ pub fn token_from_bytes(raw: &[u8; 8]) -> Token {
 
 pub fn hydra_version() -> &'static str {
     option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
+}
+
+impl SetupPacket {
+    /// for a given setup packet, determine how much hops in needs to be sent
+    /// (0 if the onion encrypted part only contains the tokens to subscribe to)
+    /// returns `None` if the onion encrypted part has unexpected size
+    pub fn ttl(&self) -> Option<u32> {
+        let token_len = 256 * 8;
+        if self.onion.len() < token_len {
+            return None;
+        }
+        let nom = self.onion.len() - token_len;
+        let denom = 102;
+        if nom % denom != 0 {
+            return None;
+        }
+        Some((nom / denom) as u32)
+    }
 }
 
 pub fn dummy_cell(cid: CircuitId, r: RoundNo) -> Cell {

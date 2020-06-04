@@ -5,7 +5,7 @@ use openssl::rand::rand_bytes;
 
 /// the Key datatype
 /// TODO type parameter to indicate public/private keys?
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Key {
     key: Vec<u8>,
 }

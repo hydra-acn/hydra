@@ -229,15 +229,22 @@ impl Client {
         self.key_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// check if we own a ephemeral DH key for the given epoch
+    /// check if we own an ephemeral DH key for the given epoch
     pub fn has_ephemeral_key(&self, epoch_no: &EpochNo) -> bool {
-        match self.keys.read() {
-            Ok(map) => map.contains_key(epoch_no),
-            Err(e) => {
-                error!("Lock failure: {}", e);
-                false
-            }
-        }
+        self.keys
+            .read()
+            .expect("Poisoned lock")
+            .contains_key(epoch_no)
+    }
+
+    /// return our private ephemeral DH key for the given epoch if we have one
+    pub fn get_private_ephemeral_key(&self, epoch_no: &EpochNo) -> Option<Key> {
+        self.keys
+            .read()
+            .expect("Poisoned lock")
+            .get(epoch_no)
+            .map(|(_pk, sk)| sk)
+            .cloned()
     }
 }
 

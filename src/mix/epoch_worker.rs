@@ -1,19 +1,41 @@
 //! processing of one epoch
 use log::*;
-use std::sync::Arc;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use tokio::time::{delay_for, Duration};
 
+use super::circuit::Circuit;
 use super::directory_client;
-use crate::epoch::current_time;
-use crate::epoch::EpochInfo;
+use crate::crypto::key::Key;
+use crate::epoch::{current_time, EpochInfo, EpochNo};
+use crate::tonic_mix::*;
 
+type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacket>;
+type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
+type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacket>>;
+
+// TODO most mutex should be redundant if we know what we are doing
+// -> use unsafe to increase performance? (e.g. a "forced" Send variant of RefCell instead?)
 pub struct Worker {
     dir_client: Arc<directory_client::Client>,
+    setup_rx_queues: Mutex<Vec<SetupRxQueue>>,
+    _cell_rx_queues: Mutex<Vec<CellRxQueue>>,
+    pending_setup_pkts: Mutex<PendingSetupMap>,
 }
 
 impl Worker {
-    pub fn new(dir_client: Arc<directory_client::Client>) -> Self {
-        Worker { dir_client }
+    pub fn new(
+        dir_client: Arc<directory_client::Client>,
+        setup_rx_queues: Vec<SetupRxQueue>,
+        cell_rx_queues: Vec<CellRxQueue>,
+    ) -> Self {
+        Worker {
+            dir_client,
+            setup_rx_queues: Mutex::new(setup_rx_queues),
+            _cell_rx_queues: Mutex::new(cell_rx_queues),
+            pending_setup_pkts: Mutex::new(PendingSetupMap::new()),
+        }
     }
 
     /// endless loop for processing the epochs, starting with the upcomming epoch (setup)
@@ -84,6 +106,11 @@ impl Worker {
             "Not enough rounds to setup next epoch"
         );
 
+        // "cache" our private ephemeral key (if we have one)
+        let maybe_sk = self
+            .dir_client
+            .get_private_ephemeral_key(&setup_epoch.epoch_no);
+
         for round_no in 0..communication_epoch.number_of_rounds {
             // TODO move waiting inside the process functions?
             // wait till start of next round
@@ -97,7 +124,10 @@ impl Worker {
                 self.process_communication_round(&communication_epoch, round_no)
                     .await;
             } else {
-                info!("If this wasn't the first epoch, we would process round {} now", round_no)
+                info!(
+                    "We would process round {} now, but nothing to do in our first epoch",
+                    round_no
+                )
             }
 
             // wait till round end
@@ -109,7 +139,10 @@ impl Worker {
 
             let setup_layer = round_no;
             if setup_layer < setup_epoch.path_length {
-                self.process_setup_layer(&setup_epoch, setup_layer).await;
+                match &maybe_sk {
+                    Some(sk) => self.process_setup_layer(&setup_epoch, setup_layer, &sk).await,
+                    None => warn!("We could setup layer {} of epoch {} now, but we don't have the matching ephemeral key", setup_layer, setup_epoch.epoch_no)
+                }
             }
         }
     }
@@ -118,11 +151,86 @@ impl Worker {
         info!("Processing round {} of epoch {}", round_no, epoch.epoch_no);
     }
 
-    async fn process_setup_layer(&self, epoch: &EpochInfo, layer: u32) {
+    async fn process_setup_layer(&self, epoch: &EpochInfo, layer: u32, sk: &Key) {
         info!(
             "Processing setup layer {} of epoch {}",
             layer, epoch.epoch_no
         );
+
+        let mut batch = Vec::new();
+
+        // first, check for new setup packets in the rx queues
+        let mut pending = self.pending_setup_pkts.lock().expect("Lock poisoned");
+        for queue in self
+            .setup_rx_queues
+            .lock()
+            .expect("Lock poisoned")
+            .iter_mut()
+        {
+            while let Ok(pkt) = queue.try_recv() {
+                handle_new_setup_pkt(&mut pending, &mut batch, pkt, epoch, layer, sk);
+            }
+        }
+
+        // XXX process pending packets for this epoch
+        // XXX shuffle and send out batch
+    }
+}
+
+fn handle_new_setup_pkt(
+    pending_map: &mut PendingSetupMap,
+    batch: &mut Vec<SetupPacket>,
+    pkt: SetupPacket,
+    epoch: &EpochInfo,
+    layer: u32,
+    sk: &Key,
+) {
+    let current_ttl = epoch.path_length - layer - 1;
+    let pkt_ttl = pkt.ttl().expect("Expected to reject this in gRPC!?");
+    match pkt.epoch_no.cmp(&epoch.epoch_no) {
+        Ordering::Less => {
+            debug!(
+                "Dropping late (by {} epochs) setup packet",
+                epoch.epoch_no - pkt.epoch_no
+            );
+        }
+        Ordering::Greater => {
+            // early setup packet -> store for later use
+            insert_pending_setup_pkt(pending_map, pkt);
+        }
+        Ordering::Equal => match pkt_ttl.cmp(&current_ttl) {
+            Ordering::Greater => {
+                debug!(
+                    "Dropping late (by {} hops) setup packet",
+                    pkt_ttl - current_ttl
+                );
+            }
+            Ordering::Less => {
+                // this should not happen because of sync between mixes
+                warn!(
+                    "Dropping early (by {} hops) setup packet",
+                    current_ttl - pkt_ttl
+                );
+            }
+            Ordering::Equal => {
+                // the interesting case: setup circuit now
+                // XXX store circuit in a map
+                let (_circuit, next_setup_pkt) = Circuit::new(&pkt, sk);
+                batch.push(next_setup_pkt);
+            }
+        },
+    }
+}
+
+fn insert_pending_setup_pkt(map: &mut PendingSetupMap, pkt: SetupPacket) {
+    let epoch_no = pkt.epoch_no;
+    match map.get_mut(&epoch_no) {
+        Some(queue) => queue.push_back(pkt),
+        None => {
+            let mut queue = VecDeque::new();
+            queue.push_back(pkt);
+            map.insert(epoch_no, queue);
+        }
     }
 }
 
