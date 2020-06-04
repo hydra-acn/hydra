@@ -19,6 +19,7 @@ log = "^0.4"
 simplelog = "^0.7"
 clap = "^2"
 ctrlc = "^3"
+rand = "^0.7"
 
 [build-dependencies]
 cmake = "^0.1"
