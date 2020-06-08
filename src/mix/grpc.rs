@@ -19,6 +19,8 @@ pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_rx_queues: Vec<SetupRxQueue>,
     _cell_rx_queues: Vec<CellRxQueue>,
+    // TODO cleanup once in a while (as soon as we don't have any more cells to deliver for a
+    // circuit)
     used_circuit_ids: Mutex<BTreeMap<EpochNo, CircuitIdSet>>,
 }
 

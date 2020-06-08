@@ -3,27 +3,29 @@ use log::*;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{self, AtomicBool};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
 use super::circuit::Circuit;
 use super::directory_client;
 use crate::crypto::key::Key;
+use crate::defs::CircuitId;
 use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::tonic_mix::*;
 
 type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacket>;
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacket>>;
+type CircuitMap = BTreeMap<CircuitId, Circuit>;
 
-// TODO most mutex should be redundant because we are in a single threaded context now
 pub struct Worker {
     running: Arc<AtomicBool>,
     dir_client: Arc<directory_client::Client>,
-    setup_rx_queues: Mutex<Vec<SetupRxQueue>>,
-    _cell_rx_queues: Mutex<Vec<CellRxQueue>>,
-    pending_setup_pkts: Mutex<PendingSetupMap>,
+    setup_rx_queues: Vec<SetupRxQueue>,
+    _cell_rx_queues: Vec<CellRxQueue>,
+    pending_setup_pkts: PendingSetupMap,
+    circuits: CircuitMap,
 }
 
 impl Worker {
@@ -36,14 +38,15 @@ impl Worker {
         Worker {
             running: running.clone(),
             dir_client,
-            setup_rx_queues: Mutex::new(setup_rx_queues),
-            _cell_rx_queues: Mutex::new(cell_rx_queues),
-            pending_setup_pkts: Mutex::new(PendingSetupMap::new()),
+            setup_rx_queues: setup_rx_queues,
+            _cell_rx_queues: cell_rx_queues,
+            pending_setup_pkts: PendingSetupMap::new(),
+            circuits: CircuitMap::new(),
         }
     }
 
     /// endless loop for processing the epochs, starting with the upcomming epoch (setup)
-    pub fn run(&self) {
+    pub fn run(&mut self) {
         let first_epoch;
         // poll directory client till we get an answer
         loop {
@@ -86,7 +89,7 @@ impl Worker {
     }
 
     fn process_epoch(
-        &self,
+        &mut self,
         setup_epoch: &EpochInfo,
         communication_epoch: &EpochInfo,
         is_first: bool,
@@ -117,6 +120,7 @@ impl Worker {
         for round_no in 0..communication_epoch.number_of_rounds {
             if self.running.load(atomic::Ordering::SeqCst) == false {
                 // quick and dirty panic because we shall stop
+                // TODO security this is no graceful cleanup of keys!
                 panic!("You told us to panic!")
             }
             // TODO move waiting inside the process functions?
@@ -157,7 +161,7 @@ impl Worker {
         info!("Processing round {} of epoch {}", round_no, epoch.epoch_no);
     }
 
-    fn process_setup_layer(&self, epoch: &EpochInfo, layer: u32, sk: &Key) {
+    fn process_setup_layer(&mut self, epoch: &EpochInfo, layer: u32, sk: &Key) {
         info!(
             "Processing setup layer {} of epoch {}",
             layer, epoch.epoch_no
@@ -166,30 +170,43 @@ impl Worker {
         let mut batch = Vec::new();
 
         // first, check for new setup packets in the rx queues
-        let mut pending = self.pending_setup_pkts.lock().expect("Lock poisoned");
         for queue in self
             .setup_rx_queues
-            .lock()
-            .expect("Lock poisoned")
             .iter_mut()
         {
             while let Ok(pkt) = queue.try_recv() {
-                handle_new_setup_pkt(&mut pending, &mut batch, pkt, epoch, layer, sk);
+                handle_new_setup_pkt(&mut self.pending_setup_pkts, pkt, epoch, layer);
             }
         }
 
-        // XXX process pending packets for this epoch
+        // process pending packets for this epoch
+        let setup_pkts = match self.pending_setup_pkts.remove(&epoch.epoch_no) {
+            Some(pkts) => pkts,
+            None => VecDeque::new(),
+        };
+        // TODO insert our dummy packets first
+        // TODO performance parallel iteration (rayon? deque maybe not the best for this)
+        // -> one circuit map and "batch" per thread to avoid locking?
+        for pkt in setup_pkts.iter() {
+            if self.circuits.contains_key(&pkt.circuit_id) {
+                warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
+                continue;
+            }
+            let (circuit, next_setup_pkt) = Circuit::new(&pkt, sk);
+            self.circuits.insert(pkt.circuit_id, circuit);
+            // TODO map from upstream to downstream circuit id
+            batch.push(next_setup_pkt);
+        }
+
         // XXX shuffle and send out batch
     }
 }
 
 fn handle_new_setup_pkt(
     pending_map: &mut PendingSetupMap,
-    batch: &mut Vec<SetupPacket>,
     pkt: SetupPacket,
     epoch: &EpochInfo,
     layer: u32,
-    sk: &Key,
 ) {
     let current_ttl = epoch.path_length - layer - 1;
     let pkt_ttl = pkt.ttl().expect("Expected to reject this in gRPC!?");
@@ -219,10 +236,8 @@ fn handle_new_setup_pkt(
                 );
             }
             Ordering::Equal => {
-                // the interesting case: setup circuit now
-                // XXX store circuit in a map
-                let (_circuit, next_setup_pkt) = Circuit::new(&pkt, sk);
-                batch.push(next_setup_pkt);
+                // we could setup the circuit here, but just store it for now, process it soon
+                insert_pending_setup_pkt(pending_map, pkt);
             }
         },
     }
@@ -238,9 +253,4 @@ fn insert_pending_setup_pkt(map: &mut PendingSetupMap, pkt: SetupPacket) {
             map.insert(epoch_no, queue);
         }
     }
-}
-
-pub fn run(worker: Arc<Worker>) {
-    info!("Starting to run now");
-    worker.run();
 }
