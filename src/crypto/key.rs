@@ -20,9 +20,14 @@ impl Key {
         }
     }
 
-    /// move from u8 vector
+    /// move from byte vector
     pub fn move_from_vec(bytes: Vec<u8>) -> Self {
         Key { key: bytes }
+    }
+
+    /// clone from byte slice
+    pub fn clone_from_slice(bytes: &[u8]) -> Self {
+        Key { key: bytes.to_vec() }
     }
 
     /// generate "key" with zero bytes
