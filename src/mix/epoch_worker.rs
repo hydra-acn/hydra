@@ -18,6 +18,7 @@ type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacket>;
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacket>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
+type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
 
 pub struct Worker {
     running: Arc<AtomicBool>,
@@ -26,6 +27,8 @@ pub struct Worker {
     _cell_rx_queues: Vec<CellRxQueue>,
     pending_setup_pkts: PendingSetupMap,
     circuits: CircuitMap,
+    // mapping the upstream circuit id to the downstream id of an circuit
+    circuit_id_map: CircuitIdMap,
 }
 
 impl Worker {
@@ -42,6 +45,7 @@ impl Worker {
             _cell_rx_queues: cell_rx_queues,
             pending_setup_pkts: PendingSetupMap::new(),
             circuits: CircuitMap::new(),
+            circuit_id_map: CircuitIdMap::new(),
         }
     }
 
@@ -170,10 +174,7 @@ impl Worker {
         let mut batch = Vec::new();
 
         // first, check for new setup packets in the rx queues
-        for queue in self
-            .setup_rx_queues
-            .iter_mut()
-        {
+        for queue in self.setup_rx_queues.iter_mut() {
             while let Ok(pkt) = queue.try_recv() {
                 handle_new_setup_pkt(&mut self.pending_setup_pkts, pkt, epoch, layer);
             }
@@ -193,8 +194,8 @@ impl Worker {
                 continue;
             }
             let (circuit, next_setup_pkt) = Circuit::new(&pkt, sk);
+            self.circuit_id_map.insert(circuit.upstream_id(), circuit.downstream_id());
             self.circuits.insert(pkt.circuit_id, circuit);
-            // TODO map from upstream to downstream circuit id
             batch.push(next_setup_pkt);
         }
 
