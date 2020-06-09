@@ -12,4 +12,4 @@ coverage:
         expire_in: 8 weeks
         paths:
             - tarpaulin-report.html
-    timeout: 5m
+    timeout: 10m
