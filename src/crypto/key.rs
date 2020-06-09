@@ -77,29 +77,19 @@ impl Drop for Key {
     }
 }
 
-/// Generate multiple keys by expanding a "master" `key` using the HKDF key derivation function
-/// (RFC 5869), instantiated with SHA256 as hash algorithm. The number and size of generated keys
-/// is dictated by the `sizes` slice.
+/// Generate a key by expanding a "master key" `ikm` using the HKDF key derivation function
+/// (RFC 5869), instantiated with SHA256 as hash algorithm.
 pub fn hkdf_sha256(
-    key: &Key,
+    ikm: &Key,
     salt: Option<&[u8]>,
     info: Option<&[u8]>,
-    sizes: &[usize],
-) -> Result<Vec<Key>, Error> {
-    let hkdf = Hkdf::<sha2::Sha256>::new(salt, key.borrow_raw());
-    let total_size = sizes.iter().sum();
-    let mut okm = vec![0u8; total_size];
+    size: usize,
+) -> Result<Key, Error> {
+    let hkdf = Hkdf::<sha2::Sha256>::new(salt, ikm.borrow_raw());
+    let mut okm = vec![0u8; size];
     let info_slice = info.unwrap_or(&[0u8; 0]);
     hkdf.expand(info_slice, &mut okm)?;
-    let mut keys = Vec::new();
-    for size in sizes {
-        // TODO security: split_off potentially does copies but no overwrites?
-        let remaining_okm = okm.split_off(*size);
-        let key_vec = okm;
-        okm = remaining_okm;
-        keys.push(Key::move_from_vec(key_vec));
-    }
-    Ok(keys)
+    Ok(Key::move_from_vec(okm))
 }
 
 #[cfg(test)]
@@ -121,20 +111,12 @@ mod tests {
 
         let info = hex::decode("b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff").unwrap();
 
-        let sizes = [42, 40];
-
-        let expected_first = Key::from_hex_str(
-            "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c59045a99cac7827271cb",
+        let expected = Key::from_hex_str(
+            "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71cc30c58179ec3e87c14c01d5c1f3434f1d87",
         )
         .unwrap();
 
-        let expected_second = Key::from_hex_str(
-            "41c65e590e09da3275600c2f09b8367793a9aca3db71cc30c58179ec3e87c14c01d5c1f3434f1d87",
-        )
-        .unwrap();
-
-        let keys = hkdf_sha256(&ikm, Some(&salt), Some(&info), &sizes).unwrap();
-        assert_eq!(keys.get(0).unwrap(), &expected_first);
-        assert_eq!(keys.get(1).unwrap(), &expected_second);
+        let key = hkdf_sha256(&ikm, Some(&salt), Some(&info), expected.len()).unwrap();
+        assert_eq!(key, expected);
     }
 }
