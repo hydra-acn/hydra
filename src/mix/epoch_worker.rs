@@ -9,14 +9,15 @@ use tokio::time::Duration;
 
 use super::circuit::{SetupNextHop, Circuit};
 use super::directory_client;
+use super::grpc::SetupPacketWithPrev;
 use crate::crypto::key::Key;
 use crate::defs::CircuitId;
 use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::tonic_mix::*;
 
-type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacket>;
+type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacketWithPrev>;
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
-type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacket>>;
+type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
 type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
 
@@ -189,7 +190,7 @@ impl Worker {
         // TODO insert our dummy packets first?
         // TODO performance parallel iteration (rayon? deque maybe not the best for this)
         // -> one circuit map and "batch" per thread to avoid locking?
-        for pkt in setup_pkts.iter() {
+        for pkt in setup_pkts.into_iter() {
             let pkt_ttl = pkt.ttl().expect("Should have be handled by gRPC");
             if pkt_ttl != current_ttl {
                 warn!(
@@ -198,11 +199,11 @@ impl Worker {
                 );
                 continue;
             }
-            if self.circuits.contains_key(&pkt.circuit_id) {
+            if self.circuits.contains_key(&pkt.circuit_id()) {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
-            match Circuit::new(&pkt, sk) {
+            match Circuit::new(pkt, sk) {
                 Ok((circuit, next_hop_info)) => {
                     self.circuit_id_map
                         .insert(circuit.upstream_id(), circuit.downstream_id());
@@ -222,23 +223,23 @@ impl Worker {
             }
         }
 
-        // XXX shuffle and send out batch
+        // XXX shuffle and send out batch, don't forget address information in metadata
     }
 }
 
 fn handle_new_setup_pkt(
     pending_map: &mut PendingSetupMap,
-    pkt: SetupPacket,
+    pkt: SetupPacketWithPrev,
     epoch: &EpochInfo,
     layer: u32,
 ) {
     let current_ttl = epoch.path_length - layer - 1;
     let pkt_ttl = pkt.ttl().expect("Expected to reject this in gRPC!?");
-    match pkt.epoch_no.cmp(&epoch.epoch_no) {
+    match pkt.epoch_no().cmp(&epoch.epoch_no) {
         Ordering::Less => {
             debug!(
                 "Dropping late (by {} epochs) setup packet",
-                epoch.epoch_no - pkt.epoch_no
+                epoch.epoch_no - pkt.epoch_no()
             );
         }
         Ordering::Greater => {
@@ -267,8 +268,8 @@ fn handle_new_setup_pkt(
     }
 }
 
-fn insert_pending_setup_pkt(map: &mut PendingSetupMap, pkt: SetupPacket) {
-    let epoch_no = pkt.epoch_no;
+fn insert_pending_setup_pkt(map: &mut PendingSetupMap, pkt: SetupPacketWithPrev) {
+    let epoch_no = pkt.epoch_no();
     match map.get_mut(&epoch_no) {
         Some(queue) => queue.push_back(pkt),
         None => {

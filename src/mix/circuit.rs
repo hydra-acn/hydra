@@ -1,4 +1,5 @@
 //! Circuit abstraction
+use super::grpc::SetupPacketWithPrev;
 use crate::crypto::key::Key;
 use crate::crypto::x448::generate_shared_secret;
 use crate::defs::{CircuitId, Token};
@@ -26,7 +27,11 @@ pub enum SetupNextHop {
 impl Circuit {
     /// Creates the circuit (if everything is ok). Furthermore, it either returns the next setup
     /// packet (with destination) or the set of tokens to subscribe to (last layer)
-    pub fn new(setup_pkt: &SetupPacket, ephemeral_sk: &Key) -> Result<(Self, SetupNextHop), Error> {
+    pub fn new(
+        pkt: SetupPacketWithPrev,
+        ephemeral_sk: &Key,
+    ) -> Result<(Self, SetupNextHop), Error> {
+        let setup_pkt = pkt.into_inner();
         let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
         // XXX
         let master_key = generate_shared_secret(&client_pk, ephemeral_sk)?;

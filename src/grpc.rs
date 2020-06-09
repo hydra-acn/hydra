@@ -78,9 +78,9 @@ macro_rules! rethrow_as_internal {
 #[macro_export]
 /// convert Result<S, F> to Result<S, tonic::Status> with "invalid argument" error code and unwrap
 /// with "?"
-macro_rules! _rethrow_as_invalid {
+macro_rules! rethrow_as_invalid {
     ($res:expr, $msg:expr) => {
-        rethrow_as!($res, tonic::Code::InvalidArgument, $msg)
+        crate::rethrow_as!($res, tonic::Code::InvalidArgument, $msg)
     };
 }
 
