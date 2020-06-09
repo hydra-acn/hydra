@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use crate::error::Error;
 
-pub fn ip_addr_from_vec(a: &Vec<u8>) -> Result<IpAddr, Error> {
+pub fn ip_addr_from_slice(a: &[u8]) -> Result<IpAddr, Error> {
     match a.len() {
         4 => {
             let mut octets: [u8; 4] = [0; 4];

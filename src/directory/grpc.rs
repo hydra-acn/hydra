@@ -25,7 +25,7 @@ impl directory_server::Directory for Service {
         let (pk, s) = key_exchange(&pk_mix)?;
 
         let fingerprint = msg.fingerprint;
-        let addr = crate::net::ip_addr_from_vec(&msg.address)?;
+        let addr = crate::net::ip_addr_from_slice(&msg.address)?;
         // TODO security check that request is from the announced address (probably not possible in
         // the current version of Tonic)
         // TODO in nightly rust, there is a complete is_global() (routable)
