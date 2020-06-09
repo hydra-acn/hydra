@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
-use super::circuit::Circuit;
+use super::circuit::{SetupNextHop, Circuit};
 use super::directory_client;
 use crate::crypto::key::Key;
 use crate::defs::CircuitId;
@@ -170,6 +170,7 @@ impl Worker {
             "Processing setup layer {} of epoch {}",
             layer, epoch.epoch_no
         );
+        let current_ttl = epoch.path_length - layer - 1;
 
         let mut batch = Vec::new();
 
@@ -185,18 +186,40 @@ impl Worker {
             Some(pkts) => pkts,
             None => VecDeque::new(),
         };
-        // TODO insert our dummy packets first
+        // TODO insert our dummy packets first?
         // TODO performance parallel iteration (rayon? deque maybe not the best for this)
         // -> one circuit map and "batch" per thread to avoid locking?
         for pkt in setup_pkts.iter() {
+            let pkt_ttl = pkt.ttl().expect("Should have be handled by gRPC");
+            if pkt_ttl != current_ttl {
+                warn!(
+                    "Only expecting setup packets with TTL of {}, found one with {}",
+                    current_ttl, pkt_ttl,
+                );
+                continue;
+            }
             if self.circuits.contains_key(&pkt.circuit_id) {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
-            let (circuit, next_setup_pkt) = Circuit::new(&pkt, sk);
-            self.circuit_id_map.insert(circuit.upstream_id(), circuit.downstream_id());
-            self.circuits.insert(pkt.circuit_id, circuit);
-            batch.push(next_setup_pkt);
+            match Circuit::new(&pkt, sk) {
+                Ok((circuit, next_hop_info)) => {
+                    self.circuit_id_map
+                        .insert(circuit.upstream_id(), circuit.downstream_id());
+                    self.circuits.insert(circuit.downstream_id(), circuit);
+                    match next_hop_info {
+                        SetupNextHop::Extend(create) => batch.push(create),
+                        SetupNextHop::Rendezvous(tokens) => {
+                            // XXX
+                            unimplemented!();
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Creating circuit failed: {}", e);
+                    continue;
+                }
+            }
         }
 
         // XXX shuffle and send out batch

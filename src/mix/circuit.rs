@@ -1,21 +1,41 @@
 //! Circuit abstraction
 use crate::crypto::key::Key;
-use crate::defs::CircuitId;
+use crate::crypto::x448::generate_shared_secret;
+use crate::defs::{CircuitId, Token};
+use crate::error::Error;
 use crate::tonic_mix::*;
+
+use std::net::IpAddr;
 
 pub struct Circuit {
     downstream_id: CircuitId,
     upstream_id: CircuitId,
 }
 
+pub struct ExtendInfo {
+    addr: IpAddr,
+    port: u16,
+    setup_pkt: SetupPacket,
+}
+
+pub enum SetupNextHop {
+    Extend(ExtendInfo),
+    Rendezvous(Vec<Token>),
+}
+
 impl Circuit {
-    /// creates the circuit and returns the setup packet for the next hop
-    pub fn new(setup_pkt: &SetupPacket, _ephemeral_sk: &Key) -> (Self, SetupPacket) {
+    /// Creates the circuit (if everything is ok). Furthermore, it either returns the next setup
+    /// packet (with destination) or the set of tokens to subscribe to (last layer)
+    pub fn new(setup_pkt: &SetupPacket, ephemeral_sk: &Key) -> Result<(Self, SetupNextHop), Error> {
+        let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
+        // XXX
+        let master_key = generate_shared_secret(&client_pk, ephemeral_sk)?;
         let circuit = Circuit {
             downstream_id: setup_pkt.circuit_id,
             upstream_id: rand::random(),
         };
-        (circuit, setup_pkt.clone()) // XXX really prepare the new pkt
+        // XXX really prepare the new pkt/the tokens
+        unimplemented!();
     }
 
     /// circuit id used on the link towards the client (upstream rx, downstream tx)
