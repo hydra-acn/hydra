@@ -44,3 +44,9 @@ impl std::convert::From<openssl::error::ErrorStack> for Error {
         Error::OpenSslError(msg)
     }
 }
+
+impl std::convert::From<hkdf::InvalidLength> for Error {
+    fn from(e: hkdf::InvalidLength) -> Self {
+        Error::InputError(e.to_string())
+    }
+}
