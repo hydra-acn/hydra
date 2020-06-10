@@ -1,6 +1,25 @@
 //! shared gRPC functionality
+use tonic::{async_trait, Code, Status};
 
-use tonic::{Code, Status};
+/// The missing (?) trait for all tonic clients
+#[async_trait]
+pub trait Client: Sized {
+    // TODO make dst a generic type, see tonics connect
+    async fn connect(dst: String) -> Result<Self, tonic::transport::Error>;
+}
+
+#[macro_export]
+/// derive implementations of the `Client` trait
+macro_rules! derive_grpc_client {
+    ($type:ident) => {
+        #[tonic::async_trait]
+        impl grpc::Client for $type {
+            async fn connect(dst: String) -> Result<Self, tonic::transport::Error> {
+                $type::connect(dst).await
+            }
+        }
+    };
+}
 
 #[macro_export]
 /// given the identifiers of the service type, its state type and the server type (from tonic),

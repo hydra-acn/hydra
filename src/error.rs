@@ -50,3 +50,9 @@ impl std::convert::From<hkdf::InvalidLength> for Error {
         Error::InputError(e.to_string())
     }
 }
+
+impl std::convert::From<tonic::transport::Error> for Error {
+    fn from(e: tonic::transport::Error) -> Self {
+        Error::ExternalError(e.to_string())
+    }
+}

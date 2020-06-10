@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
-use super::circuit::{NextSetupStep, Circuit};
+use super::circuit::{Circuit, NextSetupStep};
 use super::directory_client;
 use super::grpc::SetupPacketWithPrev;
 use crate::crypto::key::Key;

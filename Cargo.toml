@@ -22,6 +22,7 @@ ctrlc = "^3"
 rand = "^0.7"
 sha2 = "^0.8"
 hkdf = "^0.8"
+spmc = "^0.3"
 
 [build-dependencies]
 cmake = "^0.1"
