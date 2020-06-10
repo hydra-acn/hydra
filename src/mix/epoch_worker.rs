@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
-use super::circuit::{SetupNextHop, Circuit};
+use super::circuit::{NextSetupStep, Circuit};
 use super::directory_client;
 use super::grpc::SetupPacketWithPrev;
 use crate::crypto::key::Key;
@@ -203,14 +203,14 @@ impl Worker {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
-            match Circuit::new(pkt, sk) {
+            match Circuit::new(pkt, sk, layer) {
                 Ok((circuit, next_hop_info)) => {
                     self.circuit_id_map
                         .insert(circuit.upstream_id(), circuit.downstream_id());
                     self.circuits.insert(circuit.downstream_id(), circuit);
                     match next_hop_info {
-                        SetupNextHop::Extend(create) => batch.push(create),
-                        SetupNextHop::Rendezvous(tokens) => {
+                        NextSetupStep::Extend(create) => batch.push(create),
+                        NextSetupStep::Rendezvous(tokens) => {
                             // XXX
                             unimplemented!();
                         }
@@ -218,6 +218,7 @@ impl Worker {
                 }
                 Err(e) => {
                     warn!("Creating circuit failed: {}", e);
+                    // TODO insert dummy setup packet instead
                     continue;
                 }
             }

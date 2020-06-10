@@ -11,6 +11,7 @@ use crate::tonic_mix::*;
 use std::net::{IpAddr, SocketAddr};
 
 pub struct Circuit {
+    layer: u32,
     downstream_id: CircuitId,
     upstream_id: CircuitId,
     // None for first layer
@@ -25,7 +26,7 @@ pub struct ExtendInfo {
     setup_pkt: SetupPacket,
 }
 
-pub enum SetupNextHop {
+pub enum NextSetupStep {
     Extend(ExtendInfo),
     Rendezvous(Vec<Token>),
 }
@@ -36,8 +37,14 @@ impl Circuit {
     pub fn new(
         pkt: SetupPacketWithPrev,
         ephemeral_sk: &Key,
-    ) -> Result<(Self, SetupNextHop), Error> {
+        layer: u32,
+    ) -> Result<(Self, NextSetupStep), Error> {
         let downstream_hop = pkt.previous_hop();
+        if downstream_hop.is_none() && layer > 0 {
+            return Err(Error::InputError(
+                "Expected downstream hop information".to_string(),
+            ));
+        }
         let setup_pkt = pkt.into_inner();
         let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
         let master_key = generate_shared_secret(&client_pk, ephemeral_sk)?;
@@ -64,6 +71,7 @@ impl Circuit {
             .ok_or_else(|| Error::InputError("Should have been filtered by gRPC".to_string()))?;
 
         let mut circuit = Circuit {
+            layer,
             downstream_id: setup_pkt.circuit_id,
             upstream_id: rand::random(),
             downstream_hop,
@@ -75,7 +83,7 @@ impl Circuit {
             // time for rendezvous
             // XXX use function by jbloss to extract the real tokens
             let tokens = Vec::new();
-            Ok((circuit, SetupNextHop::Rendezvous(tokens)))
+            Ok((circuit, NextSetupStep::Rendezvous(tokens)))
         } else {
             // show must go on
             let v6 = match ip_addr_from_slice(&setup_pkt.onion[0..16])? {
@@ -100,7 +108,7 @@ impl Circuit {
                 destination: upstream_hop,
                 setup_pkt: next_setup_pkt,
             };
-            Ok((circuit, SetupNextHop::Extend(extend_info)))
+            Ok((circuit, NextSetupStep::Extend(extend_info)))
         }
     }
 
