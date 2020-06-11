@@ -1,3 +1,4 @@
+pub mod channel_pool;
 pub mod circuit;
 pub mod directory_client;
 pub mod epoch_worker;

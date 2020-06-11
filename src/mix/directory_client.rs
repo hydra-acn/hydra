@@ -1,21 +1,25 @@
 use log::*;
 use std::cmp;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::Status;
 
+use super::channel_pool::ChannelPool;
 use crate::crypto::key::Key;
 use crate::crypto::x448;
 use crate::epoch::{current_time_in_secs, EpochNo};
+use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;
 use crate::tonic_directory::{
     DhMessage, DirectoryRequest, EpochInfo, RegisterRequest, UnregisterRequest,
 };
+use crate::tonic_mix::mix_client::MixClient;
 
-type Connection = DirectoryClient<tonic::transport::Channel>;
+type DirectoryChannel = DirectoryClient<tonic::transport::Channel>;
+type MixChannel = MixClient<tonic::transport::Channel>;
 
 pub struct Config {
     pub addr: IpAddr,
@@ -39,6 +43,8 @@ pub struct Client {
     /// ephemeral keys
     keys: RwLock<BTreeMap<EpochNo, (Key, Key)>>,
     key_count: AtomicU32,
+    /// channel pool for mix connections
+    mix_channels: ChannelPool<MixChannel>,
 }
 
 impl Client {
@@ -57,6 +63,7 @@ impl Client {
             epochs: RwLock::new(BTreeMap::new()),
             keys: RwLock::new(BTreeMap::new()),
             key_count: AtomicU32::new(0),
+            mix_channels: ChannelPool::new(),
         }
     }
 
@@ -179,10 +186,21 @@ impl Client {
                 self.create_ephemeral_dh(&mut conn).await;
             }
         }
+        // prepare channels for the upcomming epoch
+        if let Some(next_epoch) = self.next_epoch_info() {
+            let mut mix_addresses = Vec::new();
+            for mix in next_epoch.mixes {
+                if let Ok(ip) = ip_addr_from_slice(&mix.address) {
+                    let mix_sock_addr = SocketAddr::new(ip, mix.relay_port as u16);
+                    mix_addresses.push(mix_sock_addr);
+                }
+            }
+            self.mix_channels.prepare_channels(&mix_addresses).await;
+        }
     }
 
     /// fetch directory, merge it with our view and return the number of epochs in the reply
-    pub async fn fetch(&self, conn: &mut Connection) -> Result<usize, Status> {
+    pub async fn fetch(&self, conn: &mut DirectoryChannel) -> Result<usize, Status> {
         let query = DirectoryRequest { min_epoch_no: 0 };
         let directory = conn.query_directory(query).await?.into_inner();
         let mut epoch_map = self.epochs.write().expect("Lock failure");
@@ -209,7 +227,7 @@ impl Client {
     }
 
     /// create ephemeral key pair and send the public key to the directory service
-    pub async fn create_ephemeral_dh(&self, conn: &mut Connection) {
+    pub async fn create_ephemeral_dh(&self, conn: &mut DirectoryChannel) {
         let (pk, sk) = x448::generate_keypair().expect("keygen failed");
         let dh_msg = DhMessage {
             fingerprint: self.fingerprint.clone(),
@@ -245,6 +263,13 @@ impl Client {
             .get(epoch_no)
             .map(|(_pk, sk)| sk)
             .cloned()
+    }
+
+    pub async fn get_mix_channels(
+        &self,
+        destinations: &[SocketAddr],
+    ) -> HashMap<SocketAddr, MixChannel> {
+        self.mix_channels.get_channels(destinations).await
     }
 }
 
