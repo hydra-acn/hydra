@@ -2,7 +2,7 @@ use hydra::crypto::key::Key;
 use hydra::crypto::x448;
 use hydra::directory::grpc;
 use hydra::directory::state::State;
-use hydra::epoch::{COMMUNICATION_DURATION, MAX_EPOCH_NO};
+use hydra::epoch::MAX_EPOCH_NO;
 use hydra::tonic_directory::directory_client::DirectoryClient;
 use hydra::tonic_directory::{DhMessage, DirectoryRequest, RegisterRequest};
 
@@ -143,7 +143,7 @@ async fn client_task(state: Arc<State>, port: u16) {
         assert_eq!(epoch.round_waiting, config.round_waiting as u32);
         assert_eq!(
             epoch.number_of_rounds,
-            COMMUNICATION_DURATION as u32 / (epoch.round_duration + epoch.round_waiting)
+            config.phase_duration as u32 / (epoch.round_duration + epoch.round_waiting)
         );
 
         for mix in epoch.mixes.iter() {
@@ -167,7 +167,7 @@ async fn client_task(state: Arc<State>, port: u16) {
                 "Epoch numbers not ascending"
             );
             assert_eq!(
-                epoch.setup_start_time + COMMUNICATION_DURATION as u64,
+                epoch.setup_start_time + config.phase_duration,
                 epoch.communication_start_time,
                 "Duration mismatch"
             );
@@ -177,12 +177,12 @@ async fn client_task(state: Arc<State>, port: u16) {
             );
             assert_eq!(
                 epoch.setup_start_time,
-                last_setup_start + COMMUNICATION_DURATION as u64,
+                last_setup_start + config.phase_duration,
                 "Duration mismatch"
             );
             assert_eq!(
                 epoch.communication_start_time,
-                last_comm_start + COMMUNICATION_DURATION as u64,
+                last_comm_start + config.phase_duration,
                 "Duration mismatch"
             );
         }
