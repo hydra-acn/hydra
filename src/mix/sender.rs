@@ -30,6 +30,48 @@ type SetupTxQueue = spmc::Receiver<SetupBatch>;
 type MixConnection = MixClient<tonic::transport::Channel>;
 derive_grpc_client!(MixConnection);
 
+macro_rules! send_next_batch {
+    ($state:expr, $queue:ident, $channel_getter:ident, $send_fun:ident) => {
+        // wait for the next batch
+        let queue = $state.$queue.clone();
+        let batch = task::spawn_blocking(move || {
+            queue.recv().expect("tx queue will never be filled again")
+        })
+        .await
+        .expect("Reading tx queue failed");
+
+        // sort by destination and get corresponding channels
+        let (batch_map, destinations) = sort_by_destination::<SetupPacket>(batch);
+        let channel_map = $state.dir_client.$channel_getter(&destinations).await;
+
+        for (dst, pkts) in batch_map.into_iter() {
+            match channel_map.get(&dst) {
+                Some(c) => {
+                    // fire and forget concurrently for each destination
+                    tokio::spawn($send_fun(c.clone(), pkts));
+                }
+                None => {
+                    warn!(
+                        "Expected to have a connection by now, dropping packets destined to {}",
+                        dst
+                    );
+                    ()
+                }
+            }
+        }
+    };
+}
+
+macro_rules! define_send_task {
+    ($name:ident, $queue:ident, $channel_getter:ident, $send_fun:ident) => {
+        async fn $name(state: Arc<State>) {
+            loop {
+                send_next_batch!(state, $queue, $channel_getter, $send_fun);
+            }
+        }
+    };
+}
+
 pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_tx_queue: SetupTxQueue,
@@ -42,38 +84,20 @@ impl State {
             setup_tx_queue: setup_tx_queue,
         }
     }
+}
 
-    // TODO this should be a generic "send_batch"
-    pub async fn send_setup_batch(&self, batch: SetupBatch) {
-        // mapping destination to corresponding packets
-        let mut batch_map: HashMap<SocketAddr, Vec<SetupPacket>> = HashMap::new();
-        for pkt in batch {
-            // already sort packets according to destination
-            match batch_map.get_mut(&pkt.next_hop) {
-                Some(vec) => vec.push(pkt.into_inner()),
-                None => {
-                    batch_map.insert(pkt.next_hop, vec![pkt.into_inner()]);
-                }
-            }
-        }
-        let destinations: Vec<SocketAddr> = batch_map.keys().cloned().collect();
-        let channel_map = self.dir_client.get_mix_channels(&destinations).await;
-        for (dst, pkts) in batch_map.into_iter() {
-            match channel_map.get(&dst) {
-                Some(c) => {
-                    // fire and forget concurrently for each destination
-                    tokio::spawn(send_setup_packets(c.clone(), pkts));
-                }
-                None => {
-                    warn!(
-                        "Expected to have a connection by now, dropping packets destined to {}",
-                        dst
-                    );
-                    ()
-                }
+fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<SocketAddr>) {
+    let mut batch_map: HashMap<SocketAddr, Vec<T>> = HashMap::new();
+    for pkt in batch {
+        match batch_map.get_mut(&pkt.next_hop) {
+            Some(vec) => vec.push(pkt.into_inner()),
+            None => {
+                batch_map.insert(pkt.next_hop, vec![pkt.into_inner()]);
             }
         }
     }
+    let destinations: Vec<SocketAddr> = batch_map.keys().cloned().collect();
+    (batch_map, destinations)
 }
 
 pub async fn send_setup_packets(mut c: MixConnection, pkts: Vec<SetupPacket>) {
@@ -85,18 +109,12 @@ pub async fn send_setup_packets(mut c: MixConnection, pkts: Vec<SetupPacket>) {
     }
 }
 
-pub async fn setup_task(state: Arc<State>) {
-    loop {
-        // wait for the next batch
-        let queue = state.setup_tx_queue.clone();
-        let batch = task::spawn_blocking(move || {
-            queue.recv().expect("tx queue will never be filled again")
-        })
-        .await
-        .expect("Reading tx queue failed");
-        state.send_setup_batch(batch).await;
-    }
-}
+define_send_task!(
+    setup_task,
+    setup_tx_queue,
+    get_mix_channels,
+    send_setup_packets
+);
 
 pub async fn run(state: Arc<State>) {
     let setup_handle = tokio::spawn(setup_task(state.clone()));
