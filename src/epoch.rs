@@ -5,7 +5,6 @@ pub use crate::tonic_directory::EpochInfo;
 
 pub type EpochNo = u32;
 
-pub const COMMUNICATION_DURATION: u16 = 600;
 pub const MAX_EPOCH_NO: EpochNo = std::u32::MAX;
 
 /// return current POSIX/UNIX time in seconds
@@ -24,8 +23,8 @@ pub fn current_time() -> Duration {
 }
 
 /// return the current epoch number (only the directory service should rely on this function)
-pub fn current_epoch_no() -> EpochNo {
-    (current_time_in_secs() / COMMUNICATION_DURATION as u64) as EpochNo
+pub fn current_epoch_no(phase_duration: u64) -> EpochNo {
+    (current_time_in_secs() / phase_duration) as EpochNo
 }
 
 impl EpochInfo {

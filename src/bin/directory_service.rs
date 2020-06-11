@@ -1,9 +1,9 @@
-use clap::clap_app;
+use clap::{clap_app, value_t};
 use log::*;
 use std::sync::Arc;
 
 use hydra::directory::grpc;
-use hydra::directory::state::{self, State};
+use hydra::directory::state::{self, Config, State};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,10 +14,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Simple, non distributed, implementation of the Hydra directory service")
         (@arg addr: +required "IP address to listen on")
+        (@arg phaseDuration: -d --duration +takes_value default_value("600") "Duration of one phase (setup/communication have the same duration")
     )
     .get_matches();
 
-    let state = Arc::new(State::default());
+    let phase_duration = value_t!(args, "phaseDuration", u64).unwrap();
+    let mut config = Config::default();
+    config.phase_duration = phase_duration;
+    let state = Arc::new(State::new(config));
 
     let local_addr = format!("{}:9000", args.value_of("addr").unwrap()).parse()?;
     let grpc_handle = grpc::spawn_service(state.clone(), local_addr);

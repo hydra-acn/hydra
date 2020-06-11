@@ -1,6 +1,6 @@
 use crate::crypto::key::Key;
 use crate::crypto::x448;
-use crate::epoch::{current_epoch_no, EpochNo, COMMUNICATION_DURATION, MAX_EPOCH_NO};
+use crate::epoch::{current_epoch_no, EpochNo, MAX_EPOCH_NO};
 use crate::tonic_directory::{EpochInfo, MixInfo};
 
 use log::*;
@@ -17,7 +17,7 @@ pub struct State {
 
 impl State {
     pub fn new(config: Config) -> Self {
-        let current_epoch_no = current_epoch_no();
+        let current_epoch_no = current_epoch_no(config.phase_duration);
         info!("Initializing directory in epoch {}", current_epoch_no);
 
         State {
@@ -36,7 +36,7 @@ impl State {
     }
 
     pub fn update(self: &Self) {
-        let current_epoch_no = current_epoch_no();
+        let current_epoch_no = current_epoch_no(self.config.phase_duration);
         if current_epoch_no == MAX_EPOCH_NO {
             panic!("End of time reached!");
         }
@@ -58,11 +58,11 @@ impl State {
             Some(e) => e.epoch_no + 1,
             None => current_epoch_no + 1,
         };
-        let mut setup_start_time = epoch_no as u64 * COMMUNICATION_DURATION as u64;
-        let mut communication_start_time = setup_start_time + COMMUNICATION_DURATION as u64;
         let cfg = &self.config;
+        let mut setup_start_time = epoch_no as u64 * cfg.phase_duration;
+        let mut communication_start_time = setup_start_time + cfg.phase_duration;
         let number_of_rounds =
-            (COMMUNICATION_DURATION as u32) / (cfg.round_duration + cfg.round_waiting) as u32;
+            (cfg.phase_duration as u32) / (cfg.round_duration + cfg.round_waiting) as u32;
 
         while epoch_queue.len() < cfg.epochs_in_advance.into() {
             let mut mixes = Vec::new();
@@ -101,13 +101,15 @@ impl State {
             };
             epoch_queue.push_back(epoch_info);
             epoch_no += 1;
-            setup_start_time += COMMUNICATION_DURATION as u64;
-            communication_start_time += COMMUNICATION_DURATION as u64;
+            setup_start_time += cfg.phase_duration as u64;
+            communication_start_time += cfg.phase_duration as u64;
         }
     }
 }
 
+/// TODO builder pattern?
 pub struct Config {
+    pub phase_duration: u64,
     pub epochs_in_advance: u8,
     pub path_length: u8,
     pub round_duration: u8,
@@ -117,6 +119,7 @@ pub struct Config {
 impl Config {
     pub fn default() -> Self {
         Config {
+            phase_duration: 10 * 60,
             epochs_in_advance: 10,
             path_length: 3,
             round_duration: 7,
@@ -144,7 +147,7 @@ pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), tonic::Status> {
 pub async fn update_loop(state: Arc<State>) {
     loop {
         // wait till next update
-        time::delay_for(Duration::from_secs(120)).await;
+        time::delay_for(Duration::from_secs(30)).await;
         state.update();
     }
 }
