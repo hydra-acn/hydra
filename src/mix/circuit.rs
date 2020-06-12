@@ -3,12 +3,15 @@ use super::grpc::SetupPacketWithPrev;
 use super::sender::PacketWithNextHop;
 use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
-use crate::crypto::x448::generate_shared_secret;
+use crate::crypto::x448;
 use crate::defs::{CircuitId, Token};
+use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
+use crate::tonic_directory::MixInfo;
 use crate::tonic_mix::*;
 
+use openssl::rand::rand_bytes;
 use std::net::{IpAddr, SocketAddr};
 
 pub struct Circuit {
@@ -45,7 +48,7 @@ impl Circuit {
         }
         let setup_pkt = pkt.into_inner();
         let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
-        let master_key = generate_shared_secret(&client_pk, ephemeral_sk)?;
+        let master_key = x448::generate_shared_secret(&client_pk, ephemeral_sk)?;
         let nonce = setup_pkt.nonce.clone();
         // 32 byte AES key for the onion-encrypted part of the setup packet
         let aes_info = [42u8];
@@ -118,5 +121,61 @@ impl Circuit {
     /// circuit id used on the link towards the rendezvous node (upstream tx, downstream rx)
     pub fn upstream_id(&self) -> CircuitId {
         self.upstream_id
+    }
+}
+
+/// When mixes act as clients for additional cover traffic
+pub struct ClientCircuit {
+    id: CircuitId,
+    onion_keys: Vec<Key>,
+    first_hop: SocketAddr,
+}
+
+impl ClientCircuit {
+    pub fn new(
+        epoch_no: EpochNo,
+        path: Vec<MixInfo>,
+    ) -> Result<(ClientCircuit, SetupPacket), Error> {
+        let first_mix = path
+            .first()
+            .ok_or_else(|| Error::SizeMismatch("Expected path with length >= 1".to_string()))?;
+        let first_hop = first_mix.relay_address().ok_or_else(|| {
+            Error::InputError("First mix does not have a valid relay address".to_string())
+        })?;
+
+        let circuit_id = rand::random();
+
+        let mut onion_keys = Vec::new();
+        let mut public_keys = Vec::new();
+        for mix in &path {
+            let mix_pk = Key::clone_from_slice(&mix.public_dh);
+            let (pk, sk) = x448::generate_keypair()?;
+            let shared_key = x448::generate_shared_secret(&mix_pk, &sk)?;
+            onion_keys.push(shared_key);
+            public_keys.push(pk);
+        }
+        let onion_size = 102 * path.len() - 1 + 256 * 8;
+
+        let mut setup_pkt = SetupPacket {
+            epoch_no,
+            circuit_id,
+            public_dh: public_keys.first().expect("Already checked").clone_to_vec(),
+            nonce: vec![0u8; 12],
+            auth_tag: vec![0u8; 16],
+            onion: vec![0u8; onion_size],
+        };
+
+        // baseline: randomize
+        rand_bytes(&mut setup_pkt.nonce)?;
+        rand_bytes(&mut setup_pkt.onion)?;
+
+        let circuit = ClientCircuit {
+            id: circuit_id,
+            first_hop,
+            onion_keys,
+        };
+
+        // XXX onion encryption
+        Ok((circuit, setup_pkt))
     }
 }

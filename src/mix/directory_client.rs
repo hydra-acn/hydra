@@ -14,7 +14,7 @@ use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;
 use crate::tonic_directory::{
-    DhMessage, DirectoryRequest, EpochInfo, RegisterRequest, UnregisterRequest,
+    DhMessage, DirectoryRequest, EpochInfo, MixInfo, RegisterRequest, UnregisterRequest,
 };
 use crate::tonic_mix::mix_client::MixClient;
 
@@ -200,9 +200,8 @@ impl Client {
         if let Some(next_epoch) = self.next_epoch_info() {
             let mut mix_addresses = Vec::new();
             for mix in next_epoch.mixes {
-                if let Ok(ip) = ip_addr_from_slice(&mix.address) {
-                    let mix_sock_addr = SocketAddr::new(ip, mix.relay_port as u16);
-                    mix_addresses.push(mix_sock_addr);
+                if let Some(addr) = mix.relay_address() {
+                    mix_addresses.push(addr);
                 }
             }
             self.mix_channels.prepare_channels(&mix_addresses).await;
@@ -309,5 +308,13 @@ pub async fn run(client: Arc<Client>) {
         client.update().await;
         // another sleep to avoid multiple updates per epoch
         delay_for(Duration::from_secs(slack + 1)).await;
+    }
+}
+
+impl MixInfo {
+    pub fn relay_address(&self) -> Option<SocketAddr> {
+        ip_addr_from_slice(&self.address)
+            .ok()
+            .map(|ip| SocketAddr::new(ip, self.relay_port as u16))
     }
 }
