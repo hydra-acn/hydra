@@ -10,13 +10,17 @@ use tokio::time::Duration;
 use super::circuit::{Circuit, NextSetupStep};
 use super::directory_client;
 use super::grpc::SetupPacketWithPrev;
+use super::sender::SetupBatch;
 use crate::crypto::key::Key;
 use crate::defs::CircuitId;
 use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::tonic_mix::*;
 
 type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacketWithPrev>;
+type SetupTxQueue = spmc::Sender<SetupBatch>;
+
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
+
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
 type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
@@ -25,6 +29,7 @@ pub struct Worker {
     running: Arc<AtomicBool>,
     dir_client: Arc<directory_client::Client>,
     setup_rx_queues: Vec<SetupRxQueue>,
+    setup_tx_queue: SetupTxQueue,
     _cell_rx_queues: Vec<CellRxQueue>,
     pending_setup_pkts: PendingSetupMap,
     circuits: CircuitMap,
@@ -37,12 +42,14 @@ impl Worker {
         running: Arc<AtomicBool>,
         dir_client: Arc<directory_client::Client>,
         setup_rx_queues: Vec<SetupRxQueue>,
+        setup_tx_queue: SetupTxQueue,
         cell_rx_queues: Vec<CellRxQueue>,
     ) -> Self {
         Worker {
             running: running.clone(),
             dir_client,
-            setup_rx_queues: setup_rx_queues,
+            setup_rx_queues,
+            setup_tx_queue,
             _cell_rx_queues: cell_rx_queues,
             pending_setup_pkts: PendingSetupMap::new(),
             circuits: CircuitMap::new(),
@@ -173,7 +180,7 @@ impl Worker {
         );
         let current_ttl = epoch.path_length - layer - 1;
 
-        let mut batch = Vec::new();
+        let mut batch = SetupBatch::new();
 
         // first, check for new setup packets in the rx queues
         for queue in self.setup_rx_queues.iter_mut() {
@@ -210,21 +217,23 @@ impl Worker {
                     self.circuits.insert(circuit.downstream_id(), circuit);
                     match next_hop_info {
                         NextSetupStep::Extend(create) => batch.push(create),
-                        NextSetupStep::Rendezvous(tokens) => {
+                        NextSetupStep::Rendezvous(_tokens) => {
                             // XXX
-                            unimplemented!();
+                            warn!("Rendezvous unimplemented, dropping")
                         }
                     }
                 }
                 Err(e) => {
                     warn!("Creating circuit failed: {}", e);
-                    // TODO insert dummy setup packet instead
+                    // TODO security: insert dummy setup packet instead
                     continue;
                 }
             }
         }
-
-        // XXX shuffle and send out batch, don't forget address information in metadata
+        // send batch, shuffling is done by the sender
+        self.setup_tx_queue
+            .send(batch)
+            .unwrap_or_else(|_| error!("Sender is gone!?"));
     }
 }
 

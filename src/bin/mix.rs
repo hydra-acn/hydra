@@ -7,6 +7,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use hydra::defs::sigint_handler;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
+use hydra::mix::sender;
 use hydra::mix::{self, simple_relay};
 
 #[tokio::main]
@@ -82,16 +83,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
         let grpc_handle = mix::grpc::spawn_service(grpc_state.clone(), mix_addr);
 
+        // setup channels for communication between main worker and sender
+        let (setup_sender, setup_receiver) = spmc::channel();
+
+        // setup sender
+        let sender = Arc::new(sender::State::new(dir_client.clone(), setup_receiver));
+        let sender_handle = tokio::spawn(sender::run(sender));
+
         // setup main worker
         let mut worker = Worker::new(
             running.clone(),
             dir_client.clone(),
             setup_rx_queue_receivers,
+            setup_sender,
             cell_rx_queue_receivers,
         );
         let main_handle = tokio::task::spawn_blocking(move || worker.run());
 
-        match tokio::try_join!(sigint_handle, dir_client_handle, grpc_handle, main_handle) {
+        match tokio::try_join!(
+            sigint_handle,
+            dir_client_handle,
+            grpc_handle,
+            sender_handle,
+            main_handle
+        ) {
             Ok(_) => (),
             Err(e) => error!("Something failed: {}", e),
         }

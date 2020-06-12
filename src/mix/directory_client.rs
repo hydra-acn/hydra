@@ -29,6 +29,12 @@ pub struct Config {
     pub directory_addr: SocketAddr,
 }
 
+impl Config {
+    pub fn setup_reply_to(&self) -> String {
+        format!("{}:{}", self.addr, self.relay_port)
+    }
+}
+
 pub struct Client {
     fingerprint: String,
     /// long term secret key for communication with the directory server
@@ -65,6 +71,10 @@ impl Client {
             key_count: AtomicU32::new(0),
             mix_channels: ChannelPool::new(),
         }
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     // TODO performance: should store infos inside Arcs to avoid copy (key material is big!)

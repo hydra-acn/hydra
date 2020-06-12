@@ -48,7 +48,7 @@ macro_rules! send_next_batch {
             match channel_map.get(&dst) {
                 Some(c) => {
                     // fire and forget concurrently for each destination
-                    tokio::spawn($send_fun(c.clone(), pkts));
+                    tokio::spawn($send_fun($state.dir_client.clone(), c.clone(), pkts));
                 }
                 None => {
                     warn!(
@@ -64,7 +64,7 @@ macro_rules! send_next_batch {
 
 macro_rules! define_send_task {
     ($name:ident, $queue:ident, $channel_getter:ident, $send_fun:ident) => {
-        async fn $name(state: Arc<State>) {
+        pub async fn $name(state: Arc<State>) {
             loop {
                 send_next_batch!(state, $queue, $channel_getter, $send_fun);
             }
@@ -100,9 +100,24 @@ fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<
     (batch_map, destinations)
 }
 
-pub async fn send_setup_packets(mut c: MixConnection, pkts: Vec<SetupPacket>) {
+pub async fn send_setup_packets(
+    dir_client: Arc<directory_client::Client>,
+    mut c: MixConnection,
+    pkts: Vec<SetupPacket>,
+) {
+    // TODO security: shuffle!
     for pkt in pkts {
-        match c.setup_circuit(pkt).await {
+        // setup packets need the src attached as metadata
+        let mut req = tonic::Request::new(pkt);
+        req.metadata_mut().insert(
+            "reply-to",
+            dir_client
+                .config()
+                .setup_reply_to()
+                .parse()
+                .expect("Why should this fail?"),
+        );
+        match c.setup_circuit(req).await {
             Ok(_) => (),
             Err(e) => warn!("Creating next circuit hop failed: {}", e),
         };

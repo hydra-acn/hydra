@@ -1,5 +1,6 @@
 //! Circuit abstraction
 use super::grpc::SetupPacketWithPrev;
+use super::sender::PacketWithNextHop;
 use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448::generate_shared_secret;
@@ -21,10 +22,7 @@ pub struct Circuit {
     onion_key: Key,
 }
 
-pub struct ExtendInfo {
-    destination: SocketAddr,
-    setup_pkt: SetupPacket,
-}
+type ExtendInfo = PacketWithNextHop<SetupPacket>;
 
 pub enum NextSetupStep {
     Extend(ExtendInfo),
@@ -105,8 +103,8 @@ impl Circuit {
                 onion: decrypted[102..].to_vec(),
             };
             let extend_info = ExtendInfo {
-                destination: upstream_hop,
-                setup_pkt: next_setup_pkt,
+                inner: next_setup_pkt,
+                next_hop: upstream_hop,
             };
             Ok((circuit, NextSetupStep::Extend(extend_info)))
         }
