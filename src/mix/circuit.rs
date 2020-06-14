@@ -50,12 +50,7 @@ impl Circuit {
         let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
         let master_key = x448::generate_shared_secret(&client_pk, ephemeral_sk)?;
         let nonce = setup_pkt.nonce.clone();
-        // 32 byte AES key for the onion-encrypted part of the setup packet
-        let aes_info = [42u8];
-        let aes_key = hkdf_sha256(&master_key, Some(&nonce), Some(&aes_info), 32)?;
-        // 128 byte Threefish-1024 key for circuit cells
-        let onion_info = [43u8];
-        let onion_key = hkdf_sha256(&master_key, Some(&nonce), Some(&onion_info), 128)?;
+        let (aes_key, onion_key) = derive_keys(&master_key, &nonce)?;
 
         // decrypt onion part
         let mut decrypted = vec![0u8; setup_pkt.onion.len()];
@@ -91,7 +86,7 @@ impl Circuit {
                 IpAddr::V6(v6) => v6,
                 _ => panic!("Why should this not be an v6 address?"),
             };
-            let port = setup_pkt.onion[16] as u16 + 16 * setup_pkt.onion[17] as u16;
+            let port = setup_pkt.onion[16] as u16 + 256 * setup_pkt.onion[17] as u16;
             let upstream_hop = match v6.to_ipv4() {
                 Some(v4) => SocketAddr::new(IpAddr::V4(v4), port),
                 None => SocketAddr::new(IpAddr::V6(v6), port),
@@ -124,11 +119,11 @@ impl Circuit {
     }
 }
 
-/// When mixes act as clients for additional cover traffic
+/// When mixes act as clients for additional cover traffic.
 pub struct ClientCircuit {
-    id: CircuitId,
-    onion_keys: Vec<Key>,
+    circuit_id: CircuitId,
     first_hop: SocketAddr,
+    onion_keys: Vec<Key>,
 }
 
 impl ClientCircuit {
@@ -145,37 +140,113 @@ impl ClientCircuit {
 
         let circuit_id = rand::random();
 
+        struct Hop {
+            nonce: Vec<u8>,
+            aes: Aes256Gcm,
+            pk: Vec<u8>,
+            ip: Vec<u8>,
+            port: Vec<u8>,
+        }
+
+        let mut hops = Vec::new();
         let mut onion_keys = Vec::new();
-        let mut public_keys = Vec::new();
+
         for mix in &path {
             let mix_pk = Key::clone_from_slice(&mix.public_dh);
             let (pk, sk) = x448::generate_keypair()?;
             let shared_key = x448::generate_shared_secret(&mix_pk, &sk)?;
-            onion_keys.push(shared_key);
-            public_keys.push(pk);
+            let mut nonce = vec![0u8; 12];
+            rand_bytes(&mut nonce)?;
+            let (aes_key, onion_key) = derive_keys(&shared_key, &nonce)?;
+            let aes = Aes256Gcm::new(aes_key);
+            let sock_addr = mix.relay_address().ok_or_else(|| {
+                Error::InputError("Mix does not have a valid relay address".to_string())
+            })?;
+            let ip = match sock_addr.ip() {
+                IpAddr::V4(v4) => v4.to_ipv6_mapped().octets().to_vec(),
+                IpAddr::V6(v6) => v6.octets().to_vec(),
+            };
+            let port = vec![
+                (sock_addr.port() % 256) as u8,
+                (sock_addr.port() / 256) as u8,
+            ];
+            let hop_info = Hop {
+                nonce,
+                aes,
+                pk: pk.clone_to_vec(),
+                ip,
+                port,
+            };
+            hops.push(hop_info);
+            onion_keys.push(onion_key);
         }
-        let onion_size = 102 * path.len() - 1 + 256 * 8;
 
+        let tokens_size = 256 * 8;
+        let onion_size = 102 * (path.len() - 1) + tokens_size;
+
+        // subscribe to random tokens
+        let mut plaintext = vec![0u8; tokens_size];
+        rand_bytes(&mut plaintext)?;
+
+        // onion encryption of all but the first layer
+        let (first_hop_info, tail_hops) = hops.split_first().expect("Already checked");
+        for hop in tail_hops.iter().rev() {
+            let mut ciphertext = plaintext.clone();
+            let mut auth_tag = vec![0u8; 16];
+            hop.aes
+                .encrypt(&hop.nonce, &plaintext, &mut ciphertext, None, &mut auth_tag)?;
+            let layer_combined = vec![
+                hop.ip.clone(),
+                hop.port.clone(),
+                hop.pk.clone(),
+                hop.nonce.clone(),
+                auth_tag,
+                ciphertext,
+            ];
+            plaintext = layer_combined.into_iter().flatten().collect();
+        }
+
+        assert_eq!(plaintext.len(), onion_size);
+
+        // last encryption (first hop) can be done in place
         let mut setup_pkt = SetupPacket {
             epoch_no,
             circuit_id,
-            public_dh: public_keys.first().expect("Already checked").clone_to_vec(),
-            nonce: vec![0u8; 12],
+            public_dh: first_hop_info.pk.clone(),
+            nonce: first_hop_info.nonce.clone(),
             auth_tag: vec![0u8; 16],
-            onion: vec![0u8; onion_size],
+            onion: plaintext.clone(),
         };
 
-        // baseline: randomize
-        rand_bytes(&mut setup_pkt.nonce)?;
-        rand_bytes(&mut setup_pkt.onion)?;
+        first_hop_info.aes.encrypt(
+            &setup_pkt.nonce,
+            &plaintext,
+            &mut setup_pkt.onion,
+            None,
+            &mut setup_pkt.auth_tag,
+        )?;
 
         let circuit = ClientCircuit {
-            id: circuit_id,
+            circuit_id: circuit_id,
             first_hop,
             onion_keys,
         };
 
-        // XXX onion encryption
         Ok((circuit, setup_pkt))
     }
+
+    pub fn circuit_id(&self) -> CircuitId {
+        self.circuit_id
+    }
+}
+
+/// Derive AES and Threefish keys from shared secret.
+fn derive_keys(master_key: &Key, nonce: &[u8]) -> Result<(Key, Key), Error> {
+    // 32 byte AES key for the onion-encrypted part of the setup packet
+    let aes_info = [42u8];
+    let aes_key = hkdf_sha256(&master_key, Some(&nonce), Some(&aes_info), 32)?;
+    // 128 byte Threefish-1024 key for circuit cells
+    let onion_info = [43u8];
+    let onion_key = hkdf_sha256(&master_key, Some(&nonce), Some(&onion_info), 128)?;
+    Ok((aes_key, onion_key))
 }
