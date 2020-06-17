@@ -9,12 +9,14 @@ pub fn ip_addr_from_slice(a: &[u8]) -> Result<IpAddr, Error> {
             octets.copy_from_slice(&a[..]);
             Ok(IpAddr::V4(octets.into()))
         }
-        6 => {
+        16 => {
             let mut octets: [u8; 16] = [0; 16];
             octets.copy_from_slice(&a[..]);
             Ok(IpAddr::V6(octets.into()))
         }
-        _ => Err(Error::InputError("Wrong size".to_string())),
+        _ => Err(Error::InputError(
+            "Length of slice does not match a valid IP address length".to_string(),
+        )),
     }
 }
 
