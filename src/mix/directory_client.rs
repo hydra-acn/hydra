@@ -100,6 +100,26 @@ impl Client {
         self.next_epoch_info().map(|epoch| epoch.setup_start_time)
     }
 
+    /// return the epoch number for the epoch that is currently in the communication phase
+    pub fn current_communication_epoch_no(&self) -> Option<EpochNo> {
+        self.current_communication_epoch_info()
+            .map(|epoch| epoch.epoch_no)
+    }
+
+    /// return the epoch info for the epoch that is currently in the communication phase
+    pub fn current_communication_epoch_info(&self) -> Option<EpochInfo> {
+        let current_time = current_time_in_secs();
+        let epoch_map = self.epochs.read().expect("Lock failure");
+        for (_, epoch) in epoch_map.iter() {
+            if current_time >= epoch.communication_start_time
+                && current_time <= epoch.communication_end_time()
+            {
+                return Some(epoch.clone());
+            }
+        }
+        None
+    }
+
     /// if we are currently in a communication phase, return the duration till next receive
     pub fn next_receive_in(&self) -> Option<Duration> {
         let epoch_map = self.epochs.read().expect("Lock failure");
