@@ -1,7 +1,6 @@
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
-use std::convert::TryInto;
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::{Request, Response, Status};
@@ -161,11 +160,8 @@ pub async fn garbage_collector(state: Arc<State>) {
 mod tests {
     use super::*;
 
-    use crate::defs::sigint_handler;
-
     use crate::mix::simple_relay;
     use crate::tonic_mix::simple_relay_client::SimpleRelayClient;
-    use crate::tonic_mix::simple_relay_server::SimpleRelay;
     use crate::tonic_mix::RelayRequest;
     use std::sync::Arc;
     use tokio::time::{self, Duration};
@@ -199,8 +195,6 @@ mod tests {
     #[test]
     fn test_partial_order() {
         let my_dummy_cell1 = Cell::dummy(21, 3);
-        let my_dummy_cell2 = Cell::dummy(3, 3);
-
         let smaller = TimestampedCell {
             timestamp: 12,
             cell: my_dummy_cell1,
@@ -292,7 +286,7 @@ mod tests {
             tokens: vec![2],
         });
 
-        let response = client
+        client
             .send_and_receive(request)
             .await
             .expect("Send Receive failed");
@@ -312,7 +306,7 @@ mod tests {
             tokens: vec![1],
         });
 
-        let response = client
+        client
             .send_and_receive(request)
             .await
             .expect("Send Receive failed");

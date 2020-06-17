@@ -78,13 +78,12 @@ pub fn token_from_bytes(raw: &[u8]) -> Option<Token> {
 pub fn tokens_from_bytes(raw: &[u8]) -> Vec<Token> {
     let mut tokens: Vec<Token> = Vec::new();
     for i in (0..raw.len()).step_by(8) {
-        let mut token = match raw.get(i..i + 8) {
+        match raw.get(i..i + 8) {
             Some(token) => tokens.push(
                 token_from_bytes(&token).expect("Something went wrong during the conversion"),
             ),
             None => {
                 log::warn!("Size of Vector is not a multiple of eight.");
-                return tokens;
             }
         };
     }
@@ -102,6 +101,7 @@ impl Cell {
             onion: rand_onion,
         }
     }
+
     pub fn token(&self) -> Token {
         token_from_bytes(self.onion[8..16].try_into().expect("Failed")).unwrap()
     }
