@@ -19,10 +19,17 @@ use crate::{
 #[derive(Debug)]
 pub struct SetupPacketWithPrev {
     inner: SetupPacket,
+    // TODO why option?
     previous_hop: Option<SocketAddr>,
 }
 
 impl SetupPacketWithPrev {
+    pub fn new(pkt: SetupPacket, previous_hop: Option<SocketAddr>) -> Self {
+        SetupPacketWithPrev {
+            inner: pkt,
+            previous_hop,
+        }
+    }
     pub fn epoch_no(&self) -> EpochNo {
         self.inner.epoch_no
     }
