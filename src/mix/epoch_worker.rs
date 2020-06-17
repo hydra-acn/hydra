@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
-use super::circuit::{Circuit, NextSetupStep};
+use super::circuit::{Circuit, ClientCircuit, ExtendInfo, NextSetupStep};
 use super::directory_client;
 use super::grpc::SetupPacketWithPrev;
 use super::sender::SetupBatch;
@@ -23,6 +23,7 @@ type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
 
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
+type ClientCircuitMap = BTreeMap<CircuitId, ClientCircuit>;
 type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
 
 pub struct Worker {
@@ -32,7 +33,10 @@ pub struct Worker {
     setup_tx_queue: SetupTxQueue,
     _cell_rx_queues: Vec<CellRxQueue>,
     pending_setup_pkts: PendingSetupMap,
+    // mapping downstream ids to circuits
     circuits: CircuitMap,
+    // mapping *upstream* ids to dummy circuits (they have no downstream id)
+    dummy_circuits: ClientCircuitMap,
     // mapping the upstream circuit id to the downstream id of an circuit
     circuit_id_map: CircuitIdMap,
 }
@@ -53,6 +57,7 @@ impl Worker {
             _cell_rx_queues: cell_rx_queues,
             pending_setup_pkts: PendingSetupMap::new(),
             circuits: CircuitMap::new(),
+            dummy_circuits: ClientCircuitMap::new(),
             circuit_id_map: CircuitIdMap::new(),
         }
     }
@@ -194,7 +199,6 @@ impl Worker {
             Some(pkts) => pkts,
             None => VecDeque::new(),
         };
-        // TODO insert our dummy packets first?
         // TODO performance parallel iteration (rayon? deque maybe not the best for this)
         // -> one circuit map and "batch" per thread to avoid locking?
         for pkt in setup_pkts.into_iter() {
@@ -216,7 +220,7 @@ impl Worker {
                         .insert(circuit.upstream_id(), circuit.downstream_id());
                     self.circuits.insert(circuit.downstream_id(), circuit);
                     match next_hop_info {
-                        NextSetupStep::Extend(create) => batch.push(create),
+                        NextSetupStep::Extend(extend) => batch.push(extend),
                         NextSetupStep::Rendezvous(_tokens) => {
                             // XXX
                             warn!("Rendezvous unimplemented, dropping")
@@ -230,10 +234,26 @@ impl Worker {
                 }
             }
         }
+        if current_ttl > 0 {
+            // create one additional dummy circuit
+            let (circuit, extend) = self.create_dummy_circuit(epoch.epoch_no, current_ttl);
+            self.dummy_circuits.insert(circuit.circuit_id(), circuit);
+            batch.push(extend);
+        }
         // send batch, shuffling is done by the sender
+        debug!("Worker prepared new setup batch");
         self.setup_tx_queue
             .send(batch)
             .unwrap_or_else(|_| error!("Sender is gone!?"));
+    }
+
+    /// Panics on failure as dummy circuits are essential for anonymity.
+    fn create_dummy_circuit(&self, epoch_no: EpochNo, ttl: u32) -> (ClientCircuit, ExtendInfo) {
+        let path = self
+            .dir_client
+            .select_path(epoch_no, ttl)
+            .expect("No path available");
+        ClientCircuit::new(epoch_no, path).expect("Creating dummy circuit failed")
     }
 }
 

@@ -40,6 +40,8 @@ macro_rules! send_next_batch {
         .await
         .expect("Reading tx queue failed");
 
+        debug!("Sending batch with {} packets", batch.len(),);
+
         // sort by destination and get corresponding channels
         let (batch_map, destinations) = sort_by_destination::<SetupPacket>(batch);
         let channel_map = $state.dir_client.$channel_getter(&destinations).await;
