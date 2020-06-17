@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::{Request, Response, Status};
 
-use crate::defs::{dummy_cell, token_from_bytes, CircuitId, Token};
+use crate::defs::{CircuitId, Token};
 use crate::epoch::current_time_in_secs;
 use crate::grpc::valid_request_check;
 use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
@@ -80,7 +80,7 @@ impl Service {
         let timestamp = current_time_in_secs();
         let onion = &cell.onion;
         valid_request_check(onion.len() == 256, "Cell has wrong size")?;
-        let token = token_from_bytes(onion[8..16].try_into().expect("Why should this fail?"));
+        let token = cell.token();
 
         let ts_cell = TimestampedCell { timestamp, cell };
 
@@ -122,7 +122,7 @@ impl Service {
             }
         }
         if cells.len() == 0 {
-            cells.push(dummy_cell(cid, 42)); // note: round_no (42) is wayne here
+            cells.push(Cell::dummy(cid, 42)); // note: round_no (42) is wayne here
         }
         Ok(cells)
     }
@@ -131,9 +131,6 @@ impl Service {
 /// endless-loop that deletes old cells (older than 24 hours)
 pub async fn garbage_collector(state: Arc<State>) {
     loop {
-        // cleanup every hour
-        delay_for(Duration::from_secs(3600)).await;
-
         info!("Garbage collector strikes again!");
         {
             let mut map = match state.cells.write() {
@@ -154,6 +151,240 @@ pub async fn garbage_collector(state: Arc<State>) {
                 };
                 *cell_set = cell_set.split_off(&split_cell);
             }
+        }
+        // cleanup every hour
+        delay_for(Duration::from_secs(3600)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::defs::sigint_handler;
+
+    use crate::mix::simple_relay;
+    use crate::tonic_mix::simple_relay_client::SimpleRelayClient;
+    use crate::tonic_mix::simple_relay_server::SimpleRelay;
+    use crate::tonic_mix::RelayRequest;
+    use std::sync::Arc;
+    use tokio::time::{self, Duration};
+
+    #[test]
+    fn test_order() {
+        let my_dummy_cell1 = Cell::dummy(21, 3);
+        let my_dummy_cell2 = Cell::dummy(3, 3);
+        let my_dummy_cell3 = Cell::dummy(2, 3);
+        let smaller = TimestampedCell {
+            timestamp: 12,
+            cell: my_dummy_cell1,
+        };
+        let larger = TimestampedCell {
+            timestamp: 22,
+            cell: my_dummy_cell2,
+        };
+        let equal_larger_with_smaller_cid = TimestampedCell {
+            timestamp: 22,
+            cell: my_dummy_cell3,
+        };
+
+        assert_eq!(Ordering::Less, smaller.cmp(&larger));
+        assert_eq!(Ordering::Greater, larger.cmp(&smaller));
+        assert_eq!(
+            Ordering::Greater,
+            larger.cmp(&equal_larger_with_smaller_cid)
+        );
+    }
+
+    #[test]
+    fn test_partial_order() {
+        let my_dummy_cell1 = Cell::dummy(21, 3);
+        let my_dummy_cell2 = Cell::dummy(3, 3);
+
+        let smaller = TimestampedCell {
+            timestamp: 12,
+            cell: my_dummy_cell1,
+        };
+
+        assert_eq!(Some(Ordering::Equal), smaller.partial_cmp(&smaller));
+    }
+
+    #[test]
+    fn test_eq() {
+        let my_dummy_cell1 = Cell::dummy(21, 3);
+        let same_as_my_dummy_cell1 = Cell::dummy(21, 3);
+        let my_dummy_cell2 = Cell::dummy(2, 4);
+
+        let cell = TimestampedCell {
+            timestamp: 12,
+            cell: my_dummy_cell1,
+        };
+        let same_cell = TimestampedCell {
+            timestamp: 12,
+            cell: same_as_my_dummy_cell1,
+        };
+        let other_cell = TimestampedCell {
+            timestamp: 12,
+            cell: my_dummy_cell2,
+        };
+        assert_eq!(true, cell.eq(&same_cell));
+        assert_eq!(false, cell.eq(&other_cell));
+    }
+
+    #[tokio::test]
+    async fn send_dummy_cell() {
+        time::delay_for(Duration::from_millis(1000)).await;
+        let mut client = SimpleRelayClient::connect("http://127.0.0.1:9001")
+            .await
+            .expect("failed to connect");
+
+        let mut my_dummy_cell = Cell::dummy(21, 3);
+        let working_cell = my_dummy_cell.clone();
+        let send_onion = working_cell.onion;
+
+        let token = my_dummy_cell.token();
+
+        let request = tonic::Request::new(RelayRequest {
+            cell: Some(my_dummy_cell),
+            tokens: Vec::new(),
+        });
+
+        let response = client
+            .send_and_receive(request)
+            .await
+            .expect("Send Receive failed");
+
+        let empty_resp_cell: Cell = std::option::Option::unwrap(response.into_inner().cells.pop());
+        assert_eq!(empty_resp_cell.circuit_id, 21);
+
+        my_dummy_cell = Cell::dummy(1, 3);
+
+        let request = tonic::Request::new(RelayRequest {
+            cell: Some(my_dummy_cell),
+            tokens: vec![token],
+        });
+
+        let response = client
+            .send_and_receive(request)
+            .await
+            .expect("Send Receive failed");
+        let resp_cell = std::option::Option::unwrap(response.into_inner().cells.pop());
+
+        assert_eq!(resp_cell.onion, send_onion);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Cell has wrong size")]
+    async fn send_too_short_onion() {
+        time::delay_for(Duration::from_millis(300)).await;
+        let mut client = SimpleRelayClient::connect("http://127.0.0.1:9001")
+            .await
+            .expect("failed to connect");
+
+        let my_short_cell = Cell {
+            circuit_id: 1,
+            round_no: 1,
+            onion: vec![3],
+        };
+
+        let request = tonic::Request::new(RelayRequest {
+            cell: Some(my_short_cell),
+            tokens: vec![2],
+        });
+
+        let response = client
+            .send_and_receive(request)
+            .await
+            .expect("Send Receive failed");
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "You have to send a cell each round")]
+    async fn send_none() {
+        time::delay_for(Duration::from_millis(100)).await;
+
+        let mut client = SimpleRelayClient::connect("http://127.0.0.1:9001")
+            .await
+            .expect("failed to connect");
+
+        let request = tonic::Request::new(RelayRequest {
+            cell: None,
+            tokens: vec![1],
+        });
+
+        let response = client
+            .send_and_receive(request)
+            .await
+            .expect("Send Receive failed");
+    }
+
+    #[tokio::test]
+    async fn start_garbage_collector_and_server_for_testing() {
+        //insert timestamped cell that should be deleted by the garbage collector
+        let timestamp = current_time_in_secs() - (24 * 3600 + 33);
+        let cell_to_discard = Cell::dummy(2, 3);
+        let state = Arc::new(simple_relay::State::new());
+        let token1 = cell_to_discard.token();
+        let ts_cell_to_discard = TimestampedCell {
+            timestamp: timestamp,
+            cell: cell_to_discard,
+        };
+        {
+            let mut map = state.cells.write().expect("Could not acquire lock");
+            match map.get_mut(&token1) {
+                Some(cell_set) => cell_set.insert(ts_cell_to_discard.clone()),
+                None => {
+                    let mut set = BTreeSet::new();
+                    set.insert(ts_cell_to_discard.clone());
+                    map.insert(token1, set);
+                    true
+                }
+            };
+        }
+        //insert second timestamped cell that should not be deleted by the garbage collector
+        let timestamp_fresh = current_time_in_secs();
+        let cell_to_keep = Cell::dummy(2, 3);
+        let token2 = cell_to_keep.token();
+        let ts_cell_to_keep = TimestampedCell {
+            timestamp: timestamp_fresh,
+            cell: cell_to_keep,
+        };
+        {
+            let mut map = state.cells.write().expect("Could not acquire lock");
+            match map.get_mut(&token2) {
+                Some(cell_set) => cell_set.insert(ts_cell_to_keep.clone()),
+                None => {
+                    let mut set = BTreeSet::new();
+                    set.insert(ts_cell_to_keep.clone());
+                    map.insert(token2, set);
+                    true
+                }
+            };
+        }
+        let local_addr: std::net::SocketAddr = ("127.0.0.1:9001").parse().expect("failed to parse");
+        let timeout = time::delay_for(Duration::from_secs(5));
+        let grpc_handle = spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout));
+        let garbage_handle = tokio::spawn(simple_relay::garbage_collector(state.clone()));
+        if let Err(_) = tokio::time::timeout(Duration::from_secs(5), garbage_handle).await {
+        } else {
+            unreachable!();
+        }
+        match tokio::try_join!(grpc_handle) {
+            Ok(_) => (),
+            Err(e) => error!("Something failed: {}", e),
+        }
+        {
+            let mut cell_to_discard_in_tree = true;
+            let mut cell_to_keep_in_tree = false;
+            let map = state.cells.write().expect("Could not acquire lock").clone();
+            if let Some(bt_from_map) = map.get(&token1) {
+                cell_to_discard_in_tree = bt_from_map.contains(&ts_cell_to_discard);
+            }
+            if let Some(bt_from_map) = map.get(&token2) {
+                cell_to_keep_in_tree = bt_from_map.contains(&ts_cell_to_keep);
+            }
+            assert_eq!(cell_to_discard_in_tree, false);
+            assert_eq!(cell_to_keep_in_tree, true);
         }
     }
 }

@@ -2,33 +2,19 @@
 
 use ctrlc;
 use openssl::rand::rand_bytes;
+use std::convert::TryInto;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::{delay_for, Duration};
 
 use crate::tonic_mix::{Cell, SetupPacket};
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 
 pub type Token = u64;
 pub type CircuitId = u64;
 pub type CircuitIdSet = std::collections::BTreeSet<CircuitId>;
 pub type RoundNo = u32;
 pub const ONION_SIZE: usize = 256;
-
-/// Decode bytes as little-endian u64
-///
-/// # Examples
-/// ```
-/// # use hydra::defs::token_from_bytes;
-/// let raw = [42, 0, 0, 0, 0, 0, 0, 128];
-/// let token = token_from_bytes(&raw);
-/// assert_eq!(token, (1u64 << 63) + 42);
-/// ```
-pub fn token_from_bytes(raw: &[u8; 8]) -> Token {
-    let mut rdr = std::io::Cursor::new(raw);
-    rdr.read_u64::<LittleEndian>()
-        .expect("Why should this fail?")
-}
 
 pub fn hydra_version() -> &'static str {
     option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
@@ -52,16 +38,6 @@ impl SetupPacket {
     }
 }
 
-pub fn dummy_cell(cid: CircuitId, r: RoundNo) -> Cell {
-    let mut dummy = Cell {
-        circuit_id: cid,
-        round_no: r,
-        onion: vec![0; ONION_SIZE],
-    };
-    rand_bytes(&mut dummy.onion).expect("Could not randomize dummy cell, better crash now");
-    dummy
-}
-
 /// Usage: create an `AtomicBool` with value `true` and spawn the handler on a separate thread. As
 /// soon as `SIGINT` is catched, two things will happen (both may be helpful for cleanup):
 /// 1. the thread the handler ran own panics -> catch and cleanup
@@ -77,4 +53,92 @@ pub async fn sigint_handler(running: Arc<AtomicBool>) {
     }
     log::info!("Caught SIGINT");
     panic!("Interrupted");
+}
+
+/// Decode bytes as little-endian u64
+///
+/// # Examples
+/// ```
+/// # use hydra::defs::token_from_bytes;
+/// let raw = vec![42, 0, 0, 0, 0, 0, 0, 128];
+/// let token = token_from_bytes(&raw);
+/// assert_eq!(token.unwrap(), (1u64 << 63) + 42);
+/// ```
+pub fn token_from_bytes(raw: &[u8]) -> Option<Token> {
+    if raw.len() != 8 {
+        return None;
+    }
+    let mut rdr = std::io::Cursor::new(raw);
+    Some(
+        rdr.read_u64::<LittleEndian>()
+            .expect("Why should this fail?"),
+    )
+}
+
+pub fn tokens_from_bytes(raw: &[u8]) -> Vec<Token> {
+    let mut tokens: Vec<Token> = Vec::new();
+    for i in (0..raw.len()).step_by(8) {
+        let mut token = match raw.get(i..i + 8) {
+            Some(token) => tokens.push(
+                token_from_bytes(&token).expect("Something went wrong during the conversion"),
+            ),
+            None => {
+                log::warn!("Size of Vector is not a multiple of eight.");
+                return tokens;
+            }
+        };
+    }
+    tokens
+}
+
+impl Cell {
+    /// creates new dummy cell
+    pub fn dummy(cid: CircuitId, r: RoundNo) -> Self {
+        let mut rand_onion = vec![0; ONION_SIZE];
+        rand_bytes(&mut rand_onion).expect("Could not randomize dummy cell, better crash now");
+        Cell {
+            circuit_id: cid,
+            round_no: r,
+            onion: rand_onion,
+        }
+    }
+    pub fn token(&self) -> Token {
+        token_from_bytes(self.onion[8..16].try_into().expect("Failed")).unwrap()
+    }
+
+    pub fn set_token(&mut self, token: Token) {
+        LittleEndian::write_u64(&mut self.onion[8..16], token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_set_token() {
+        let mut my_cell: Cell = Cell::dummy(1, 2);
+        my_cell.set_token(1000);
+        let token: Token = my_cell.token();
+        assert_eq!(token, 1000);
+    }
+
+    #[test]
+    fn test_bytes_to_token() {
+        //initialise test: perfect sized vector to tokens
+        let bytes: Vec<u8> = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 255, 255, 255, 255, 255, 255, 255, 255, 11, 11, 11, 11, 11, 11,
+            11,
+        ];
+        let expected_vec_bytes: Vec<_> = vec![578437695752307201, 18446744073709551615];
+        //initialise test: wrong sized Vector to tokens
+        let too_short: Vec<u8> = vec![255, 255, 255, 255, 255, 255, 255];
+        let expected_vec_too_short: Vec<_> = Vec::new();
+        //Call function and evaluate result for the perfect sized vector
+        let tokens1 = tokens_from_bytes(&bytes);
+        assert_eq!(tokens1, expected_vec_bytes);
+        //Call function and evaluate result for the wrong sized vector
+        let tokens2 = tokens_from_bytes(&too_short);
+        assert_eq!(tokens2, expected_vec_too_short);
+    }
 }
