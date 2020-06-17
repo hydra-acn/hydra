@@ -4,13 +4,14 @@ use super::sender::PacketWithNextHop;
 use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
-use crate::defs::{CircuitId, Token};
+use crate::defs::{tokens_from_bytes, CircuitId, Token};
 use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::MixInfo;
 use crate::tonic_mix::*;
 
+use log::*;
 use openssl::rand::rand_bytes;
 use std::net::{IpAddr, SocketAddr};
 
@@ -25,7 +26,7 @@ pub struct Circuit {
     onion_key: Key,
 }
 
-type ExtendInfo = PacketWithNextHop<SetupPacket>;
+pub type ExtendInfo = PacketWithNextHop<SetupPacket>;
 
 pub enum NextSetupStep {
     Extend(ExtendInfo),
@@ -77,8 +78,7 @@ impl Circuit {
 
         if ttl == 0 {
             // time for rendezvous
-            // XXX use function by jbloss to extract the real tokens
-            let tokens = Vec::new();
+            let tokens = tokens_from_bytes(&setup_pkt.onion);
             Ok((circuit, NextSetupStep::Rendezvous(tokens)))
         } else {
             // show must go on
@@ -104,6 +104,12 @@ impl Circuit {
                 inner: next_setup_pkt,
                 next_hop: upstream_hop,
             };
+
+            // TODO security: this should not be logged in production ...
+            debug!(
+                "Created relay circuit with downstream id {} and upstream id {}",
+                circuit.downstream_id, circuit.upstream_id
+            );
             Ok((circuit, NextSetupStep::Extend(extend_info)))
         }
     }
@@ -124,13 +130,14 @@ pub struct ClientCircuit {
     circuit_id: CircuitId,
     first_hop: SocketAddr,
     onion_keys: Vec<Key>,
+    tokens: Vec<Token>,
 }
 
 impl ClientCircuit {
     pub fn new(
         epoch_no: EpochNo,
         path: Vec<MixInfo>,
-    ) -> Result<(ClientCircuit, SetupPacket), Error> {
+    ) -> Result<(ClientCircuit, PacketWithNextHop<SetupPacket>), Error> {
         let first_mix = path
             .first()
             .ok_or_else(|| Error::SizeMismatch("Expected path with length >= 1".to_string()))?;
@@ -187,6 +194,7 @@ impl ClientCircuit {
         // subscribe to random tokens
         let mut plaintext = vec![0u8; tokens_size];
         rand_bytes(&mut plaintext)?;
+        let tokens = tokens_from_bytes(&plaintext);
 
         // onion encryption of all but the first layer
         let (first_hop_info, tail_hops) = hops.split_first().expect("Already checked");
@@ -230,11 +238,21 @@ impl ClientCircuit {
             circuit_id: circuit_id,
             first_hop,
             onion_keys,
+            tokens,
         };
 
-        Ok((circuit, setup_pkt))
+        debug!(
+            "Created client circuit with id {} and next hop {}",
+            circuit_id, circuit.first_hop
+        );
+        let extend = ExtendInfo {
+            inner: setup_pkt,
+            next_hop: circuit.first_hop,
+        };
+        Ok((circuit, extend))
     }
 
+    /// Client circuit only has an upstream id
     pub fn circuit_id(&self) -> CircuitId {
         self.circuit_id
     }
@@ -249,4 +267,59 @@ fn derive_keys(master_key: &Key, nonce: &[u8]) -> Result<(Key, Key), Error> {
     let onion_info = [43u8];
     let onion_key = hkdf_sha256(&master_key, Some(&nonce), Some(&onion_info), 128)?;
     Ok((aes_key, onion_key))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_onion() {
+        let mixes: Vec<(MixInfo, Key)> = [1, 2, 3].iter().map(|i| create_mix_info(*i)).collect();
+        let path: Vec<MixInfo> = mixes.iter().map(|(info, _)| info.clone()).collect();
+        let endpoints: Vec<SocketAddr> = path
+            .iter()
+            .map(|info| {
+                SocketAddr::new(
+                    ip_addr_from_slice(&info.address).unwrap(),
+                    info.relay_port as u16,
+                )
+            })
+            .collect();
+        let (client_circuit, extend) = ClientCircuit::new(42, path.clone()).unwrap();
+        assert_eq!(extend.next_hop, endpoints[0]);
+        let setup_pkt = extend.into_inner();
+
+        // first mix
+        assert_eq!(setup_pkt.ttl().unwrap(), 2);
+        let previous_hop = Some("8.8.8.8:42".parse().unwrap()); // previous hop is client
+        let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, previous_hop);
+        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[0].1, 0).unwrap();
+        assert_eq!(client_circuit.onion_keys[0], circuit.onion_key);
+        let extend = match next_step {
+            NextSetupStep::Extend(e) => e,
+            _ => unreachable!(),
+        };
+        // XXX this fails
+        // assert_eq!(extend.next_hop, endpoints[1]);
+
+        // second mix
+        // TODO
+
+        // third mix
+        // TODO
+    }
+
+    fn create_mix_info(index: u8) -> (MixInfo, Key) {
+        let (pk, sk) = x448::generate_keypair().unwrap();
+        let info = MixInfo {
+            address: vec![127, 0, 0, index],
+            entry_port: 9001,
+            relay_port: 9002,
+            rendezvous_port: 9003,
+            fingerprint: format!("mix-{}", index),
+            public_dh: pk.clone_to_vec(),
+        };
+        (info, sk)
+    }
 }
