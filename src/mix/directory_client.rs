@@ -1,4 +1,5 @@
 use log::*;
+use rand::seq::SliceRandom;
 use std::cmp;
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
@@ -299,6 +300,30 @@ impl Client {
         destinations: &[SocketAddr],
     ) -> HashMap<SocketAddr, MixChannel> {
         self.mix_channels.get_channels(destinations).await
+    }
+
+    pub fn select_path(&self, epoch_no: EpochNo, number_of_hops: u32) -> Option<Vec<MixInfo>> {
+        let epoch_map = self.epochs.read().expect("Lock poisoned");
+        let epoch = epoch_map.get(&epoch_no)?;
+        let canditates: Vec<&MixInfo> = epoch
+            .mixes
+            .iter()
+            .filter(|m| m.fingerprint != self.fingerprint)
+            .collect();
+        if canditates.len() < number_of_hops as usize {
+            warn!(
+                "Don't know enough mixes to select a path of length {}",
+                number_of_hops
+            );
+            return None;
+        }
+        // TODO security: use secure random source
+        let rng = &mut rand::thread_rng();
+        let path = canditates
+            .choose_multiple(rng, number_of_hops as usize)
+            .map(|&mix| mix.clone())
+            .collect();
+        Some(path)
     }
 }
 
