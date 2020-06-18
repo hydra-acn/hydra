@@ -23,6 +23,9 @@ rand = "^0.7"
 sha2 = "^0.8"
 hkdf = "^0.8"
 spmc = "^0.3"
+generic-array = "^0.14"
+block-cipher = "^0.7"
+threefish = "^0.1"
 
 [build-dependencies]
 cmake = "^0.1"
