@@ -274,7 +274,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn key_derivation() {
+        let master_key =
+            Key::from_hex_str("775f84edb8bf10bb747765f2582c87f4a1e4463f275f38ce447a5885").unwrap();
+        let nonce = hex::decode("903a73a912df").unwrap();
+        let (aes_key, onion_key) = derive_keys(&master_key, &nonce).unwrap();
+        let aes_expected =
+            Key::from_hex_str("ac5e5ae356e4f943574ee7cefadb091b17eec79d642fcafcd8679f8c110cc51f")
+                .unwrap();
+        let onion_expected = Key::from_hex_str("30755ecd02757afb390d28ae2eb5bc4e6015e95c835a998cc74551e8a8a183fac722852edf51c1a82b0b9f068c085ad6c17233ef20730e710e862232cb8675696c140a5ee306a816df06f99b1cf639baa93a7d15fbe0be7e4c10afaeea26d77f6b656808d756df0c0f978610faa8c35597e49e04f4f1b85225bff654b69ee06e").unwrap();
+        assert_eq!(aes_key, aes_expected);
+        assert_eq!(onion_key, onion_expected);
+    }
+
+    #[test]
     fn setup_onion() {
+        // deterministic test (only when not run in parallel with other tests)
+        crate::crypto::activate_fake_rand(1337);
+
         let mixes: Vec<(MixInfo, Key)> = [1, 2, 3].iter().map(|i| create_mix_info(*i)).collect();
         let path: Vec<MixInfo> = mixes.iter().map(|(info, _)| info.clone()).collect();
         let endpoints: Vec<SocketAddr> = path
