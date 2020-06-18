@@ -50,13 +50,13 @@ impl Circuit {
         let setup_pkt = pkt.into_inner();
         let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
         let master_key = x448::generate_shared_secret(&client_pk, ephemeral_sk)?;
-        let nonce = setup_pkt.nonce.clone();
+        let nonce = &setup_pkt.nonce;
         let (aes_key, onion_key) = derive_keys(&master_key, &nonce)?;
 
         // decrypt onion part
         let mut decrypted = vec![0u8; setup_pkt.onion.len()];
         Aes256Gcm::new(aes_key).decrypt(
-            &nonce,
+            nonce,
             &setup_pkt.onion,
             &mut decrypted,
             None,
@@ -78,15 +78,15 @@ impl Circuit {
 
         if ttl == 0 {
             // time for rendezvous
-            let tokens = tokens_from_bytes(&setup_pkt.onion);
+            let tokens = tokens_from_bytes(&decrypted);
             Ok((circuit, NextSetupStep::Rendezvous(tokens)))
         } else {
             // show must go on
-            let v6 = match ip_addr_from_slice(&setup_pkt.onion[0..16])? {
+            let v6 = match ip_addr_from_slice(&decrypted[0..16])? {
                 IpAddr::V6(v6) => v6,
                 _ => panic!("Why should this not be an v6 address?"),
             };
-            let port = setup_pkt.onion[16] as u16 + 256 * setup_pkt.onion[17] as u16;
+            let port = decrypted[16] as u16 + 256 * decrypted[17] as u16;
             let upstream_hop = match v6.to_ipv4() {
                 Some(v4) => SocketAddr::new(IpAddr::V4(v4), port),
                 None => SocketAddr::new(IpAddr::V6(v6), port),
@@ -300,14 +300,31 @@ mod tests {
             NextSetupStep::Extend(e) => e,
             _ => unreachable!(),
         };
-        // XXX this fails
-        // assert_eq!(extend.next_hop, endpoints[1]);
+        assert_eq!(extend.next_hop, endpoints[1]);
+        let setup_pkt = extend.into_inner();
 
         // second mix
-        // TODO
+        assert_eq!(setup_pkt.ttl().unwrap(), 1);
+        let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[0].clone()));
+        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[1].1, 1).unwrap();
+        assert_eq!(client_circuit.onion_keys[1], circuit.onion_key);
+        let extend = match next_step {
+            NextSetupStep::Extend(e) => e,
+            _ => unreachable!(),
+        };
+        assert_eq!(extend.next_hop, endpoints[2]);
+        let setup_pkt = extend.into_inner();
 
-        // third mix
-        // TODO
+        // third mix (last one)
+        assert_eq!(setup_pkt.ttl().unwrap(), 0);
+        let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[1].clone()));
+        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[2].1, 2).unwrap();
+        assert_eq!(client_circuit.onion_keys[2], circuit.onion_key);
+        let tokens = match next_step {
+            NextSetupStep::Rendezvous(ts) => ts,
+            _ => unreachable!(),
+        };
+        assert_eq!(tokens, client_circuit.tokens);
     }
 
     fn create_mix_info(index: u8) -> (MixInfo, Key) {
