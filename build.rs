@@ -4,6 +4,11 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=x448");
 
+    // build static fakerand lib
+    let dst = cmake::build("include/fakerand");
+    println!("cargo:rustc-link-search=native={}/lib", dst.display());
+    println!("cargo:rustc-link-lib=static=fakerand");
+
     // compile protobuf files
     tonic_build::compile_protos("protobuf/directory.proto")
         .expect("Failed to generate directory gRPC");
