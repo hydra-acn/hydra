@@ -25,6 +25,11 @@ deploy_local() {
     fi
 
     n=$1
+    if [ $n -eq 1 ]; then
+        simple_flag="--simple"
+    else
+        simple_flag=""
+    fi
     localhost=$2
     dirport=9000
     phasedur=120
@@ -39,7 +44,7 @@ deploy_local() {
         port=`echo $dirport + $i | bc`
         echo -n "-> Starting mix on port $port ..."
         tmux new-window -d -t "=${session}" -n mix-$i
-        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -d $localhost:$dirport" Enter
+        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -d $localhost:$dirport $simple_flag" Enter
         echo " Done"
     done
     # Kill the "default" tmux window
