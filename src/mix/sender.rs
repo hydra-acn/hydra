@@ -25,6 +25,7 @@ impl<T> PacketWithNextHop<T> {
 
 pub type Batch<T> = Vec<PacketWithNextHop<T>>;
 pub type SetupBatch = Batch<SetupPacket>;
+pub type CellBatch = Batch<Cell>;
 
 type SetupTxQueue = spmc::Receiver<SetupBatch>;
 type MixConnection = MixClient<tonic::transport::Channel>;

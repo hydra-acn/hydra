@@ -4,7 +4,7 @@ use super::sender::PacketWithNextHop;
 use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
-use crate::defs::{tokens_from_bytes, CircuitId, Token};
+use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token};
 use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
@@ -31,6 +31,17 @@ pub type ExtendInfo = PacketWithNextHop<SetupPacket>;
 pub enum NextSetupStep {
     Extend(ExtendInfo),
     Rendezvous(Vec<Token>),
+}
+
+pub enum NextCellStep {
+    Relay(PacketWithNextHop<Cell>),
+    Rendezvous(Cell),
+    Deliver(Cell),
+}
+
+pub enum CellDirection {
+    Upstream,
+    Downstream,
 }
 
 impl Circuit {
@@ -122,6 +133,46 @@ impl Circuit {
     /// circuit id used on the link towards the rendezvous node (upstream tx, downstream rx)
     pub fn upstream_id(&self) -> CircuitId {
         self.upstream_id
+    }
+
+    pub fn process_cell(
+        &self,
+        mut cell: Cell,
+        layer: u32,
+        direction: CellDirection,
+    ) -> NextCellStep {
+        let next_circuit_id = match direction {
+            CellDirection::Upstream => self.upstream_id,
+            CellDirection::Downstream => self.downstream_id,
+        };
+        cell.circuit_id = next_circuit_id;
+        if layer != self.layer {
+            error!("Layer mismatch: expected {}, got {}", self.layer, layer);
+        }
+
+        match direction {
+            CellDirection::Upstream => {
+                // XXX decrypt
+                // XXX maybe delay and return dummy instead
+                match self.upstream_hop {
+                    Some(hop) => NextCellStep::Relay(PacketWithNextHop {
+                        inner: cell,
+                        next_hop: hop,
+                    }),
+                    None => NextCellStep::Rendezvous(cell),
+                }
+            }
+            CellDirection::Downstream => {
+                // XXX encrypt
+                match self.downstream_hop {
+                    Some(hop) => NextCellStep::Relay(PacketWithNextHop {
+                        inner: cell,
+                        next_hop: hop,
+                    }),
+                    None => NextCellStep::Deliver(cell),
+                }
+            }
+        }
     }
 }
 
@@ -255,6 +306,10 @@ impl ClientCircuit {
     /// Client circuit only has an upstream id
     pub fn circuit_id(&self) -> CircuitId {
         self.circuit_id
+    }
+
+    pub fn receive_cell(&self, _cell: Cell) {
+        debug!("Client circuit {} received a cell", self.circuit_id);
     }
 }
 
