@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tonic::{Code, Request, Response, Status};
 
-use crate::defs::{CircuitId, CircuitIdSet};
+use crate::defs::CircuitId;
 use crate::epoch::EpochNo;
 use crate::grpc::valid_request_check;
 use crate::mix::directory_client;
@@ -53,14 +53,15 @@ impl SetupPacketWithPrev {
 
 type SetupRxQueue = tokio::sync::mpsc::UnboundedSender<SetupPacketWithPrev>;
 type CellRxQueue = tokio::sync::mpsc::UnboundedSender<Cell>;
+type CellStorage = BTreeMap<CircuitId, Vec<Cell>>;
 
 pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_rx_queues: Vec<SetupRxQueue>,
-    _cell_rx_queues: Vec<CellRxQueue>,
-    // TODO cleanup once in a while (as soon as we don't have any more cells to deliver for a
-    // circuit)
-    used_circuit_ids: Mutex<BTreeMap<EpochNo, CircuitIdSet>>,
+    cell_rx_queues: Vec<CellRxQueue>,
+    // TODO cleanup once in a while (see garbage collector of simple relay)
+    // TODO performance: avoid global lock on complete storage; "RSS" by circuit id instead
+    storage: Mutex<CellStorage>,
 }
 
 impl State {
@@ -72,8 +73,8 @@ impl State {
         State {
             dir_client,
             setup_rx_queues,
-            _cell_rx_queues: cell_rx_queues,
-            used_circuit_ids: Mutex::new(BTreeMap::new()),
+            cell_rx_queues,
+            storage: Mutex::new(CellStorage::new()),
         }
     }
 }
@@ -99,13 +100,12 @@ impl Mix for Service {
         )?;
 
         {
-            let mut map = rethrow_as_internal!(self.used_circuit_ids.lock(), "Lock failure");
-            let already_in_use = match map.get_mut(&pkt.epoch_no) {
-                Some(set) => set.contains(&pkt.circuit_id),
+            let mut storage = rethrow_as_internal!(self.storage.lock(), "Lock failure");
+            let already_in_use = match storage.get_mut(&pkt.circuit_id) {
+                Some(_) => true,
                 None => {
-                    let mut new_set = CircuitIdSet::new();
-                    new_set.insert(pkt.circuit_id);
-                    map.insert(pkt.epoch_no, new_set);
+                    let cell_vec = Vec::new();
+                    storage.insert(pkt.circuit_id, cell_vec);
                     false
                 }
             };
@@ -126,18 +126,54 @@ impl Mix for Service {
         Ok(Response::new(SetupAck {}))
     }
 
-    async fn send_and_receive(&self, _req: Request<Cell>) -> Result<Response<CellVector>, Status> {
-        unimplemented!();
+    async fn send_and_receive(&self, req: Request<Cell>) -> Result<Response<CellVector>, Status> {
+        // TODO security: circuit ids should be encrypted to avoid easy DoS (query for other users)
+        let cell = req.into_inner();
+        // first collect all missed cells
+        let mut storage = rethrow_as_internal!(self.storage.lock(), "Lock failure");
+        let missed_cells =
+            unwrap_or_throw_invalid!(storage.get_mut(&cell.circuit_id), "Unknown circuit");
+        let mut cell_vec = CellVector {
+            cells: missed_cells.clone(),
+        };
+        if cell_vec.cells.is_empty() {
+            cell_vec
+                .cells
+                .push(Cell::dummy(cell.circuit_id, cell.round_no - 1));
+        }
+        // deliver cells only once
+        missed_cells.clear();
+
+        // forward new cell
+        let i = cell.circuit_id as usize % self.cell_rx_queues.len();
+        let queue = unwrap_or_throw_internal!(self.cell_rx_queues.get(i), "Logical index error");
+        rethrow_as_internal!(queue.send(cell), "Sync error");
+
+        // send response
+        Ok(Response::new(cell_vec))
     }
 
     async fn late_poll(
         &self,
-        _req: Request<LatePollRequest>,
+        req: Request<LatePollRequest>,
     ) -> Result<Response<CellVector>, Status> {
-        unimplemented!();
+        let mut storage = rethrow_as_internal!(self.storage.lock(), "Lock failure");
+        let ids = req.into_inner().circuit_ids;
+        let mut cell_vec = CellVector { cells: Vec::new() };
+        for circuit_id in ids {
+            match storage.remove(&circuit_id) {
+                Some(mut vec) => cell_vec.cells.append(&mut vec),
+                None => (),
+            }
+        }
+        Ok(Response::new(cell_vec))
     }
 
-    async fn relay(&self, _req: Request<Cell>) -> Result<Response<RelayAck>, Status> {
-        unimplemented!();
+    async fn relay(&self, req: Request<Cell>) -> Result<Response<RelayAck>, Status> {
+        let cell = req.into_inner();
+        let i = cell.circuit_id as usize % self.cell_rx_queues.len();
+        let queue = unwrap_or_throw_internal!(self.cell_rx_queues.get(i), "Logical index error");
+        rethrow_as_internal!(queue.send(cell), "Sync error");
+        Ok(Response::new(RelayAck {}))
     }
 }
