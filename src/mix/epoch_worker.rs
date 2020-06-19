@@ -199,8 +199,9 @@ impl Worker {
             Some(pkts) => pkts,
             None => VecDeque::new(),
         };
-        // TODO performance parallel iteration (rayon? deque maybe not the best for this)
+        // TODO performance: parallel iteration (rayon? deque maybe not the best for this)
         // -> one circuit map and "batch" per thread to avoid locking?
+        // TODO robustness: we could check that we don't overwrite circuits due to same upstream id
         for pkt in setup_pkts.into_iter() {
             let pkt_ttl = pkt.ttl().expect("Should have be handled by gRPC");
             if pkt_ttl != current_ttl {
@@ -228,16 +229,20 @@ impl Worker {
                     }
                 }
                 Err(e) => {
-                    warn!("Creating circuit failed: {}", e);
-                    // TODO security: insert dummy setup packet instead
-                    continue;
+                    warn!(
+                        "Creating circuit failed: {}; creating dummy circuit instead",
+                        e
+                    );
+                    if current_ttl > 0 {
+                        let extend = self.create_dummy_circuit(epoch.epoch_no, current_ttl);
+                        batch.push(extend);
+                    }
                 }
             }
         }
         if current_ttl > 0 {
             // create one additional dummy circuit
-            let (circuit, extend) = self.create_dummy_circuit(epoch.epoch_no, current_ttl);
-            self.dummy_circuits.insert(circuit.circuit_id(), circuit);
+            let extend = self.create_dummy_circuit(epoch.epoch_no, current_ttl);
             batch.push(extend);
         }
         // send batch, shuffling is done by the sender
@@ -248,12 +253,16 @@ impl Worker {
     }
 
     /// Panics on failure as dummy circuits are essential for anonymity.
-    fn create_dummy_circuit(&self, epoch_no: EpochNo, ttl: u32) -> (ClientCircuit, ExtendInfo) {
+    /// Returns the info necessary for circuit extension (next hop, setup packet).
+    fn create_dummy_circuit(&mut self, epoch_no: EpochNo, ttl: u32) -> ExtendInfo {
         let path = self
             .dir_client
             .select_path(epoch_no, ttl)
             .expect("No path available");
-        ClientCircuit::new(epoch_no, path).expect("Creating dummy circuit failed")
+        let (circuit, extend) =
+            ClientCircuit::new(epoch_no, path).expect("Creating dummy circuit failed");
+        self.dummy_circuits.insert(circuit.circuit_id(), circuit);
+        extend
     }
 }
 
