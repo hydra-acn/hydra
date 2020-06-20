@@ -3,6 +3,7 @@ use super::grpc::SetupPacketWithPrev;
 use super::sender::PacketWithNextHop;
 use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
+use crate::crypto::threefish::Threefish2048;
 use crate::crypto::x448;
 use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token};
 use crate::epoch::EpochNo;
@@ -11,20 +12,11 @@ use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::MixInfo;
 use crate::tonic_mix::*;
 
+use byteorder::{LittleEndian, ReadBytesExt};
 use log::*;
 use openssl::rand::rand_bytes;
+use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
-
-pub struct Circuit {
-    layer: u32,
-    downstream_id: CircuitId,
-    upstream_id: CircuitId,
-    // None for first layer
-    downstream_hop: Option<SocketAddr>,
-    // None for last layer
-    upstream_hop: Option<SocketAddr>,
-    onion_key: Key,
-}
 
 pub type ExtendInfo = PacketWithNextHop<SetupPacket>;
 
@@ -42,6 +34,18 @@ pub enum NextCellStep {
 pub enum CellDirection {
     Upstream,
     Downstream,
+}
+
+pub struct Circuit {
+    layer: u32,
+    downstream_id: CircuitId,
+    upstream_id: CircuitId,
+    // None for first layer
+    downstream_hop: Option<SocketAddr>,
+    // None for last layer
+    upstream_hop: Option<SocketAddr>,
+    threefish: Threefish2048,
+    delayed_cells: BTreeMap<RoundNo, Cell>,
 }
 
 impl Circuit {
@@ -63,6 +67,7 @@ impl Circuit {
         let master_key = x448::generate_shared_secret(&client_pk, ephemeral_sk)?;
         let nonce = &setup_pkt.nonce;
         let (aes_key, onion_key) = derive_keys(&master_key, &nonce)?;
+        let threefish = Threefish2048::new(onion_key)?;
 
         // decrypt onion part
         let mut decrypted = vec![0u8; setup_pkt.onion.len()];
@@ -84,7 +89,8 @@ impl Circuit {
             upstream_id: rand::random(),
             downstream_hop,
             upstream_hop: None,
-            onion_key,
+            threefish,
+            delayed_cells: BTreeMap::new(),
         };
 
         if ttl == 0 {
@@ -136,7 +142,7 @@ impl Circuit {
     }
 
     pub fn process_cell(
-        &self,
+        &mut self,
         mut cell: Cell,
         layer: u32,
         direction: CellDirection,
@@ -152,8 +158,35 @@ impl Circuit {
 
         match direction {
             CellDirection::Upstream => {
-                // XXX decrypt
-                // XXX maybe delay and return dummy instead
+                let tweak_src = 24 * cell.round_no as u64;
+                match self.threefish.decrypt(tweak_src, &mut cell.onion) {
+                    Ok(()) => (),
+                    Err(e) => {
+                        warn!("Onion decryption failed: {}", e);
+                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
+                    }
+                }
+
+                // check if we have a delayed cell
+                if let Some(delayed_cell) = self.delayed_cells.remove(&cell.round_no) {
+                    cell = delayed_cell;
+                }
+
+                // TODO we could skip the check if we use a delayed cell
+                // read command
+                let mut rdr = std::io::Cursor::new(&cell.onion[0..8]);
+                let cmd = rdr
+                    .read_u64::<LittleEndian>()
+                    .expect("Why should this fail?");
+                if cmd < 256 {
+                    // we shall delay the cell -> forward dummy instead
+                    let dummy = Cell::dummy(cell.circuit_id, cell.round_no);
+                    // randomize cmd of original cell
+                    rand_bytes(&mut cell.onion[0..8]).expect("Cell randomization failed");
+                    self.delayed_cells.insert(cell.round_no + cmd as u32, cell);
+                    cell = dummy;
+                }
+
                 match self.upstream_hop {
                     Some(hop) => NextCellStep::Relay(PacketWithNextHop {
                         inner: cell,
@@ -163,7 +196,14 @@ impl Circuit {
                 }
             }
             CellDirection::Downstream => {
-                // XXX encrypt
+                let tweak_src = 24 * cell.round_no as u64 + 12;
+                match self.threefish.encrypt(tweak_src, &mut cell.onion) {
+                    Ok(()) => (),
+                    Err(e) => {
+                        warn!("Onion encryption failed: {}", e);
+                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
+                    }
+                }
                 match self.downstream_hop {
                     Some(hop) => NextCellStep::Relay(PacketWithNextHop {
                         inner: cell,
@@ -367,7 +407,7 @@ mod tests {
         let previous_hop = Some("8.8.8.8:42".parse().unwrap()); // previous hop is client
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, previous_hop);
         let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[0].1, 0).unwrap();
-        assert_eq!(client_circuit.onion_keys[0], circuit.onion_key);
+        assert_eq!(client_circuit.onion_keys[0], *circuit.threefish.key());
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
             _ => unreachable!(),
@@ -379,7 +419,7 @@ mod tests {
         assert_eq!(setup_pkt.ttl().unwrap(), 1);
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[0].clone()));
         let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[1].1, 1).unwrap();
-        assert_eq!(client_circuit.onion_keys[1], circuit.onion_key);
+        assert_eq!(client_circuit.onion_keys[1], *circuit.threefish.key());
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
             _ => unreachable!(),
@@ -391,7 +431,7 @@ mod tests {
         assert_eq!(setup_pkt.ttl().unwrap(), 0);
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[1].clone()));
         let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[2].1, 2).unwrap();
-        assert_eq!(client_circuit.onion_keys[2], circuit.onion_key);
+        assert_eq!(client_circuit.onion_keys[2], *circuit.threefish.key());
         let tokens = match next_step {
             NextSetupStep::Rendezvous(ts) => ts,
             _ => unreachable!(),

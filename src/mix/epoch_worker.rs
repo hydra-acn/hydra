@@ -202,7 +202,7 @@ impl Worker {
                         continue;
                     }
                     match process_cell(
-                        &self.circuits,
+                        &mut self.circuits,
                         &self.dummy_circuits,
                         &self.circuit_id_map,
                         cell,
@@ -319,7 +319,7 @@ impl Worker {
 /// Returns either the cell to forward next (might be a dummy) together with the next action or
 /// `None` if the circuit id is not known or we are the downstream endpoint (dummy circuits)
 fn process_cell(
-    circuits: &CircuitMap,
+    circuits: &mut CircuitMap,
     dummy_circuits: &ClientCircuitMap,
     circuit_id_map: &CircuitIdMap,
     cell: Cell,
@@ -328,7 +328,7 @@ fn process_cell(
 ) -> Option<NextCellStep> {
     match direction {
         CellDirection::Upstream => {
-            if let Some(circuit) = circuits.get(&cell.circuit_id) {
+            if let Some(circuit) = circuits.get_mut(&cell.circuit_id) {
                 return Some(circuit.process_cell(cell, layer, direction));
             } else {
                 warn!(
@@ -344,7 +344,7 @@ fn process_cell(
             }
 
             if let Some(mapped_id) = circuit_id_map.get(&cell.circuit_id) {
-                if let Some(circuit) = circuits.get(&mapped_id) {
+                if let Some(circuit) = circuits.get_mut(&mapped_id) {
                     return Some(circuit.process_cell(cell, layer, direction));
                 }
             }

@@ -26,6 +26,10 @@ impl Threefish2048 {
         Ok(Threefish2048 { key })
     }
 
+    pub fn key(&self) -> &Key {
+        &self.key
+    }
+
     /// Encrypt `data` in place.
     pub fn encrypt(&self, tweak_src: u64, data: &mut [u8]) -> Result<(), Error> {
         self.feistel(tweak_src, data, Mode::Enc)
