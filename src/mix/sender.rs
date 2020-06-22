@@ -56,7 +56,7 @@ macro_rules! send_next_batch {
         debug!("Sending batch with {} packets", batch.len(),);
 
         // sort by destination and get corresponding channels
-        let (batch_map, destinations) = sort_by_destination::<SetupPacket>(batch);
+        let (batch_map, destinations) = sort_by_destination(batch);
         let channel_map = $state.dir_client.$channel_getter(&destinations).await;
 
         for (dst, pkts) in batch_map.into_iter() {
@@ -145,6 +145,21 @@ pub async fn send_setup_packets(
     }
 }
 
+pub async fn relay_cells(
+    _dir_client: Arc<directory_client::Client>,
+    mut c: MixConnection,
+    cells: Vec<Cell>,
+) {
+    // TODO security: shuffle!
+    for cell in cells {
+        let req = tonic::Request::new(cell);
+        match c.relay(req).await {
+            Ok(_) => (),
+            Err(e) => warn!("Relaying cell failed: {}", e),
+        }
+    }
+}
+
 define_send_task!(
     setup_task,
     setup_tx_queue,
@@ -152,11 +167,13 @@ define_send_task!(
     send_setup_packets
 );
 
+define_send_task!(relay_task, relay_tx_queue, get_mix_channels, relay_cells);
+
 pub async fn run(state: Arc<State>) {
     let setup_handle = tokio::spawn(setup_task(state.clone()));
-    // XXX relay task
+    let relay_handle = tokio::spawn(relay_task(state.clone()));
     // XXX rendezvous task
-    match tokio::try_join!(setup_handle) {
+    match tokio::try_join!(setup_handle, relay_handle) {
         Ok(_) => (),
         Err(e) => error!("Something panicked: {}", e),
     }

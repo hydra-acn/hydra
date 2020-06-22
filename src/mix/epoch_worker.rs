@@ -258,7 +258,7 @@ impl Worker {
         } else if rendezvous_batch.len() > 0 {
             // XXX implement rendezvous
         } else if deliver_batch.len() > 0 {
-            // implement delivery (move cells to gRPC state?)
+            // XXX implement delivery (move cells to gRPC state?)
         }
 
         let wait_time = subround_end
