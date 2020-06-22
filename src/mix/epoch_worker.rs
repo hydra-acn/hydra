@@ -14,7 +14,7 @@ use super::directory_client;
 use super::grpc::SetupPacketWithPrev;
 use super::sender::{CellBatch, SetupBatch};
 use crate::crypto::key::Key;
-use crate::defs::CircuitId;
+use crate::defs::{CircuitId, RoundNo};
 use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::tonic_mix::*;
 
@@ -22,6 +22,7 @@ type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacketWithPrev>;
 type SetupTxQueue = spmc::Sender<SetupBatch>;
 
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
+type CellTxQueue = spmc::Sender<CellBatch>;
 
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
@@ -34,6 +35,7 @@ pub struct Worker {
     setup_rx_queues: Vec<SetupRxQueue>,
     setup_tx_queue: SetupTxQueue,
     cell_rx_queues: Vec<CellRxQueue>,
+    cell_tx_queue: CellTxQueue,
     pending_setup_pkts: PendingSetupMap,
     // mapping downstream ids to circuits
     circuits: CircuitMap,
@@ -50,6 +52,7 @@ impl Worker {
         setup_rx_queues: Vec<SetupRxQueue>,
         setup_tx_queue: SetupTxQueue,
         cell_rx_queues: Vec<CellRxQueue>,
+        cell_tx_queue: CellTxQueue,
     ) -> Self {
         Worker {
             running: running.clone(),
@@ -57,6 +60,7 @@ impl Worker {
             setup_rx_queues,
             setup_tx_queue,
             cell_rx_queues,
+            cell_tx_queue,
             pending_setup_pkts: PendingSetupMap::new(),
             circuits: CircuitMap::new(),
             dummy_circuits: ClientCircuitMap::new(),
@@ -174,10 +178,10 @@ impl Worker {
                 }
             }
         }
-        // TODO clear all circuits
+        // XXX clear all circuits when communication is done, probably need two sets of maps after all ...
     }
 
-    fn process_communication_round(&mut self, epoch: &EpochInfo, round_no: u32) {
+    fn process_communication_round(&mut self, epoch: &EpochInfo, round_no: RoundNo) {
         info!("Processing round {} of epoch {}", round_no, epoch.epoch_no);
         let round_duration = Duration::from_secs(epoch.round_duration as u64);
         let round_waiting = Duration::from_secs(epoch.round_waiting as u64);
@@ -188,44 +192,79 @@ impl Worker {
         let mut subround_end = round_start + subround_interval;
         // upstream
         for layer in 0..epoch.path_length - 1 {
-            let mut batch = CellBatch::new();
-            // collect and process all cells we received
-            // TODO performance: parallel
-            // XXX helper fun: process subround
-            for queue in self.cell_rx_queues.iter_mut() {
-                while let Ok(cell) = queue.try_recv() {
-                    if cell.round_no != round_no {
-                        warn!(
-                            "Dropping cell with wrong round number. Expected {}, got {}.",
-                            round_no, cell.round_no
-                        );
-                        continue;
-                    }
-                    match process_cell(
-                        &mut self.circuits,
-                        &self.dummy_circuits,
-                        &self.circuit_id_map,
-                        cell,
-                        layer,
-                        CellDirection::Upstream,
-                    ) {
-                        Some(step) => match step {
-                            NextCellStep::Relay(c) => batch.push(c),
-                            _ => error!("Next step for cell does not make sense"),
-                        },
-                        None => (),
-                    }
-                }
-            }
-            // XXX insert dummy cells
-            // XXX send batch
-            let wait_time = subround_end
-                .checked_sub(current_time())
-                .expect("Did not finish subround in time?");
-
-            sleep(wait_time);
+            self.process_subround(round_no, layer, CellDirection::Upstream, &subround_end);
             subround_end += subround_interval;
         }
+        // XXX rendezvous
+        // XXX downstream
+    }
+
+    /// Process subround and sleep till it is over.
+    fn process_subround(
+        &mut self,
+        round_no: RoundNo,
+        layer: u32,
+        direction: CellDirection,
+        subround_end: &Duration,
+    ) {
+        let mut relay_batch = CellBatch::new();
+        let mut rendezvous_batch = CellBatch::new();
+        let mut deliver_batch = Vec::new();
+        // collect and process all cells we received
+        // TODO performance: parallel
+        for queue in self.cell_rx_queues.iter_mut() {
+            while let Ok(cell) = queue.try_recv() {
+                if cell.round_no != round_no {
+                    warn!(
+                        "Dropping cell with wrong round number. Expected {}, got {}.",
+                        round_no, cell.round_no
+                    );
+                    continue;
+                }
+                match process_cell(
+                    &mut self.circuits,
+                    &self.dummy_circuits,
+                    &self.circuit_id_map,
+                    cell,
+                    layer,
+                    direction,
+                ) {
+                    Some(step) => match step {
+                        NextCellStep::Relay(c) => relay_batch.push(c),
+                        NextCellStep::Rendezvous(c) => rendezvous_batch.push(c),
+                        NextCellStep::Deliver(c) => deliver_batch.push(c),
+                    },
+                    None => (),
+                }
+            }
+        }
+
+        // insert dummy cells if necessary
+        for (_, circuit) in self.circuits.iter_mut() {
+            match circuit.pad(round_no, direction) {
+                Some(step) => match step {
+                    NextCellStep::Relay(c) => relay_batch.push(c),
+                    NextCellStep::Rendezvous(c) => rendezvous_batch.push(c),
+                    NextCellStep::Deliver(c) => deliver_batch.push(c),
+                },
+                None => (),
+            }
+        }
+
+        if relay_batch.len() > 0 {
+            self.cell_tx_queue
+                .send(relay_batch)
+                .unwrap_or_else(|_| error!("Sender is gone!?"));
+        } else if rendezvous_batch.len() > 0 {
+            // XXX implement rendezvous
+        } else if deliver_batch.len() > 0 {
+            // implement delivery (move cells to gRPC state?)
+        }
+
+        let wait_time = subround_end
+            .checked_sub(current_time())
+            .expect("Did not finish subround in time?");
+        sleep(wait_time);
     }
 
     fn process_setup_layer(&mut self, epoch: &EpochInfo, layer: u32, sk: &Key) {
@@ -317,7 +356,8 @@ impl Worker {
 }
 
 /// Returns either the cell to forward next (might be a dummy) together with the next action or
-/// `None` if the circuit id is not known or we are the downstream endpoint (dummy circuits)
+/// `None` if the circuit id is not known or we are the downstream endpoint (dummy circuits) or the
+/// cell was a duplicate
 fn process_cell(
     circuits: &mut CircuitMap,
     dummy_circuits: &ClientCircuitMap,
@@ -329,7 +369,7 @@ fn process_cell(
     match direction {
         CellDirection::Upstream => {
             if let Some(circuit) = circuits.get_mut(&cell.circuit_id) {
-                return Some(circuit.process_cell(cell, layer, direction));
+                return circuit.process_cell(cell, layer, direction);
             } else {
                 warn!(
                     "Dropping upstream cell with unknown circuit id {}",
@@ -345,7 +385,7 @@ fn process_cell(
 
             if let Some(mapped_id) = circuit_id_map.get(&cell.circuit_id) {
                 if let Some(circuit) = circuits.get_mut(&mapped_id) {
-                    return Some(circuit.process_cell(cell, layer, direction));
+                    return circuit.process_cell(cell, layer, direction);
                 }
             }
 

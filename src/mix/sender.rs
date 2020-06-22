@@ -13,13 +13,24 @@ use crate::tonic_mix::*;
 
 /// Wrapping a packet of type `T` with next hop information
 pub struct PacketWithNextHop<T> {
-    pub inner: T,
-    pub next_hop: SocketAddr,
+    inner: T,
+    next_hop: SocketAddr,
 }
 
 impl<T> PacketWithNextHop<T> {
+    pub fn new(pkt: T, next_hop: SocketAddr) -> Self {
+        PacketWithNextHop {
+            inner: pkt,
+            next_hop,
+        }
+    }
+
     pub fn into_inner(self) -> T {
         self.inner
+    }
+
+    pub fn next_hop(&self) -> &SocketAddr {
+        &self.next_hop
     }
 }
 
@@ -28,6 +39,7 @@ pub type SetupBatch = Batch<SetupPacket>;
 pub type CellBatch = Batch<Cell>;
 
 type SetupTxQueue = spmc::Receiver<SetupBatch>;
+type RelayTxQueue = spmc::Receiver<CellBatch>;
 type MixConnection = MixClient<tonic::transport::Channel>;
 derive_grpc_client!(MixConnection);
 
@@ -78,13 +90,19 @@ macro_rules! define_send_task {
 pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_tx_queue: SetupTxQueue,
+    relay_tx_queue: RelayTxQueue,
 }
 
 impl State {
-    pub fn new(dir_client: Arc<directory_client::Client>, setup_tx_queue: SetupTxQueue) -> Self {
+    pub fn new(
+        dir_client: Arc<directory_client::Client>,
+        setup_tx_queue: SetupTxQueue,
+        relay_tx_queue: RelayTxQueue,
+    ) -> Self {
         State {
             dir_client,
-            setup_tx_queue: setup_tx_queue,
+            setup_tx_queue,
+            relay_tx_queue,
         }
     }
 }
@@ -136,6 +154,8 @@ define_send_task!(
 
 pub async fn run(state: Arc<State>) {
     let setup_handle = tokio::spawn(setup_task(state.clone()));
+    // XXX relay task
+    // XXX rendezvous task
     match tokio::try_join!(setup_handle) {
         Ok(_) => (),
         Err(e) => error!("Something panicked: {}", e),

@@ -27,10 +27,11 @@ pub enum NextSetupStep {
 
 pub enum NextCellStep {
     Relay(PacketWithNextHop<Cell>),
-    Rendezvous(Cell),
+    Rendezvous(PacketWithNextHop<Cell>),
     Deliver(Cell),
 }
 
+#[derive(Copy, Clone)]
 pub enum CellDirection {
     Upstream,
     Downstream,
@@ -46,6 +47,8 @@ pub struct Circuit {
     upstream_hop: Option<SocketAddr>,
     threefish: Threefish2048,
     delayed_cells: BTreeMap<RoundNo, Cell>,
+    last_upstream_round_no: Option<RoundNo>,
+    last_downstream_round_no: Option<RoundNo>,
 }
 
 impl Circuit {
@@ -91,6 +94,8 @@ impl Circuit {
             upstream_hop: None,
             threefish,
             delayed_cells: BTreeMap::new(),
+            last_upstream_round_no: None,
+            last_downstream_round_no: None,
         };
 
         if ttl == 0 {
@@ -117,10 +122,7 @@ impl Circuit {
                 auth_tag: decrypted[86..102].to_vec(),
                 onion: decrypted[102..].to_vec(),
             };
-            let extend_info = ExtendInfo {
-                inner: next_setup_pkt,
-                next_hop: upstream_hop,
-            };
+            let extend_info = ExtendInfo::new(next_setup_pkt, upstream_hop);
 
             // TODO security: this should not be logged in production ...
             debug!(
@@ -141,12 +143,29 @@ impl Circuit {
         self.upstream_id
     }
 
+    /// Returns `None` for duplicates.
     pub fn process_cell(
         &mut self,
         mut cell: Cell,
         layer: u32,
         direction: CellDirection,
-    ) -> NextCellStep {
+    ) -> Option<NextCellStep> {
+        // duplicate detection
+        let maybe_last_round_no: &mut Option<RoundNo> = match direction {
+            CellDirection::Upstream => &mut self.last_upstream_round_no,
+            CellDirection::Downstream => &mut self.last_downstream_round_no,
+        };
+
+        if let Some(last_round_no) = maybe_last_round_no {
+            if cell.round_no <= *last_round_no {
+                warn!("Dropping duplicate");
+                return None;
+            }
+        }
+
+        *maybe_last_round_no = Some(cell.round_no);
+
+        // re-write circuit id
         let next_circuit_id = match direction {
             CellDirection::Upstream => self.upstream_id,
             CellDirection::Downstream => self.downstream_id,
@@ -156,6 +175,7 @@ impl Circuit {
             error!("Layer mismatch: expected {}, got {}", self.layer, layer);
         }
 
+        // onion!
         match direction {
             CellDirection::Upstream => {
                 let tweak_src = 24 * cell.round_no as u64;
@@ -188,11 +208,15 @@ impl Circuit {
                 }
 
                 match self.upstream_hop {
-                    Some(hop) => NextCellStep::Relay(PacketWithNextHop {
-                        inner: cell,
-                        next_hop: hop,
-                    }),
-                    None => NextCellStep::Rendezvous(cell),
+                    Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
+                    None => {
+                        // XXX ask directory
+                        let rendezvous_addr = "127.0.0.1:1337".parse().unwrap();
+                        Some(NextCellStep::Rendezvous(PacketWithNextHop::new(
+                            cell,
+                            rendezvous_addr,
+                        )))
+                    }
                 }
             }
             CellDirection::Downstream => {
@@ -205,13 +229,54 @@ impl Circuit {
                     }
                 }
                 match self.downstream_hop {
-                    Some(hop) => NextCellStep::Relay(PacketWithNextHop {
-                        inner: cell,
-                        next_hop: hop,
-                    }),
-                    None => NextCellStep::Deliver(cell),
+                    Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
+                    None => Some(NextCellStep::Deliver(cell)),
                 }
             }
+        }
+    }
+
+    /// Create appropriate dummy cell if necessary
+    pub fn pad(&mut self, round_no: RoundNo, direction: CellDirection) -> Option<NextCellStep> {
+        let maybe_last_round_no: &mut Option<RoundNo> = match direction {
+            CellDirection::Upstream => &mut self.last_upstream_round_no,
+            CellDirection::Downstream => &mut self.last_downstream_round_no,
+        };
+
+        let need_dummy = match *maybe_last_round_no {
+            Some(last_round_no) => round_no != last_round_no,
+            None => true,
+        };
+
+        if need_dummy == false {
+            return None;
+        }
+
+        *maybe_last_round_no = Some(round_no);
+
+        let circuit_id = match direction {
+            CellDirection::Upstream => self.upstream_id,
+            CellDirection::Downstream => self.downstream_id,
+        };
+
+        // create dummy
+        let dummy = Cell::dummy(circuit_id, round_no);
+        match direction {
+            CellDirection::Upstream => match self.upstream_hop {
+                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(dummy, hop))),
+                None => {
+                    // XXX ask directory
+                    let rendezvous_addr = "127.0.0.1:1337".parse().unwrap();
+                    Some(NextCellStep::Rendezvous(PacketWithNextHop::new(
+                        dummy,
+                        rendezvous_addr,
+                    )))
+                }
+            },
+            CellDirection::Downstream => match self.downstream_hop {
+                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(dummy, hop))),
+                None => Some(NextCellStep::Deliver(dummy)),
+            },
         }
     }
 }
@@ -336,10 +401,7 @@ impl ClientCircuit {
             "Created client circuit with id {} and next hop {}",
             circuit_id, circuit.first_hop
         );
-        let extend = ExtendInfo {
-            inner: setup_pkt,
-            next_hop: circuit.first_hop,
-        };
+        let extend = ExtendInfo::new(setup_pkt, circuit.first_hop);
         Ok((circuit, extend))
     }
 
@@ -399,7 +461,7 @@ mod tests {
             })
             .collect();
         let (client_circuit, extend) = ClientCircuit::new(42, path.clone()).unwrap();
-        assert_eq!(extend.next_hop, endpoints[0]);
+        assert_eq!(*extend.next_hop(), endpoints[0]);
         let setup_pkt = extend.into_inner();
 
         // first mix
@@ -412,7 +474,7 @@ mod tests {
             NextSetupStep::Extend(e) => e,
             _ => unreachable!(),
         };
-        assert_eq!(extend.next_hop, endpoints[1]);
+        assert_eq!(*extend.next_hop(), endpoints[1]);
         let setup_pkt = extend.into_inner();
 
         // second mix
@@ -424,7 +486,7 @@ mod tests {
             NextSetupStep::Extend(e) => e,
             _ => unreachable!(),
         };
-        assert_eq!(extend.next_hop, endpoints[2]);
+        assert_eq!(*extend.next_hop(), endpoints[2]);
         let setup_pkt = extend.into_inner();
 
         // third mix (last one)

@@ -85,9 +85,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // setup channels for communication between main worker and sender
         let (setup_sender, setup_receiver) = spmc::channel();
+        let (relay_sender, relay_receiver) = spmc::channel();
 
         // setup sender
-        let sender = Arc::new(sender::State::new(dir_client.clone(), setup_receiver));
+        let sender = Arc::new(sender::State::new(
+            dir_client.clone(),
+            setup_receiver,
+            relay_receiver,
+        ));
         let sender_handle = tokio::spawn(sender::run(sender));
 
         // setup main worker
@@ -97,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup_rx_queue_receivers,
             setup_sender,
             cell_rx_queue_receivers,
+            relay_sender,
         );
         let main_handle = tokio::task::spawn_blocking(move || worker.run());
 
