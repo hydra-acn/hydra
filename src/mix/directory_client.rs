@@ -11,6 +11,7 @@ use tonic::Status;
 use super::channel_pool::ChannelPool;
 use crate::crypto::key::Key;
 use crate::crypto::x448;
+use crate::defs::Token;
 use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;
@@ -33,6 +34,33 @@ pub struct Config {
 impl Config {
     pub fn setup_reply_to(&self) -> String {
         format!("{}:{}", self.addr, self.relay_port)
+    }
+}
+
+/// Map tokens to rendezvous nodes.
+pub struct RendezvousMap {
+    map: Vec<SocketAddr>,
+}
+
+impl RendezvousMap {
+    pub fn new(epoch: &EpochInfo) -> Self {
+        let mut rendezvous_nodes = Vec::new();
+        for mix in epoch.mixes.iter() {
+            match mix.rendezvous_address() {
+                Some(a) => rendezvous_nodes.push((a, &mix.public_dh)),
+                None => warn!("Found mix with no rendezvous address"),
+            }
+        }
+        rendezvous_nodes.sort_by(|a, b| a.1.cmp(b.1));
+        let map = rendezvous_nodes.into_iter().map(|(a, _)| a).collect();
+        RendezvousMap { map }
+    }
+
+    pub fn rendezvous_address(&self, token: &Token) -> Option<SocketAddr> {
+        match self.map.len() {
+            0 => None,
+            n => self.map.get((token % n as u64) as usize).cloned(),
+        }
     }
 }
 
@@ -361,5 +389,11 @@ impl MixInfo {
         ip_addr_from_slice(&self.address)
             .ok()
             .map(|ip| SocketAddr::new(ip, self.relay_port as u16))
+    }
+
+    pub fn rendezvous_address(&self) -> Option<SocketAddr> {
+        ip_addr_from_slice(&self.address)
+            .ok()
+            .map(|ip| SocketAddr::new(ip, self.rendezvous_port as u16))
     }
 }
