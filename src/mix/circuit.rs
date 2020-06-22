@@ -5,17 +5,18 @@ use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::x448;
-use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token};
+use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token, ONION_SIZE};
 use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::MixInfo;
 use crate::tonic_mix::*;
 
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use log::*;
 use openssl::rand::rand_bytes;
-use std::collections::BTreeMap;
+use std::cmp;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 
 pub type ExtendInfo = PacketWithNextHop<SetupPacket>;
@@ -47,6 +48,8 @@ pub struct Circuit {
     upstream_hop: Option<SocketAddr>,
     threefish: Threefish2048,
     delayed_cells: BTreeMap<RoundNo, Cell>,
+    inject_cells: VecDeque<Cell>,
+    max_round_no: RoundNo,
     last_upstream_round_no: Option<RoundNo>,
     last_downstream_round_no: Option<RoundNo>,
 }
@@ -58,6 +61,7 @@ impl Circuit {
         pkt: SetupPacketWithPrev,
         ephemeral_sk: &Key,
         layer: u32,
+        max_round_no: RoundNo,
     ) -> Result<(Self, NextSetupStep), Error> {
         let downstream_hop = pkt.previous_hop();
         if downstream_hop.is_none() && layer > 0 {
@@ -94,6 +98,8 @@ impl Circuit {
             upstream_hop: None,
             threefish,
             delayed_cells: BTreeMap::new(),
+            inject_cells: VecDeque::new(),
+            max_round_no,
             last_upstream_round_no: None,
             last_downstream_round_no: None,
         };
@@ -150,6 +156,10 @@ impl Circuit {
         layer: u32,
         direction: CellDirection,
     ) -> Option<NextCellStep> {
+        if layer != self.layer {
+            error!("Layer mismatch: expected {}, got {}", self.layer, layer);
+        }
+
         // duplicate detection
         let maybe_last_round_no: &mut Option<RoundNo> = match direction {
             CellDirection::Upstream => &mut self.last_upstream_round_no,
@@ -171,22 +181,13 @@ impl Circuit {
             CellDirection::Downstream => self.downstream_id,
         };
         cell.circuit_id = next_circuit_id;
-        if layer != self.layer {
-            error!("Layer mismatch: expected {}, got {}", self.layer, layer);
-        }
 
         // onion!
+        self.handle_onion(&mut cell, direction);
+
+        // command handling and forwarding
         match direction {
             CellDirection::Upstream => {
-                let tweak_src = 24 * cell.round_no as u64;
-                match self.threefish.decrypt(tweak_src, &mut cell.onion) {
-                    Ok(()) => (),
-                    Err(e) => {
-                        warn!("Onion decryption failed: {}", e);
-                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
-                    }
-                }
-
                 // check if we have a delayed cell
                 if let Some(delayed_cell) = self.delayed_cells.remove(&cell.round_no) {
                     cell = delayed_cell;
@@ -219,24 +220,14 @@ impl Circuit {
                     }
                 }
             }
-            CellDirection::Downstream => {
-                let tweak_src = 24 * cell.round_no as u64 + 12;
-                match self.threefish.encrypt(tweak_src, &mut cell.onion) {
-                    Ok(()) => (),
-                    Err(e) => {
-                        warn!("Onion encryption failed: {}", e);
-                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
-                    }
-                }
-                match self.downstream_hop {
-                    Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
-                    None => Some(NextCellStep::Deliver(cell)),
-                }
-            }
+            CellDirection::Downstream => match self.downstream_hop {
+                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
+                None => Some(NextCellStep::Deliver(cell)),
+            },
         }
     }
 
-    /// Create appropriate dummy cell if necessary
+    /// Use an injected cell or create a dummy cell to pad the circuit.
     pub fn pad(&mut self, round_no: RoundNo, direction: CellDirection) -> Option<NextCellStep> {
         let maybe_last_round_no: &mut Option<RoundNo> = match direction {
             CellDirection::Upstream => &mut self.last_upstream_round_no,
@@ -259,25 +250,92 @@ impl Circuit {
             CellDirection::Downstream => self.downstream_id,
         };
 
-        // create dummy
-        let dummy = Cell::dummy(circuit_id, round_no);
+        // inject a waiting cell or create a dummy
+        let mut cell = match direction {
+            CellDirection::Upstream => {
+                // no upstream injection -> always dummy
+                Cell::dummy(circuit_id, round_no)
+            }
+            CellDirection::Downstream => match round_no == self.max_round_no {
+                true => self.create_nack(),
+                false => match self.inject_cells.pop_front() {
+                    Some(c) => c,
+                    None => Cell::dummy(circuit_id, round_no),
+                },
+            },
+        };
+
+        // onion handling
+        cell.round_no = round_no;
+        self.handle_onion(&mut cell, direction);
+
+        // forwarding
         match direction {
             CellDirection::Upstream => match self.upstream_hop {
-                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(dummy, hop))),
+                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
                 None => {
                     // XXX ask directory
                     let rendezvous_addr = "127.0.0.1:1337".parse().unwrap();
                     Some(NextCellStep::Rendezvous(PacketWithNextHop::new(
-                        dummy,
+                        cell,
                         rendezvous_addr,
                     )))
                 }
             },
             CellDirection::Downstream => match self.downstream_hop {
-                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(dummy, hop))),
-                None => Some(NextCellStep::Deliver(dummy)),
+                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
+                None => Some(NextCellStep::Deliver(cell)),
             },
         }
+    }
+
+    /// Onion encryption/decryption.
+    fn handle_onion(&self, cell: &mut Cell, direction: CellDirection) {
+        match direction {
+            CellDirection::Upstream => {
+                let tweak_src = 24 * cell.round_no as u64;
+                match self.threefish.decrypt(tweak_src, &mut cell.onion) {
+                    Ok(()) => (),
+                    Err(e) => {
+                        warn!("Onion decryption failed: {}", e);
+                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
+                    }
+                }
+            }
+            CellDirection::Downstream => {
+                let tweak_src = 24 * cell.round_no as u64 + 12;
+                match self.threefish.encrypt(tweak_src, &mut cell.onion) {
+                    Ok(()) => (),
+                    Err(e) => {
+                        warn!("Onion encryption failed: {}", e);
+                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn inject(&mut self, cell: Cell) {
+        self.inject_cells.push_back(cell);
+    }
+
+    fn create_nack(&self) -> Cell {
+        let mut cell = Cell {
+            circuit_id: self.downstream_id,
+            round_no: self.max_round_no,
+            onion: vec![0u8; ONION_SIZE],
+        };
+        let n = cmp::min(ONION_SIZE - 8, self.inject_cells.len()) as u8;
+        cell.onion[0] = n;
+        let mut i = 8;
+        for dropped_cell in self.inject_cells.iter() {
+            match cell.onion.get_mut(i..i + 8) {
+                Some(buf) => LittleEndian::write_u64(buf, dropped_cell.token()),
+                None => warn!("Nack is not big enough"),
+            }
+            i += 8;
+        }
+        cell
     }
 }
 
@@ -468,7 +526,7 @@ mod tests {
         assert_eq!(setup_pkt.ttl().unwrap(), 2);
         let previous_hop = Some("8.8.8.8:42".parse().unwrap()); // previous hop is client
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, previous_hop);
-        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[0].1, 0).unwrap();
+        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[0].1, 0, 41).unwrap();
         assert_eq!(client_circuit.onion_keys[0], *circuit.threefish.key());
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
@@ -480,7 +538,7 @@ mod tests {
         // second mix
         assert_eq!(setup_pkt.ttl().unwrap(), 1);
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[0].clone()));
-        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[1].1, 1).unwrap();
+        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[1].1, 1, 41).unwrap();
         assert_eq!(client_circuit.onion_keys[1], *circuit.threefish.key());
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
@@ -492,7 +550,7 @@ mod tests {
         // third mix (last one)
         assert_eq!(setup_pkt.ttl().unwrap(), 0);
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[1].clone()));
-        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[2].1, 2).unwrap();
+        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[2].1, 2, 41).unwrap();
         assert_eq!(client_circuit.onion_keys[2], *circuit.threefish.key());
         let tokens = match next_step {
             NextSetupStep::Rendezvous(ts) => ts,

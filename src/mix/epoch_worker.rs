@@ -304,7 +304,7 @@ impl Worker {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
-            match Circuit::new(pkt, sk, layer) {
+            match Circuit::new(pkt, sk, layer, epoch.number_of_rounds - 1) {
                 Ok((circuit, next_hop_info)) => {
                     self.circuit_id_map
                         .insert(circuit.upstream_id(), circuit.downstream_id());
