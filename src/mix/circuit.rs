@@ -1,4 +1,5 @@
 //! Circuit abstraction
+use super::directory_client::RendezvousMap;
 use super::grpc::SetupPacketWithPrev;
 use super::sender::PacketWithNextHop;
 use crate::crypto::aes::Aes256Gcm;
@@ -18,6 +19,7 @@ use openssl::rand::rand_bytes;
 use std::cmp;
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 pub type ExtendInfo = PacketWithNextHop<SetupPacket>;
 
@@ -39,6 +41,7 @@ pub enum CellDirection {
 }
 
 pub struct Circuit {
+    rendezvous_map: Arc<RendezvousMap>,
     layer: u32,
     downstream_id: CircuitId,
     upstream_id: CircuitId,
@@ -60,9 +63,15 @@ impl Circuit {
     pub fn new(
         pkt: SetupPacketWithPrev,
         ephemeral_sk: &Key,
+        rendezvous_map: Arc<RendezvousMap>,
         layer: u32,
         max_round_no: RoundNo,
     ) -> Result<(Self, NextSetupStep), Error> {
+        if rendezvous_map.is_empty() {
+            return Err(Error::InputError(
+                "We need rendezvous nodes to work correctly".to_string(),
+            ));
+        }
         let downstream_hop = pkt.previous_hop();
         if downstream_hop.is_none() && layer > 0 {
             return Err(Error::InputError(
@@ -91,8 +100,10 @@ impl Circuit {
             .ok_or_else(|| Error::InputError("Should have been filtered by gRPC".to_string()))?;
 
         let mut circuit = Circuit {
+            rendezvous_map,
             layer,
             downstream_id: setup_pkt.circuit_id,
+            // TODO security: better use cPRNG?
             upstream_id: rand::random(),
             downstream_hop,
             upstream_hop: None,
@@ -211,8 +222,10 @@ impl Circuit {
                 match self.upstream_hop {
                     Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
                     None => {
-                        // XXX ask directory
-                        let rendezvous_addr = "127.0.0.1:1337".parse().unwrap();
+                        let rendezvous_addr = self
+                            .rendezvous_map
+                            .rendezvous_address(&cell.token())
+                            .expect("Checked this at circuit creation");
                         Some(NextCellStep::Rendezvous(PacketWithNextHop::new(
                             cell,
                             rendezvous_addr,
@@ -274,8 +287,10 @@ impl Circuit {
             CellDirection::Upstream => match self.upstream_hop {
                 Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
                 None => {
-                    // XXX ask directory
-                    let rendezvous_addr = "127.0.0.1:1337".parse().unwrap();
+                    let rendezvous_addr = self
+                        .rendezvous_map
+                        .rendezvous_address(&cell.token())
+                        .expect("Checked at circuit setup");
                     Some(NextCellStep::Rendezvous(PacketWithNextHop::new(
                         cell,
                         rendezvous_addr,
@@ -359,6 +374,7 @@ impl ClientCircuit {
             Error::InputError("First mix does not have a valid relay address".to_string())
         })?;
 
+        // TODO security: better use cPRNG?
         let circuit_id = rand::random();
 
         struct Hop {
@@ -487,6 +503,7 @@ fn derive_keys(master_key: &Key, nonce: &[u8]) -> Result<(Key, Key), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tonic_directory::EpochInfo;
 
     #[test]
     fn key_derivation() {
@@ -518,6 +535,9 @@ mod tests {
                 )
             })
             .collect();
+        let mut epoch_info = EpochInfo::default();
+        epoch_info.mixes = path.clone();
+        let rendezvous_map = Arc::new(RendezvousMap::new(&epoch_info));
         let (client_circuit, extend) = ClientCircuit::new(42, path.clone()).unwrap();
         assert_eq!(*extend.next_hop(), endpoints[0]);
         let setup_pkt = extend.into_inner();
@@ -526,7 +546,8 @@ mod tests {
         assert_eq!(setup_pkt.ttl().unwrap(), 2);
         let previous_hop = Some("8.8.8.8:42".parse().unwrap()); // previous hop is client
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, previous_hop);
-        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[0].1, 0, 41).unwrap();
+        let (circuit, next_step) =
+            Circuit::new(pkt_with_prev, &mixes[0].1, rendezvous_map.clone(), 0, 41).unwrap();
         assert_eq!(client_circuit.onion_keys[0], *circuit.threefish.key());
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
@@ -538,7 +559,8 @@ mod tests {
         // second mix
         assert_eq!(setup_pkt.ttl().unwrap(), 1);
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[0].clone()));
-        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[1].1, 1, 41).unwrap();
+        let (circuit, next_step) =
+            Circuit::new(pkt_with_prev, &mixes[1].1, rendezvous_map.clone(), 1, 41).unwrap();
         assert_eq!(client_circuit.onion_keys[1], *circuit.threefish.key());
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
@@ -550,7 +572,8 @@ mod tests {
         // third mix (last one)
         assert_eq!(setup_pkt.ttl().unwrap(), 0);
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[1].clone()));
-        let (circuit, next_step) = Circuit::new(pkt_with_prev, &mixes[2].1, 2, 41).unwrap();
+        let (circuit, next_step) =
+            Circuit::new(pkt_with_prev, &mixes[2].1, rendezvous_map.clone(), 2, 41).unwrap();
         assert_eq!(client_circuit.onion_keys[2], *circuit.threefish.key());
         let tokens = match next_step {
             NextSetupStep::Rendezvous(ts) => ts,

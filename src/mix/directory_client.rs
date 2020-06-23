@@ -62,6 +62,10 @@ impl RendezvousMap {
             n => self.map.get((token % n as u64) as usize).cloned(),
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.len() == 0
+    }
 }
 
 pub struct Client {

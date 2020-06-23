@@ -10,7 +10,7 @@ use tokio::time::Duration;
 use super::circuit::{
     CellDirection, Circuit, ClientCircuit, ExtendInfo, NextCellStep, NextSetupStep,
 };
-use super::directory_client;
+use super::directory_client::{self, RendezvousMap};
 use super::grpc::SetupPacketWithPrev;
 use super::sender::{CellBatch, SetupBatch};
 use crate::crypto::key::Key;
@@ -273,6 +273,8 @@ impl Worker {
             layer, epoch.epoch_no
         );
         let current_ttl = epoch.path_length - layer - 1;
+        // TODO performance we could create the map once per epoch instead
+        let rendezvous_map = Arc::new(RendezvousMap::new(epoch));
 
         let mut batch = SetupBatch::new();
 
@@ -304,7 +306,13 @@ impl Worker {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
-            match Circuit::new(pkt, sk, layer, epoch.number_of_rounds - 1) {
+            match Circuit::new(
+                pkt,
+                sk,
+                rendezvous_map.clone(),
+                layer,
+                epoch.number_of_rounds - 1,
+            ) {
                 Ok((circuit, next_hop_info)) => {
                     self.circuit_id_map
                         .insert(circuit.upstream_id(), circuit.downstream_id());
