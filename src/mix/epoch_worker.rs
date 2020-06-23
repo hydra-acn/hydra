@@ -29,6 +29,17 @@ type CircuitMap = BTreeMap<CircuitId, Circuit>;
 type ClientCircuitMap = BTreeMap<CircuitId, ClientCircuit>;
 type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
 
+/// Bundling the various circuit maps used during one epoch
+#[derive(Default)]
+struct CircuitMapBundle {
+    // mapping downstream ids to circuits
+    circuits: CircuitMap,
+    // mapping *upstream* ids to dummy circuits (they have no downstream id)
+    dummy_circuits: ClientCircuitMap,
+    // mapping the upstream circuit id to the downstream id of an circuit
+    circuit_id_map: CircuitIdMap,
+}
+
 pub struct Worker {
     running: Arc<AtomicBool>,
     dir_client: Arc<directory_client::Client>,
@@ -37,12 +48,8 @@ pub struct Worker {
     cell_rx_queues: Vec<CellRxQueue>,
     cell_tx_queue: CellTxQueue,
     pending_setup_pkts: PendingSetupMap,
-    // mapping downstream ids to circuits
-    circuits: CircuitMap,
-    // mapping *upstream* ids to dummy circuits (they have no downstream id)
-    dummy_circuits: ClientCircuitMap,
-    // mapping the upstream circuit id to the downstream id of an circuit
-    circuit_id_map: CircuitIdMap,
+    setup_circuits: CircuitMapBundle,
+    communication_circuits: CircuitMapBundle,
 }
 
 impl Worker {
@@ -62,9 +69,8 @@ impl Worker {
             cell_rx_queues,
             cell_tx_queue,
             pending_setup_pkts: PendingSetupMap::new(),
-            circuits: CircuitMap::new(),
-            dummy_circuits: ClientCircuitMap::new(),
-            circuit_id_map: CircuitIdMap::new(),
+            communication_circuits: CircuitMapBundle::default(),
+            setup_circuits: CircuitMapBundle::default(),
         }
     }
 
@@ -178,7 +184,10 @@ impl Worker {
                 }
             }
         }
-        // XXX clear all circuits when communication is done, probably need two sets of maps after all ...
+        info!("Communication of epoch {} and setup of epoch {} done, updating the circuit maps accordingly", communication_epoch.epoch_no, setup_epoch.epoch_no);
+        // TODO performance: swap is most likely expensive here ...
+        std::mem::swap(&mut self.communication_circuits, &mut self.setup_circuits);
+        self.setup_circuits = CircuitMapBundle::default();
     }
 
     fn process_communication_round(&mut self, epoch: &EpochInfo, round_no: RoundNo) {
@@ -222,9 +231,9 @@ impl Worker {
                     continue;
                 }
                 match process_cell(
-                    &mut self.circuits,
-                    &self.dummy_circuits,
-                    &self.circuit_id_map,
+                    &mut self.communication_circuits.circuits,
+                    &self.communication_circuits.dummy_circuits,
+                    &self.communication_circuits.circuit_id_map,
                     cell,
                     layer,
                     direction,
@@ -240,7 +249,7 @@ impl Worker {
         }
 
         // insert dummy cells if necessary
-        for (_, circuit) in self.circuits.iter_mut() {
+        for (_, circuit) in self.communication_circuits.circuits.iter_mut() {
             match circuit.pad(round_no, direction) {
                 Some(step) => match step {
                     NextCellStep::Relay(c) => relay_batch.push(c),
@@ -302,7 +311,7 @@ impl Worker {
                 );
                 continue;
             }
-            if self.circuits.contains_key(&pkt.circuit_id()) {
+            if self.setup_circuits.circuits.contains_key(&pkt.circuit_id()) {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
@@ -314,9 +323,12 @@ impl Worker {
                 epoch.number_of_rounds - 1,
             ) {
                 Ok((circuit, next_hop_info)) => {
-                    self.circuit_id_map
+                    self.setup_circuits
+                        .circuit_id_map
                         .insert(circuit.upstream_id(), circuit.downstream_id());
-                    self.circuits.insert(circuit.downstream_id(), circuit);
+                    self.setup_circuits
+                        .circuits
+                        .insert(circuit.downstream_id(), circuit);
                     match next_hop_info {
                         NextSetupStep::Extend(extend) => batch.push(extend),
                         NextSetupStep::Rendezvous(_tokens) => {
@@ -358,7 +370,7 @@ impl Worker {
             .expect("No path available");
         let (circuit, extend) =
             ClientCircuit::new(epoch_no, path).expect("Creating dummy circuit failed");
-        self.dummy_circuits.insert(circuit.circuit_id(), circuit);
+        self.setup_circuits.dummy_circuits.insert(circuit.circuit_id(), circuit);
         extend
     }
 }
