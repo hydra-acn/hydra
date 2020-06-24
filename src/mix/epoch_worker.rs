@@ -188,6 +188,11 @@ impl Worker {
         info!("Communication of epoch {} and setup of epoch {} done, updating the circuit maps accordingly", communication_epoch.epoch_no, setup_epoch.epoch_no);
         // TODO performance: swap is most likely expensive here ...
         std::mem::swap(&mut self.communication_circuits, &mut self.setup_circuits);
+        debug!(
+            "We have {} circuits and {} dummy circuits for the next communication",
+            self.communication_circuits.circuits.len(),
+            self.communication_circuits.dummy_circuits.len()
+        );
         self.setup_circuits = CircuitMapBundle::default();
     }
 
@@ -282,6 +287,10 @@ impl Worker {
 
         // insert dummy cells if necessary
         for (_, circuit) in self.communication_circuits.circuits.iter_mut() {
+            if layer != circuit.layer() {
+                // no out-of-sync dummies
+                continue;
+            }
             match circuit.pad(round_no, direction) {
                 Some(step) => match step {
                     NextCellStep::Relay(c) => relay_batch.push(c),
