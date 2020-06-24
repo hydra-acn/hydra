@@ -10,6 +10,7 @@ pub fn init() {
 
     let cfg = ConfigBuilder::new()
         .set_time_format_str("%H:%M:%S%.6f")
+        .add_filter_allow_str("hydra")
         .build();
 
     TermLogger::init(filter, cfg, TerminalMode::Mixed).expect("Initializing Hydra logging failed");
