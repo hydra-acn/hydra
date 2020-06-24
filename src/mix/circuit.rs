@@ -549,8 +549,12 @@ impl ClientCircuit {
             tf.decrypt(tweak_src, &mut cell.onion).unwrap_or(());
         }
         match &self.sent_cell {
-            // TODO nack in last round is obviously not as expected ...
-            Some(c) if *c != cell => warn!("Received cell is not as expected"),
+            Some(c) if *c != cell => {
+                // in last round: bytes 1 to 7 (cmd) should be zero
+                if cell.onion[1..8].iter().any(|b| *b != 0) {
+                    warn!("Received cell is not as expected")
+                }
+            }
             None => warn!("Received a cell without having send one before"),
             _ => (), // everything ok
         }
