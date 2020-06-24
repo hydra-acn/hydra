@@ -2,6 +2,7 @@
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
+use std::net::SocketAddr;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::thread::sleep;
@@ -200,12 +201,39 @@ impl Worker {
         let subround_interval = round_duration / (2 * epoch.path_length + 1);
         let mut subround_end = round_start + subround_interval;
         // upstream
-        for layer in 0..epoch.path_length - 1 {
+        for layer in 0..epoch.path_length {
             self.process_subround(round_no, layer, CellDirection::Upstream, &subround_end);
             subround_end += subround_interval;
         }
-        // XXX rendezvous
-        // XXX downstream
+
+        // sleep another interval to allow rendezvous service to respond
+        let wait_time = subround_end
+            .checked_sub(current_time())
+            .expect("Did not finish last upstream subround in time?");
+        sleep(wait_time);
+        subround_end += subround_interval;
+
+        // inject cells from the rendezvous service
+        // TODO performance: parallel
+        for queue in self.cell_rx_queues.iter_mut() {
+            while let Ok(cell) = queue.try_recv() {
+                inject_cell(
+                    &mut self.communication_circuits.circuits,
+                    &self.communication_circuits.circuit_id_map,
+                    cell,
+                );
+            }
+        }
+
+        // downstream
+        for layer in (0..epoch.path_length).rev() {
+            self.process_subround(round_no, layer, CellDirection::Downstream, &subround_end);
+            subround_end += subround_interval;
+        }
+        info!(
+            "Finished processing round {} of epoch {}",
+            round_no, epoch.epoch_no
+        );
     }
 
     /// Process subround and sleep till it is over.
@@ -216,6 +244,10 @@ impl Worker {
         direction: CellDirection,
         subround_end: &Duration,
     ) {
+        info!(
+            ".. processing sub-round of round {}, layer {}, direction {:?}",
+            round_no, layer, direction
+        );
         let mut relay_batch = CellBatch::new();
         let mut rendezvous_batch = CellBatch::new();
         let mut deliver_batch = Vec::new();
@@ -263,13 +295,30 @@ impl Worker {
         if relay_batch.len() > 0 {
             self.cell_tx_queue
                 .send(relay_batch)
-                .unwrap_or_else(|_| error!("Sender is gone!?"));
+                .unwrap_or_else(|_| error!("Sender task is gone!?"));
         } else if rendezvous_batch.len() > 0 {
             // XXX implement rendezvous
+            // for now: echo back to the same circuits by re-writing target to localhost
+            for cell_with_hop in rendezvous_batch.iter_mut() {
+                let localhost = self.dir_client.config().addr;
+                let relay_addr = SocketAddr::new(localhost, self.dir_client.config().relay_port);
+                cell_with_hop.set_next_hop(relay_addr);
+            }
+            self.cell_tx_queue
+                .send(rendezvous_batch)
+                .unwrap_or_else(|_| error!("Sender task is gone!?"));
         } else if deliver_batch.len() > 0 {
             // XXX implement delivery (move cells to gRPC state?)
         }
 
+        if let CellDirection::Downstream = direction {
+            if layer == 0 {
+                // don't sleep in last subround
+                return;
+            }
+        }
+
+        // sleep till round end
         let wait_time = subround_end
             .checked_sub(current_time())
             .expect("Did not finish subround in time?");
@@ -332,7 +381,7 @@ impl Worker {
                     match next_hop_info {
                         NextSetupStep::Extend(extend) => batch.push(extend),
                         NextSetupStep::Rendezvous(_tokens) => {
-                            // XXX
+                            // XXX implement rendezvous at setup
                             warn!("Rendezvous unimplemented, dropping")
                         }
                     }
@@ -370,7 +419,9 @@ impl Worker {
             .expect("No path available");
         let (circuit, extend) =
             ClientCircuit::new(epoch_no, path).expect("Creating dummy circuit failed");
-        self.setup_circuits.dummy_circuits.insert(circuit.circuit_id(), circuit);
+        self.setup_circuits
+            .dummy_circuits
+            .insert(circuit.circuit_id(), circuit);
         extend
     }
 }
@@ -416,6 +467,21 @@ fn process_cell(
         }
     }
     None
+}
+
+fn inject_cell(circuits: &mut CircuitMap, circuit_id_map: &CircuitIdMap, cell: Cell) {
+    if let Some(downstream_id) = circuit_id_map.get(&cell.circuit_id) {
+        if let Some(circuit) = circuits.get_mut(&downstream_id) {
+            circuit.inject(cell);
+        } else {
+            warn!("Circuit for upstream id {} is gone!?", cell.circuit_id);
+        }
+    } else {
+        warn!(
+            "Don't know the upstream circuit id {} for injection",
+            cell.circuit_id
+        );
+    }
 }
 
 fn handle_new_setup_pkt(

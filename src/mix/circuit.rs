@@ -34,7 +34,7 @@ pub enum NextCellStep {
     Deliver(Cell),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum CellDirection {
     Upstream,
     Downstream,

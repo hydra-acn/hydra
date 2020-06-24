@@ -32,6 +32,10 @@ impl<T> PacketWithNextHop<T> {
     pub fn next_hop(&self) -> &SocketAddr {
         &self.next_hop
     }
+
+    pub fn set_next_hop(&mut self, next_hop: SocketAddr) {
+        self.next_hop = next_hop;
+    }
 }
 
 pub type Batch<T> = Vec<PacketWithNextHop<T>>;
