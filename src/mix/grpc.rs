@@ -176,4 +176,8 @@ impl Mix for Service {
         rethrow_as_internal!(queue.send(cell), "Sync error");
         Ok(Response::new(RelayAck {}))
     }
+
+    async fn inject(&self, _req: Request<Cell>) -> Result<Response<InjectAck>, Status> {
+        Err(Status::new(tonic::Code::Unimplemented, "..."))
+    }
 }
