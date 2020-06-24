@@ -354,7 +354,7 @@ impl Circuit {
             round_no: self.max_round_no,
             onion: vec![0u8; ONION_SIZE],
         };
-        let n = cmp::min(ONION_SIZE - 8, self.inject_cells.len()) as u8;
+        let n = cmp::min((ONION_SIZE - 8) / 8, self.inject_cells.len()) as u8;
         cell.onion[0] = n;
         let mut i = 8;
         for dropped_cell in self.inject_cells.iter() {
