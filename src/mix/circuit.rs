@@ -330,7 +330,8 @@ impl Circuit {
         }
     }
 
-    pub fn inject(&mut self, cell: Cell) {
+    pub fn inject(&mut self, mut cell: Cell) {
+        cell.circuit_id = self.downstream_id;
         self.inject_cells.push_back(cell);
     }
 
