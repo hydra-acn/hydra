@@ -118,6 +118,11 @@ impl Circuit {
         if ttl == 0 {
             // time for rendezvous
             let tokens = tokens_from_bytes(&decrypted);
+            // TODO security: this should not be logged in production ...
+            debug!(
+                "Created relay circuit with downstream id {} and upstream id {} in layer {} (last layer)",
+                circuit.downstream_id, circuit.upstream_id, circuit.layer
+            );
             Ok((circuit, NextSetupStep::Rendezvous(tokens)))
         } else {
             // show must go on
@@ -143,8 +148,8 @@ impl Circuit {
 
             // TODO security: this should not be logged in production ...
             debug!(
-                "Created relay circuit with downstream id {} and upstream id {}",
-                circuit.downstream_id, circuit.upstream_id
+                "Created relay circuit with downstream id {} and upstream id {} in layer {}",
+                circuit.downstream_id, circuit.upstream_id, circuit.layer
             );
             Ok((circuit, NextSetupStep::Extend(extend_info)))
         }
@@ -160,7 +165,11 @@ impl Circuit {
         self.upstream_id
     }
 
-    /// Returns `None` for duplicates.
+    pub fn layer(&self) -> u32 {
+        self.layer
+    }
+
+    /// Returns `None` for duplicates and out-of-sync cells.
     pub fn process_cell(
         &mut self,
         mut cell: Cell,
@@ -168,7 +177,11 @@ impl Circuit {
         direction: CellDirection,
     ) -> Option<NextCellStep> {
         if layer != self.layer {
-            error!("Layer mismatch: expected {}, got {}", self.layer, layer);
+            warn!(
+                "Layer mismatch in circuit with downstream id {}: expected {}, got {} -> most likely out-of-sync sending",
+                self.downstream_id, self.layer, layer
+            );
+            return None;
         }
 
         // duplicate detection
