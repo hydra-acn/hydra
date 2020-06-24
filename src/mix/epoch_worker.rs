@@ -269,7 +269,7 @@ impl Worker {
                 }
                 match process_cell(
                     &mut self.communication_circuits.circuits,
-                    &self.communication_circuits.dummy_circuits,
+                    &mut self.communication_circuits.dummy_circuits,
                     &self.communication_circuits.circuit_id_map,
                     cell,
                     layer,
@@ -298,6 +298,20 @@ impl Worker {
                     NextCellStep::Deliver(c) => deliver_batch.push(c),
                 },
                 None => (),
+            }
+        }
+
+        // send on dummy circuits as well, but only upstream
+        if let CellDirection::Upstream = direction {
+            for (_, dummy_circuit) in self.communication_circuits.dummy_circuits.iter_mut() {
+                if layer != dummy_circuit.layer() {
+                    // no out-of-sync dummies
+                    continue;
+                }
+                match dummy_circuit.pad(round_no) {
+                    Some(step) => relay_batch.push(step),
+                    None => (),
+                }
             }
         }
 
@@ -390,8 +404,7 @@ impl Worker {
                     match next_hop_info {
                         NextSetupStep::Extend(extend) => batch.push(extend),
                         NextSetupStep::Rendezvous(_tokens) => {
-                            // XXX implement rendezvous at setup
-                            warn!("Rendezvous unimplemented, dropping")
+                            // XXX implement rendezvous at setup (for now: silent drop)
                         }
                     }
                 }
@@ -401,7 +414,7 @@ impl Worker {
                         e
                     );
                     if current_ttl > 0 {
-                        let extend = self.create_dummy_circuit(epoch.epoch_no, current_ttl);
+                        let extend = self.create_dummy_circuit(epoch.epoch_no, layer, current_ttl);
                         batch.push(extend);
                     }
                 }
@@ -409,7 +422,7 @@ impl Worker {
         }
         if current_ttl > 0 {
             // create one additional dummy circuit
-            let extend = self.create_dummy_circuit(epoch.epoch_no, current_ttl);
+            let extend = self.create_dummy_circuit(epoch.epoch_no, layer, current_ttl);
             batch.push(extend);
         }
         // send batch, shuffling is done by the sender
@@ -421,13 +434,13 @@ impl Worker {
 
     /// Panics on failure as dummy circuits are essential for anonymity.
     /// Returns the info necessary for circuit extension (next hop, setup packet).
-    fn create_dummy_circuit(&mut self, epoch_no: EpochNo, ttl: u32) -> ExtendInfo {
+    fn create_dummy_circuit(&mut self, epoch_no: EpochNo, layer: u32, ttl: u32) -> ExtendInfo {
         let path = self
             .dir_client
             .select_path(epoch_no, ttl)
             .expect("No path available");
         let (circuit, extend) =
-            ClientCircuit::new(epoch_no, path).expect("Creating dummy circuit failed");
+            ClientCircuit::new(epoch_no, layer, path).expect("Creating dummy circuit failed");
         self.setup_circuits
             .dummy_circuits
             .insert(circuit.circuit_id(), circuit);
@@ -440,7 +453,7 @@ impl Worker {
 /// cell was a duplicate
 fn process_cell(
     circuits: &mut CircuitMap,
-    dummy_circuits: &ClientCircuitMap,
+    dummy_circuits: &mut ClientCircuitMap,
     circuit_id_map: &CircuitIdMap,
     cell: Cell,
     layer: u32,
@@ -458,7 +471,7 @@ fn process_cell(
             }
         }
         CellDirection::Downstream => {
-            if let Some(dummy_circuit) = dummy_circuits.get(&cell.circuit_id) {
+            if let Some(dummy_circuit) = dummy_circuits.get_mut(&cell.circuit_id) {
                 dummy_circuit.receive_cell(cell);
                 return None;
             }

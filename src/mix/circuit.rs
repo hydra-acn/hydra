@@ -16,6 +16,7 @@ use crate::tonic_mix::*;
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use log::*;
 use openssl::rand::rand_bytes;
+use rand::seq::IteratorRandom;
 use std::cmp;
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
@@ -370,15 +371,18 @@ impl Circuit {
 
 /// When mixes act as clients for additional cover traffic.
 pub struct ClientCircuit {
+    layer: u32,
     circuit_id: CircuitId,
     first_hop: SocketAddr,
-    onion_keys: Vec<Key>,
+    threefishies: Vec<Threefish2048>,
     tokens: Vec<Token>,
+    sent_cell: Option<Cell>,
 }
 
 impl ClientCircuit {
     pub fn new(
         epoch_no: EpochNo,
+        layer: u32,
         path: Vec<MixInfo>,
     ) -> Result<(ClientCircuit, PacketWithNextHop<SetupPacket>), Error> {
         let first_mix = path
@@ -400,7 +404,7 @@ impl ClientCircuit {
         }
 
         let mut hops = Vec::new();
-        let mut onion_keys = Vec::new();
+        let mut threefishies = Vec::new();
 
         for mix in &path {
             let mix_pk = Key::clone_from_slice(&mix.public_dh);
@@ -429,7 +433,7 @@ impl ClientCircuit {
                 port,
             };
             hops.push(hop_info);
-            onion_keys.push(onion_key);
+            threefishies.push(Threefish2048::new(onion_key)?);
         }
 
         let tokens_size = 256 * 8;
@@ -479,10 +483,12 @@ impl ClientCircuit {
         )?;
 
         let circuit = ClientCircuit {
-            circuit_id: circuit_id,
+            layer,
+            circuit_id,
             first_hop,
-            onion_keys,
+            threefishies,
             tokens,
+            sent_cell: None,
         };
 
         debug!(
@@ -498,8 +504,57 @@ impl ClientCircuit {
         self.circuit_id
     }
 
-    pub fn receive_cell(&self, _cell: Cell) {
+    pub fn layer(&self) -> u32 {
+        self.layer
+    }
+
+    pub fn pad(&mut self, round_no: RoundNo) -> Option<PacketWithNextHop<Cell>> {
+        // TODO security: for now, client circuits are only used to monitor correct behavior of the
+        // system by forcing the system to echo them back on the same circuit; to provide security
+        // benefits, cells should be send "end-to-end" between *different* client circuits on the
+        // same mix, with random payload; nevertheless, this should only happen occassionally -
+        // otherwise rendezvous nodes find out that a circuit never has dummy circuits -> return
+        // `None` in this case
+        let mut cell = Cell::dummy(self.circuit_id, round_no);
+        // TODO security: use secure random source?
+        let rng = &mut rand::thread_rng();
+        // TODO security: use some Zipf-like distribution
+        let token = self
+            .tokens
+            .iter()
+            .choose(rng)
+            .expect("Expected at least one token");
+        cell.set_token(*token);
+        if self.sent_cell.is_some() {
+            warn!(
+                "Seems like we did not get the last cell back on client circuit {}",
+                self.circuit_id
+            )
+        }
+        self.sent_cell = Some(cell.clone());
+        // onion encrypt
+        let tweak_src = 24 * round_no as u64;
+        for tf in self.threefishies.iter().rev() {
+            // as we started with a dummy, we can ignore encryption errors
+            tf.encrypt(tweak_src, &mut cell.onion).unwrap_or(());
+        }
+        Some(PacketWithNextHop::new(cell, self.first_hop))
+    }
+
+    pub fn receive_cell(&mut self, mut cell: Cell) {
         debug!("Client circuit {} received a cell", self.circuit_id);
+        // onion decrypt
+        let tweak_src = 24 * cell.round_no as u64 + 12;
+        for tf in self.threefishies.iter() {
+            tf.decrypt(tweak_src, &mut cell.onion).unwrap_or(());
+        }
+        match &self.sent_cell {
+            // TODO nack in last round is obviously not as expected ...
+            Some(c) if *c != cell => warn!("Received cell is not as expected"),
+            None => warn!("Received a cell without having send one before"),
+            _ => (), // everything ok
+        }
+        self.sent_cell = None;
     }
 }
 
@@ -552,7 +607,7 @@ mod tests {
         let mut epoch_info = EpochInfo::default();
         epoch_info.mixes = path.clone();
         let rendezvous_map = Arc::new(RendezvousMap::new(&epoch_info));
-        let (client_circuit, extend) = ClientCircuit::new(42, path.clone()).unwrap();
+        let (client_circuit, extend) = ClientCircuit::new(42, 0, path.clone()).unwrap();
         assert_eq!(*extend.next_hop(), endpoints[0]);
         let setup_pkt = extend.into_inner();
 
@@ -562,7 +617,10 @@ mod tests {
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, previous_hop);
         let (circuit, next_step) =
             Circuit::new(pkt_with_prev, &mixes[0].1, rendezvous_map.clone(), 0, 41).unwrap();
-        assert_eq!(client_circuit.onion_keys[0], *circuit.threefish.key());
+        assert_eq!(
+            *client_circuit.threefishies[0].key(),
+            *circuit.threefish.key()
+        );
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
             _ => unreachable!(),
@@ -575,7 +633,10 @@ mod tests {
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[0].clone()));
         let (circuit, next_step) =
             Circuit::new(pkt_with_prev, &mixes[1].1, rendezvous_map.clone(), 1, 41).unwrap();
-        assert_eq!(client_circuit.onion_keys[1], *circuit.threefish.key());
+        assert_eq!(
+            *client_circuit.threefishies[1].key(),
+            *circuit.threefish.key()
+        );
         let extend = match next_step {
             NextSetupStep::Extend(e) => e,
             _ => unreachable!(),
@@ -588,7 +649,10 @@ mod tests {
         let pkt_with_prev = SetupPacketWithPrev::new(setup_pkt, Some(endpoints[1].clone()));
         let (circuit, next_step) =
             Circuit::new(pkt_with_prev, &mixes[2].1, rendezvous_map.clone(), 2, 41).unwrap();
-        assert_eq!(client_circuit.onion_keys[2], *circuit.threefish.key());
+        assert_eq!(
+            *client_circuit.threefishies[2].key(),
+            *circuit.threefish.key()
+        );
         let tokens = match next_step {
             NextSetupStep::Rendezvous(ts) => ts,
             _ => unreachable!(),
