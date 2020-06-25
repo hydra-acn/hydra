@@ -1,3 +1,4 @@
+use log::*;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -77,6 +78,17 @@ impl State {
             storage: Mutex::new(CellStorage::new()),
         }
     }
+
+    pub fn deliver(&self, cells: Vec<Cell>) {
+        let mut storage = self.storage.lock().expect("Lock poisoned");
+        for cell in cells {
+            if let Some(cell_vec) = storage.get_mut(&cell.circuit_id) {
+                cell_vec.push(cell);
+            } else {
+                warn!("Cell ready for delivery, but circuit id unknown -> dropping");
+            }
+        }
+    }
 }
 
 define_grpc_service!(Service, State, MixServer);
@@ -104,8 +116,7 @@ impl Mix for Service {
             let already_in_use = match storage.get_mut(&pkt.circuit_id) {
                 Some(_) => true,
                 None => {
-                    let cell_vec = Vec::new();
-                    storage.insert(pkt.circuit_id, cell_vec);
+                    storage.insert(pkt.circuit_id, Vec::new());
                     false
                 }
             };

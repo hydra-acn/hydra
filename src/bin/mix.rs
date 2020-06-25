@@ -99,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut worker = Worker::new(
             running.clone(),
             dir_client.clone(),
+            grpc_state.clone(),
             setup_rx_queue_receivers,
             setup_sender,
             cell_rx_queue_receivers,

@@ -44,6 +44,7 @@ struct CircuitMapBundle {
 pub struct Worker {
     running: Arc<AtomicBool>,
     dir_client: Arc<directory_client::Client>,
+    grpc_state: Arc<super::grpc::State>,
     setup_rx_queues: Vec<SetupRxQueue>,
     setup_tx_queue: SetupTxQueue,
     cell_rx_queues: Vec<CellRxQueue>,
@@ -57,6 +58,7 @@ impl Worker {
     pub fn new(
         running: Arc<AtomicBool>,
         dir_client: Arc<directory_client::Client>,
+        grpc_state: Arc<super::grpc::State>,
         setup_rx_queues: Vec<SetupRxQueue>,
         setup_tx_queue: SetupTxQueue,
         cell_rx_queues: Vec<CellRxQueue>,
@@ -65,6 +67,7 @@ impl Worker {
         Worker {
             running: running.clone(),
             dir_client,
+            grpc_state,
             setup_rx_queues,
             setup_tx_queue,
             cell_rx_queues,
@@ -331,7 +334,7 @@ impl Worker {
                 .send(rendezvous_batch)
                 .unwrap_or_else(|_| error!("Sender task is gone!?"));
         } else if deliver_batch.len() > 0 {
-            // XXX implement delivery (move cells to gRPC state?)
+            self.grpc_state.deliver(deliver_batch);
         }
 
         if let CellDirection::Downstream = direction {
