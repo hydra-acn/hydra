@@ -2,25 +2,7 @@
 
 deploy_local() {
     if [ $# -lt 2 ]; then
-        echo "Usage: ./deploy.sh local <n> <localAddr>"
-        exit -1
-    fi
-
-    session="hydra-testbed"
-    echo -n "Killing last session first ..."
-    tmux kill-session -t $session > /dev/null 2>&1
-    echo " Done"
-
-    mode="debug"
-    echo "Building in $mode mode ..."
-    if [ $mode == "debug" ]; then
-        cargo build
-    else
-        cargo build --$mode
-    fi
-
-    if [ $? -ne 0 ]; then
-        echo "Build failed!"
+        echo "Usage: ./deploy.sh local <n> <localAddr> [options]"
         exit -1
     fi
 
@@ -33,6 +15,35 @@ deploy_local() {
     localhost=$2
     dirport=9000
     phasedur=120
+    mode="debug"
+
+    shift
+    shift
+    while [ -n "$1" ]; do
+        case "$1" in
+            --release) mode="release" ;;
+            *) echo "Unknown option $1"; exit -1 ;;
+        esac
+        shift
+    done
+
+    session="hydra-testbed"
+    echo -n "Killing last session first ..."
+    tmux kill-session -t $session > /dev/null 2>&1
+    echo " Done"
+
+    echo "Building in $mode mode ..."
+    if [ $mode == "debug" ]; then
+        cargo build
+    else
+        cargo build --$mode
+    fi
+
+    if [ $? -ne 0 ]; then
+        echo "Build failed!"
+        exit -1
+    fi
+
     tmux new-session -d -s $session
     echo -n "Starting directory server on port $dirport ..."
     tmux new-window -d -t "=${session}" -n directory
