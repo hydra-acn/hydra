@@ -89,6 +89,14 @@ impl State {
             }
         }
     }
+
+    fn relay_impl(&self, req: Request<Cell>) -> Result<(), Status> {
+        let cell = req.into_inner();
+        let i = cell.circuit_id as usize % self.cell_rx_queues.len();
+        let queue = unwrap_or_throw_internal!(self.cell_rx_queues.get(i), "Logical index error");
+        rethrow_as_internal!(queue.send(cell), "Sync error");
+        Ok(())
+    }
 }
 
 define_grpc_service!(Service, State, MixServer);
@@ -181,14 +189,12 @@ impl Mix for Service {
     }
 
     async fn relay(&self, req: Request<Cell>) -> Result<Response<RelayAck>, Status> {
-        let cell = req.into_inner();
-        let i = cell.circuit_id as usize % self.cell_rx_queues.len();
-        let queue = unwrap_or_throw_internal!(self.cell_rx_queues.get(i), "Logical index error");
-        rethrow_as_internal!(queue.send(cell), "Sync error");
+        self.relay_impl(req)?;
         Ok(Response::new(RelayAck {}))
     }
 
-    async fn inject(&self, _req: Request<Cell>) -> Result<Response<InjectAck>, Status> {
-        Err(Status::new(tonic::Code::Unimplemented, "..."))
+    async fn inject(&self, req: Request<Cell>) -> Result<Response<InjectAck>, Status> {
+        self.relay_impl(req)?;
+        Ok(Response::new(InjectAck {}))
     }
 }
