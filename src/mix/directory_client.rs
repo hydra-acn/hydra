@@ -19,9 +19,11 @@ use crate::tonic_directory::{
     DhMessage, DirectoryRequest, EpochInfo, MixInfo, RegisterRequest, UnregisterRequest,
 };
 use crate::tonic_mix::mix_client::MixClient;
+use crate::tonic_mix::rendezvous_client::RendezvousClient;
 
 type DirectoryChannel = DirectoryClient<tonic::transport::Channel>;
 type MixChannel = MixClient<tonic::transport::Channel>;
+type RendezvousChannel = RendezvousClient<tonic::transport::Channel>;
 
 pub struct Config {
     pub addr: IpAddr,
@@ -84,6 +86,8 @@ pub struct Client {
     key_count: AtomicU32,
     /// channel pool for mix connections
     mix_channels: ChannelPool<MixChannel>,
+    /// channel pool for rendezvous connections
+    rendezvous_channels: ChannelPool<RendezvousChannel>,
 }
 
 impl Client {
@@ -103,6 +107,7 @@ impl Client {
             keys: RwLock::new(BTreeMap::new()),
             key_count: AtomicU32::new(0),
             mix_channels: ChannelPool::new(),
+            rendezvous_channels: ChannelPool::new(),
         }
     }
 
@@ -251,13 +256,20 @@ impl Client {
         }
         // prepare channels for the upcomming epoch
         if let Some(next_epoch) = self.next_epoch_info() {
-            let mut mix_addresses = Vec::new();
+            let mut mix_endpoints = Vec::new();
+            let mut rendezvous_endpoints = Vec::new();
             for mix in next_epoch.mixes {
                 if let Some(addr) = mix.relay_address() {
-                    mix_addresses.push(addr);
+                    mix_endpoints.push(addr);
+                }
+                if let Some(addr) = mix.rendezvous_address() {
+                    rendezvous_endpoints.push(addr);
                 }
             }
-            self.mix_channels.prepare_channels(&mix_addresses).await;
+            self.mix_channels.prepare_channels(&mix_endpoints).await;
+            self.rendezvous_channels
+                .prepare_channels(&rendezvous_endpoints)
+                .await;
         }
     }
 

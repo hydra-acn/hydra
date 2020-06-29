@@ -13,4 +13,6 @@ fn main() {
     tonic_build::compile_protos("protobuf/directory.proto")
         .expect("Failed to generate directory gRPC");
     tonic_build::compile_protos("protobuf/mix.proto").expect("Failed to generate mix gRPC");
+    tonic_build::compile_protos("protobuf/rendezvous.proto")
+        .expect("Failed to generate rendezvous gRPC");
 }

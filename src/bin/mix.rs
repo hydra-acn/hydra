@@ -38,6 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rendezvous_port: mix_addr.port() + 100,
         directory_addr,
     };
+    let rendezvous_addr: std::net::SocketAddr =
+        format!("{}:{}", dir_cfg.addr, dir_cfg.rendezvous_port).parse()?;
 
     let dir_client = Arc::new(Client::new(dir_cfg));
     let dir_client_handle = tokio::spawn(directory_client::run(dir_client.clone()));
@@ -75,13 +77,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cell_rx_queue_receivers.push(receiver);
         }
 
-        // setup gRPC
-        let grpc_state = Arc::new(mix::grpc::State::new(
+        // setup mix gRPC
+        let mix_grpc_state = Arc::new(mix::grpc::State::new(
             dir_client.clone(),
             setup_rx_queue_senders,
             cell_rx_queue_senders,
         ));
-        let grpc_handle = mix::grpc::spawn_service(grpc_state.clone(), mix_addr);
+        let mix_grpc_handle = mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr);
+
+        // setup rendezvous gRPC
+        let rendezvous_grpc_state = Arc::new(mix::rendezvous::State::new(dir_client.clone()));
+        let rendezvous_grpc_handle =
+            mix::rendezvous::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr);
 
         // setup channels for communication between main worker and sender
         let (setup_sender, setup_receiver) = spmc::channel();
@@ -99,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut worker = Worker::new(
             running.clone(),
             dir_client.clone(),
-            grpc_state.clone(),
+            mix_grpc_state.clone(),
             setup_rx_queue_receivers,
             setup_sender,
             cell_rx_queue_receivers,
@@ -110,7 +117,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match tokio::try_join!(
             sigint_handle,
             dir_client_handle,
-            grpc_handle,
+            mix_grpc_handle,
+            rendezvous_grpc_handle,
             sender_handle,
             main_handle
         ) {

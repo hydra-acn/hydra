@@ -9,6 +9,7 @@ use super::directory_client;
 use crate::derive_grpc_client;
 use crate::grpc;
 use crate::tonic_mix::mix_client::MixClient;
+use crate::tonic_mix::rendezvous_client::RendezvousClient;
 use crate::tonic_mix::*;
 
 /// Wrapping a packet of type `T` with next hop information
@@ -46,6 +47,9 @@ type SetupTxQueue = spmc::Receiver<SetupBatch>;
 type RelayTxQueue = spmc::Receiver<CellBatch>;
 type MixConnection = MixClient<tonic::transport::Channel>;
 derive_grpc_client!(MixConnection);
+
+type RendezvousConnection = RendezvousClient<tonic::transport::Channel>;
+derive_grpc_client!(RendezvousConnection);
 
 macro_rules! send_next_batch {
     ($state:expr, $queue:ident, $channel_getter:ident, $send_fun:ident) => {
