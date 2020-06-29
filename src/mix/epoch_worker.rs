@@ -1,7 +1,7 @@
 //! processing of one epoch
 use log::*;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
@@ -13,17 +13,21 @@ use super::circuit::{
 };
 use super::directory_client::{self, RendezvousMap};
 use super::grpc::SetupPacketWithPrev;
-use super::sender::{CellBatch, SetupBatch};
+use super::sender::{CellBatch, PacketWithNextHop, SetupBatch, SubscribeBatch};
 use crate::crypto::key::Key;
-use crate::defs::{CircuitId, RoundNo};
+use crate::defs::{CircuitId, RoundNo, Token};
 use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::tonic_mix::*;
 
 type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacketWithPrev>;
 type SetupTxQueue = spmc::Sender<SetupBatch>;
 
+type SubscribeTxQueue = spmc::Sender<SubscribeBatch>;
+
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
 type CellTxQueue = spmc::Sender<CellBatch>;
+
+type PublishTxQueue = spmc::Sender<CellBatch>;
 
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
@@ -47,8 +51,10 @@ pub struct Worker {
     grpc_state: Arc<super::grpc::State>,
     setup_rx_queues: Vec<SetupRxQueue>,
     setup_tx_queue: SetupTxQueue,
+    subscribe_tx_queue: SubscribeTxQueue,
     cell_rx_queues: Vec<CellRxQueue>,
     cell_tx_queue: CellTxQueue,
+    publish_tx_queue: PublishTxQueue,
     pending_setup_pkts: PendingSetupMap,
     setup_circuits: CircuitMapBundle,
     communication_circuits: CircuitMapBundle,
@@ -61,8 +67,10 @@ impl Worker {
         grpc_state: Arc<super::grpc::State>,
         setup_rx_queues: Vec<SetupRxQueue>,
         setup_tx_queue: SetupTxQueue,
+        subscribe_tx_queue: SubscribeTxQueue,
         cell_rx_queues: Vec<CellRxQueue>,
         cell_tx_queue: CellTxQueue,
+        publish_tx_queue: PublishTxQueue,
     ) -> Self {
         Worker {
             running: running.clone(),
@@ -70,8 +78,10 @@ impl Worker {
             grpc_state,
             setup_rx_queues,
             setup_tx_queue,
+            subscribe_tx_queue,
             cell_rx_queues,
             cell_tx_queue,
+            publish_tx_queue,
             pending_setup_pkts: PendingSetupMap::new(),
             communication_circuits: CircuitMapBundle::default(),
             setup_circuits: CircuitMapBundle::default(),
@@ -321,18 +331,11 @@ impl Worker {
         if relay_batch.len() > 0 {
             self.cell_tx_queue
                 .send(relay_batch)
-                .unwrap_or_else(|_| error!("Sender task is gone!?"));
+                .unwrap_or_else(|e| error!("Sender task is gone!? ({}))", e));
         } else if rendezvous_batch.len() > 0 {
-            // XXX implement rendezvous
-            // for now: echo back to the same circuits by re-writing target to localhost
-            for cell_with_hop in rendezvous_batch.iter_mut() {
-                let localhost = self.dir_client.config().addr;
-                let relay_addr = SocketAddr::new(localhost, self.dir_client.config().relay_port);
-                cell_with_hop.set_next_hop(relay_addr);
-            }
-            self.cell_tx_queue
+            self.publish_tx_queue
                 .send(rendezvous_batch)
-                .unwrap_or_else(|_| error!("Sender task is gone!?"));
+                .unwrap_or_else(|e| error!("Sender task is gone!? ({}))", e));
         } else if deliver_batch.len() > 0 {
             self.grpc_state.deliver(deliver_batch);
         }
@@ -360,7 +363,8 @@ impl Worker {
         // TODO performance we could create the map once per epoch instead
         let rendezvous_map = Arc::new(RendezvousMap::new(epoch));
 
-        let mut batch = SetupBatch::new();
+        let mut setup_batch = SetupBatch::new();
+        let mut subscription_map = HashMap::new();
 
         // first, check for new setup packets in the rx queues
         for queue in self.setup_rx_queues.iter_mut() {
@@ -390,6 +394,7 @@ impl Worker {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
+            // TODO security: replay protection based on auth_tag of pkt
             match Circuit::new(
                 pkt,
                 sk,
@@ -398,18 +403,23 @@ impl Worker {
                 epoch.number_of_rounds - 1,
             ) {
                 Ok((circuit, next_hop_info)) => {
+                    match next_hop_info {
+                        NextSetupStep::Extend(extend) => setup_batch.push(extend),
+                        NextSetupStep::Rendezvous(tokens) => {
+                            add_subscriptions(
+                                &mut subscription_map,
+                                circuit.upstream_id(),
+                                tokens,
+                                &rendezvous_map,
+                            );
+                        }
+                    }
                     self.setup_circuits
                         .circuit_id_map
                         .insert(circuit.upstream_id(), circuit.downstream_id());
                     self.setup_circuits
                         .circuits
                         .insert(circuit.downstream_id(), circuit);
-                    match next_hop_info {
-                        NextSetupStep::Extend(extend) => batch.push(extend),
-                        NextSetupStep::Rendezvous(_tokens) => {
-                            // XXX implement rendezvous at setup (for now: silent drop)
-                        }
-                    }
                 }
                 Err(e) => {
                     warn!(
@@ -418,7 +428,7 @@ impl Worker {
                     );
                     if current_ttl > 0 {
                         let extend = self.create_dummy_circuit(epoch.epoch_no, layer, current_ttl);
-                        batch.push(extend);
+                        setup_batch.push(extend);
                     }
                 }
             }
@@ -426,13 +436,21 @@ impl Worker {
         if current_ttl > 0 {
             // create one additional dummy circuit
             let extend = self.create_dummy_circuit(epoch.epoch_no, layer, current_ttl);
-            batch.push(extend);
+            setup_batch.push(extend);
         }
-        // send batch, shuffling is done by the sender
-        debug!("Worker prepared new setup batch");
-        self.setup_tx_queue
-            .send(batch)
-            .unwrap_or_else(|_| error!("Sender is gone!?"));
+        // send batch
+        if setup_batch.len() > 0 {
+            self.setup_tx_queue
+                .send(setup_batch)
+                .unwrap_or_else(|_| error!("Sender is gone!?"));
+        } else {
+            send_subscribe_batch(
+                &mut subscription_map,
+                &self.dir_client,
+                epoch.epoch_no,
+                &mut self.subscribe_tx_queue,
+            );
+        }
     }
 
     /// Panics on failure as dummy circuits are essential for anonymity.
@@ -560,4 +578,64 @@ fn insert_pending_setup_pkt(map: &mut PendingSetupMap, pkt: SetupPacketWithPrev)
             map.insert(epoch_no, queue);
         }
     }
+}
+
+fn add_subscriptions(
+    sub_map: &mut HashMap<SocketAddr, BTreeMap<CircuitId, Vec<Token>>>,
+    circuit_id: CircuitId,
+    tokens: Vec<Token>,
+    rendezvous_map: &RendezvousMap,
+) {
+    if rendezvous_map.is_empty() {
+        warn!("No rendezvous nodes?");
+        return;
+    }
+    for token in tokens {
+        let rendezvous_addr = rendezvous_map.rendezvous_address(&token).unwrap();
+        match sub_map.get_mut(&rendezvous_addr) {
+            Some(circuit_map) => match circuit_map.get_mut(&circuit_id) {
+                Some(vec) => vec.push(token),
+                None => {
+                    circuit_map.insert(circuit_id, vec![token]);
+                    ()
+                }
+            },
+            None => {
+                let mut circuit_map = BTreeMap::new();
+                circuit_map.insert(circuit_id, vec![token]);
+                sub_map.insert(rendezvous_addr, circuit_map);
+            }
+        }
+    }
+}
+
+fn send_subscribe_batch(
+    sub_map: &mut HashMap<SocketAddr, BTreeMap<CircuitId, Vec<Token>>>,
+    dir_client: &directory_client::Client,
+    epoch_no: EpochNo,
+    tx_queue: &mut SubscribeTxQueue,
+) {
+    let inject_addr = crate::net::ip_addr_to_vec(&dir_client.config().addr);
+    let inject_port = dir_client.config().relay_port as u32;
+    let mut batch = SubscribeBatch::new();
+    for (rendezvous_addr, circuit_map) in sub_map.into_iter() {
+        let mut pkt = SubscriptionVector {
+            epoch_no,
+            addr: inject_addr.clone(),
+            port: inject_port,
+            subs: vec![],
+        };
+        for (circuit_id, tokens) in circuit_map.into_iter() {
+            tokens.sort();
+            let sub = Subscription {
+                circuit_id: *circuit_id,
+                tokens: tokens.clone(),
+            };
+            pkt.subs.push(sub);
+        }
+        batch.push(PacketWithNextHop::new(pkt, *rendezvous_addr));
+    }
+    tx_queue
+        .send(batch)
+        .unwrap_or_else(|e| warn!("Sender is gone!? ({})", e));
 }

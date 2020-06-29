@@ -113,8 +113,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mix_grpc_state.clone(),
             setup_rx_queue_receivers,
             setup_sender,
+            subscribe_sender,
             cell_rx_queue_receivers,
             relay_sender,
+            publish_sender,
         );
         let main_handle = tokio::task::spawn_blocking(move || worker.run());
 

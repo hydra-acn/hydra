@@ -169,7 +169,10 @@ async fn send_subscriptions(
     mut c: RendezvousConnection,
     mut pkts: Vec<SubscriptionVector>,
 ) {
-    shuffle(&mut pkts);
+    if pkts.len() > 1 {
+        warn!("Expected only one subscription packet per rendezvous node");
+        shuffle(&mut pkts);
+    }
     for pkt in pkts {
         let req = tonic::Request::new(pkt);
         c.subscribe(req)
