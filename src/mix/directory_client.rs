@@ -346,6 +346,13 @@ impl Client {
         self.mix_channels.get_channels(destinations).await
     }
 
+    pub async fn get_rendezvous_channels(
+        &self,
+        destinations: &[SocketAddr],
+    ) -> HashMap<SocketAddr, RendezvousChannel> {
+        self.rendezvous_channels.get_channels(destinations).await
+    }
+
     pub fn select_path(&self, epoch_no: EpochNo, number_of_hops: u32) -> Option<Vec<MixInfo>> {
         let epoch_map = self.epochs.read().expect("Lock poisoned");
         let epoch = epoch_map.get(&epoch_no)?;

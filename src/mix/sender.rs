@@ -41,10 +41,15 @@ impl<T> PacketWithNextHop<T> {
 
 pub type Batch<T> = Vec<PacketWithNextHop<T>>;
 pub type SetupBatch = Batch<SetupPacket>;
+pub type SubscribeBatch = Batch<SubscriptionVector>;
 pub type CellBatch = Batch<Cell>;
+pub type PublishBatch = Batch<Cell>;
 
 type SetupTxQueue = spmc::Receiver<SetupBatch>;
+type SubscribeTxQueue = spmc::Receiver<SubscribeBatch>;
 type RelayTxQueue = spmc::Receiver<CellBatch>;
+type PublishTxQueue = spmc::Receiver<CellBatch>;
+
 type MixConnection = MixClient<tonic::transport::Channel>;
 derive_grpc_client!(MixConnection);
 
@@ -98,19 +103,25 @@ macro_rules! define_send_task {
 pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_tx_queue: SetupTxQueue,
+    subscribe_tx_queue: SubscribeTxQueue,
     relay_tx_queue: RelayTxQueue,
+    publish_tx_queue: PublishTxQueue,
 }
 
 impl State {
     pub fn new(
         dir_client: Arc<directory_client::Client>,
         setup_tx_queue: SetupTxQueue,
+        subscribe_tx_queue: SubscribeTxQueue,
         relay_tx_queue: RelayTxQueue,
+        publish_tx_queue: PublishTxQueue,
     ) -> Self {
         State {
             dir_client,
             setup_tx_queue,
+            subscribe_tx_queue,
             relay_tx_queue,
+            publish_tx_queue,
         }
     }
 }
@@ -129,12 +140,12 @@ fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<
     (batch_map, destinations)
 }
 
-pub async fn send_setup_packets(
+async fn send_setup_packets(
     dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
-    pkts: Vec<SetupPacket>,
+    mut pkts: Vec<SetupPacket>,
 ) {
-    // TODO security: shuffle!
+    shuffle(&mut pkts);
     for pkt in pkts {
         // setup packets need the src attached as metadata
         let mut req = tonic::Request::new(pkt);
@@ -146,26 +157,60 @@ pub async fn send_setup_packets(
                 .parse()
                 .expect("Why should this fail?"),
         );
-        match c.setup_circuit(req).await {
-            Ok(_) => (),
-            Err(e) => warn!("Creating next circuit hop failed: {}", e),
-        };
+        c.setup_circuit(req)
+            .await
+            .map(|_| ())
+            .unwrap_or_else(|e| warn!("Creating next circuit hop failed: {}", e));
     }
 }
 
-pub async fn relay_cells(
+async fn send_subscriptions(
+    _dir_client: Arc<directory_client::Client>,
+    mut c: RendezvousConnection,
+    mut pkts: Vec<SubscriptionVector>,
+) {
+    shuffle(&mut pkts);
+    for pkt in pkts {
+        let req = tonic::Request::new(pkt);
+        c.subscribe(req)
+            .await
+            .map(|_| ())
+            .unwrap_or_else(|e| warn!("Subscription failed: {}", e));
+    }
+}
+
+async fn relay_cells(
     _dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
-    cells: Vec<Cell>,
+    mut cells: Vec<Cell>,
 ) {
-    // TODO security: shuffle!
+    shuffle(&mut cells);
     for cell in cells {
         let req = tonic::Request::new(cell);
-        match c.relay(req).await {
-            Ok(_) => (),
-            Err(e) => warn!("Relaying cell failed: {}", e),
-        }
+        c.relay(req)
+            .await
+            .map(|_| ())
+            .unwrap_or_else(|e| warn!("Relaying cell failed: {}", e));
     }
+}
+
+async fn publish_cells(
+    _dir_client: Arc<directory_client::Client>,
+    mut c: RendezvousConnection,
+    mut cells: Vec<Cell>,
+) {
+    shuffle(&mut cells);
+    for cell in cells {
+        let req = tonic::Request::new(cell);
+        c.publish(req)
+            .await
+            .map(|_| ())
+            .unwrap_or_else(|e| warn!("Publishing cell failed: {}", e));
+    }
+}
+
+fn shuffle<T>(_pkts: &mut Vec<T>) {
+    // TODO security: shuffle for real!
 }
 
 define_send_task!(
@@ -175,13 +220,29 @@ define_send_task!(
     send_setup_packets
 );
 
+define_send_task!(
+    subscribe_task,
+    subscribe_tx_queue,
+    get_rendezvous_channels,
+    send_subscriptions
+);
+
 define_send_task!(relay_task, relay_tx_queue, get_mix_channels, relay_cells);
+
+define_send_task!(
+    publish_task,
+    publish_tx_queue,
+    get_rendezvous_channels,
+    publish_cells
+);
 
 pub async fn run(state: Arc<State>) {
     let setup_handle = tokio::spawn(setup_task(state.clone()));
+    let subscribe_handle = tokio::spawn(subscribe_task(state.clone()));
     let relay_handle = tokio::spawn(relay_task(state.clone()));
-    // XXX rendezvous task
-    match tokio::try_join!(setup_handle, relay_handle) {
+    let publish_handle = tokio::spawn(publish_task(state.clone()));
+
+    match tokio::try_join!(setup_handle, subscribe_handle, relay_handle, publish_handle) {
         Ok(_) => (),
         Err(e) => error!("Something panicked: {}", e),
     }
