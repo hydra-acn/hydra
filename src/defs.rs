@@ -14,7 +14,10 @@ pub type Token = u64;
 pub type CircuitId = u64;
 pub type CircuitIdSet = std::collections::BTreeSet<CircuitId>;
 pub type RoundNo = u32;
-pub const ONION_SIZE: usize = 256;
+pub const ONION_LEN: usize = 256;
+// TODO use these more often instead of magic numbers :)
+pub const SETUP_NONCE_LEN: usize = 12;
+pub const SETUP_AUTH_LEN: usize = 16;
 
 pub fn hydra_version() -> &'static str {
     option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
@@ -93,7 +96,7 @@ pub fn tokens_from_bytes(raw: &[u8]) -> Vec<Token> {
 impl Cell {
     /// creates new dummy cell
     pub fn dummy(cid: CircuitId, r: RoundNo) -> Self {
-        let mut rand_onion = vec![0; ONION_SIZE];
+        let mut rand_onion = vec![0; ONION_LEN];
         rand_bytes(&mut rand_onion).expect("Could not randomize dummy cell, better crash now");
         Cell {
             circuit_id: cid,

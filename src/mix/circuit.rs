@@ -6,7 +6,7 @@ use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::x448;
-use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token, ONION_SIZE};
+use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
 use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
@@ -353,9 +353,9 @@ impl Circuit {
         let mut cell = Cell {
             circuit_id: self.downstream_id,
             round_no: self.max_round_no,
-            onion: vec![0u8; ONION_SIZE],
+            onion: vec![0u8; ONION_LEN],
         };
-        let n = cmp::min((ONION_SIZE - 8) / 8, self.inject_cells.len()) as u8;
+        let n = cmp::min((ONION_LEN - 8) / 8, self.inject_cells.len()) as u8;
         cell.onion[0] = n;
         let mut i = 8;
         for dropped_cell in self.inject_cells.iter() {
