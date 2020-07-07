@@ -119,6 +119,10 @@ impl Rendezvous for Service {
         }
 
         for host in host_vec.iter() {
+            if cell.circuit_id == host.circuit_id {
+                // don't send cells back on the same circuit
+                continue;
+            }
             let sock_addr = host.sock_addr;
             let mut channels = self.dir_client.get_mix_channels(&[sock_addr]).await;
             let channel = unwrap_or_throw_internal!(
@@ -217,7 +221,7 @@ mod tests {
         let mut client = RendezvousClient::connect("http://127.0.0.1:9101")
             .await
             .expect("failed to connect");
-        let mut cell_to_send = Cell::dummy(5, 3);
+        let mut cell_to_send = Cell::dummy(2, 3);
         cell_to_send.set_token(12);
         let request = tonic::Request::new(cell_to_send);
         let resp = client.publish(request).await.expect("publish failed");
