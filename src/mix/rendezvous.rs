@@ -1,4 +1,5 @@
 //! Rendezvous service of a mix
+
 use log::*;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
@@ -162,89 +163,229 @@ pub async fn garbage_collector(state: Arc<State>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mix::directory_client;
+    use crate::mix::directory_client::mocks;
+    use crate::mix::*;
+    use crate::tonic_mix::mix_server::{Mix, MixServer};
+    use crate::tonic_mix::rendezvous_client::RendezvousClient;
+    use tokio::time::{self, Duration};
 
-    #[test]
-    fn test_state() {
-        let ip_addr: std::net::IpAddr = ("127.0.0.1").parse().expect("failed");
-        let local_addr: std::net::SocketAddr = ("127.0.0.1:9001").parse().expect("failed");
-        let config = directory_client::Config {
-            addr: ip_addr,
-            entry_port: 12,
-            relay_port: 33,
-            rendezvous_port: 55,
-            directory_addr: local_addr,
-        };
-        let state = Arc::new(State::new(Arc::new(directory_client::Client::new(config))));
-        let epoch: EpochNo = 1;
-        let dummy_endpoint = Endpoint {
-            sock_addr: local_addr,
-            circuit_id: 12,
-        };
-        let other_dummy_endpoint = Endpoint {
-            sock_addr: local_addr,
-            circuit_id: 20,
-        };
-        let copy_dummy_endpoint = dummy_endpoint.clone();
-        let copy_other_dummy_endpoint = other_dummy_endpoint.clone();
-        let token: Token = 2;
-        let some_not_inserted_token: Token = 1;
+    const CURRENT_COMMUNICATION_EPOCH_NO: EpochNo = 345678;
 
+    #[tokio::test]
+    async fn test_subscribe() {
+        time::delay_for(Duration::from_millis(300)).await;
+        let mut client = RendezvousClient::connect("http://127.0.0.1:9101")
+            .await
+            .expect("failed to connect");
+        let addr = vec![127, 0, 0, 1];
+        let sub_vec = vec![
+            Subscription {
+                circuit_id: 2,
+                tokens: vec![2],
+            },
+            Subscription {
+                circuit_id: 5,
+                tokens: vec![55, 12],
+            },
+        ];
+        let request = tonic::Request::new(SubscriptionVector {
+            epoch_no: CURRENT_COMMUNICATION_EPOCH_NO,
+            addr: addr.clone(),
+            port: 1200,
+            subs: sub_vec,
+        });
+        let resp = client.subscribe(request).await.expect("subscribe failed");
+        assert_eq!(resp.into_inner(), SubscribeAck {});
+
+        let sub_vec = vec![Subscription {
+            circuit_id: 2,
+            tokens: vec![4],
+        }];
+        let request = tonic::Request::new(SubscriptionVector {
+            epoch_no: CURRENT_COMMUNICATION_EPOCH_NO,
+            addr: addr,
+            port: 1200,
+            subs: sub_vec,
+        });
+        let resp = client.subscribe(request).await.expect("subscribe failed.");
+        assert_eq!(resp.into_inner(), SubscribeAck {});
+    }
+
+    #[tokio::test]
+    async fn test_publish() {
+        time::delay_for(Duration::from_millis(500)).await;
+        let mut client = RendezvousClient::connect("http://127.0.0.1:9101")
+            .await
+            .expect("failed to connect");
+        let mut cell_to_send = Cell::dummy(5, 3);
+        cell_to_send.set_token(12);
+        let request = tonic::Request::new(cell_to_send);
+        let resp = client.publish(request).await.expect("publish failed");
+        assert_eq!(resp.into_inner(), PublishAck {});
+    }
+
+    #[tokio::test]
+    async fn rendezvous_service_with_garbage_collection() {
+        let rendezvous_addr: std::net::SocketAddr = ("127.0.0.1:9101").parse().expect("failed");
+        let mix_addr: std::net::SocketAddr = ("127.0.0.1:1200").parse().expect("failed");
+
+        let mock_client = mocks::new(CURRENT_COMMUNICATION_EPOCH_NO);
+        //start mix
+        let mix_state = Arc::new(State::new());
+        let mix_to_receive_injects = spawn_service_with_shutdown(
+            mix_state.clone(),
+            mix_addr,
+            Some(time::delay_for(Duration::from_secs(5))),
+        );
+        //start rendezvous service
+        let rend_dir_client = Arc::new(mock_client);
+        let timeout = time::delay_for(Duration::from_secs(5));
+        let state = Arc::new(rendezvous::State::new(rend_dir_client.clone()));
+        let rendezvous_grpc_handle =
+            rendezvous::spawn_service_with_shutdown(state.clone(), rendezvous_addr, Some(timeout));
+        //initialize state for garbage collector test
         {
+            let mut token_map = BTreeMap::new();
+            token_map.insert(
+                34,
+                vec![Endpoint {
+                    sock_addr: mix_addr,
+                    circuit_id: 22,
+                }],
+            );
             let mut map = state
                 .tokens_per_epoch
                 .write()
                 .expect("Could not acquire lock");
-            match map.get_mut(&epoch) {
-                Some(token_map) => match token_map.get_mut(&token) {
-                    Some(vector) => vector.push(dummy_endpoint),
-                    None => {
-                        let vector = vec![dummy_endpoint];
-                        token_map.insert(token, vector);
-                    }
-                },
-                None => {
-                    let mut token_map = BTreeMap::new();
-                    let vector = vec![dummy_endpoint];
-                    token_map.insert(token, vector);
-                    map.insert(epoch, token_map);
-                }
-            };
+            map.insert(CURRENT_COMMUNICATION_EPOCH_NO - 1, token_map.clone());
+            map.insert(CURRENT_COMMUNICATION_EPOCH_NO + 1, token_map.clone());
         }
-        {
-            let mut map = state
-                .tokens_per_epoch
-                .write()
-                .expect("Could not acquire lock");
-            match map.get_mut(&epoch) {
-                Some(token_map) => match token_map.get_mut(&token) {
-                    Some(vector) => vector.push(other_dummy_endpoint),
-                    None => {
-                        let vector = vec![other_dummy_endpoint];
-                        token_map.insert(token, vector);
-                    }
-                },
-                None => {
-                    let mut token_map = BTreeMap::new();
-                    let vector = vec![other_dummy_endpoint];
-                    token_map.insert(token, vector);
-                    map.insert(epoch, token_map);
-                }
-            };
+        //start garbage_collector
+        let garbage_handle = tokio::spawn(rendezvous::garbage_collector(state.clone()));
+        if let Err(_) = tokio::time::timeout(Duration::from_secs(5), garbage_handle).await {
+        } else {
+            unreachable!();
         }
+        match tokio::try_join!(rendezvous_grpc_handle, mix_to_receive_injects) {
+            Ok(_) => (),
+            Err(e) => error!("Something failed: {}", e),
+        }
+        //test if state contains expected host and work of garbage collector
         {
             let map = state
                 .tokens_per_epoch
-                .write()
+                .read()
                 .expect("Could not acquire lock");
-            if let Some(token_map) = map.get(&epoch) {
-                assert_eq!(token_map.contains_key(&token), true);
-                assert_eq!(
-                    token_map.get(&token),
-                    Some(&vec![copy_dummy_endpoint, copy_other_dummy_endpoint])
-                );
-                assert_eq!(token_map.contains_key(&some_not_inserted_token), false);
+            let token_map = map
+                .get(&CURRENT_COMMUNICATION_EPOCH_NO)
+                .expect("Epoch not present in map");
+            let host_vec = token_map
+                .get(&55)
+                .expect("CircuitId not present in token_map");
+            assert_eq!(
+                host_vec.contains(&Endpoint {
+                    sock_addr: mix_addr,
+                    circuit_id: 5
+                }),
+                true
+            );
+            let host_vec = token_map
+                .get(&2)
+                .expect("CircuitId not present in token_map");
+            assert_eq!(
+                host_vec.contains(&Endpoint {
+                    sock_addr: mix_addr,
+                    circuit_id: 2
+                }),
+                true
+            );
+            let host_vec = token_map
+                .get(&4)
+                .expect("CircuitId not present in token_map");
+            assert_eq!(
+                host_vec.contains(&Endpoint {
+                    sock_addr: mix_addr,
+                    circuit_id: 2
+                }),
+                true
+            );
+            //verify work of garbage collector
+            assert_eq!(
+                map.contains_key(&(CURRENT_COMMUNICATION_EPOCH_NO - 1)),
+                false
+            );
+            assert_eq!(
+                map.contains_key(&(CURRENT_COMMUNICATION_EPOCH_NO + 1)),
+                true
+            );
+        }
+        //test if mix_map contains expected cells
+        {
+            let map = mix_state.storage.read().expect("Could not acquire lock");
+            assert_eq!(map.contains_key(&2), false);
+            let v = map.get(&5).expect("CircuitId not present in token_map");
+            assert_eq!(v.len(), 1);
+            let cell = v.first().expect("Empty vector, no cell present");
+            assert_eq!(cell.token(), 12);
+        }
+    }
+
+    type CellStorage = BTreeMap<CircuitId, Vec<Cell>>;
+
+    pub struct State {
+        storage: RwLock<CellStorage>,
+    }
+
+    impl State {
+        pub fn new() -> Self {
+            State {
+                storage: RwLock::new(CellStorage::new()),
             }
+        }
+    }
+
+    define_grpc_service!(Service, State, MixServer);
+
+    #[tonic::async_trait]
+    impl Mix for Service {
+        async fn setup_circuit(
+            &self,
+            _req: Request<SetupPacket>,
+        ) -> Result<Response<SetupAck>, Status> {
+            unimplemented!("Just a mock");
+        }
+
+        async fn send_and_receive(
+            &self,
+            _req: Request<Cell>,
+        ) -> Result<Response<CellVector>, Status> {
+            unimplemented!("Just a mock");
+        }
+
+        async fn late_poll(
+            &self,
+            _req: Request<LatePollRequest>,
+        ) -> Result<Response<CellVector>, Status> {
+            unimplemented!("Just a mock");
+        }
+
+        async fn relay(&self, _req: Request<Cell>) -> Result<Response<RelayAck>, Status> {
+            unimplemented!("Just a mock");
+        }
+
+        async fn inject(&self, req: Request<Cell>) -> Result<Response<InjectAck>, Status> {
+            let cell = req.into_inner();
+            let mut map = self.storage.write().expect("Could not acquire lock");
+            let mut vec;
+            match map.get_mut(&cell.circuit_id) {
+                Some(v) => {
+                    vec = v.to_vec();
+                    vec.push(cell.clone());
+                }
+                None => vec = vec![cell.clone()],
+            };
+            map.insert(cell.circuit_id, vec);
+            Ok(Response::new(InjectAck {}))
         }
     }
 }

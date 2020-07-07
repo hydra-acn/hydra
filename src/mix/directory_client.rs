@@ -420,3 +420,35 @@ impl MixInfo {
             .map(|ip| SocketAddr::new(ip, self.rendezvous_port as u16))
     }
 }
+pub mod mocks {
+    use super::*;
+    pub fn new(current_communication_epoch_no: EpochNo) -> Client {
+        let addr: std::net::IpAddr = ("127.0.0.1").parse().expect("failed");
+        let directory_addr: std::net::SocketAddr = ("127.0.0.1:9000").parse().expect("failed");
+        let config = Config {
+            addr,
+            entry_port: 9001,
+            relay_port: 9001,
+            rendezvous_port: 9101,
+            directory_addr,
+        };
+        let mock_dir_client = Client::new(config);
+
+        let current_time = current_time_in_secs();
+        let epochs_to_insert_1 = EpochInfo {
+            epoch_no: current_communication_epoch_no,
+            path_length: 0,
+            setup_start_time: current_time - 10,
+            communication_start_time: current_time,
+            number_of_rounds: 20,
+            round_duration: 1000,
+            round_waiting: 1050,
+            mixes: vec![],
+        };
+        {
+            let mut epoch_map = mock_dir_client.epochs.write().expect("Lock failure");
+            epoch_map.insert(epochs_to_insert_1.epoch_no, epochs_to_insert_1);
+        }
+        mock_dir_client
+    }
+}
