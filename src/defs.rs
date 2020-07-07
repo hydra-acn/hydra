@@ -93,6 +93,11 @@ pub fn tokens_from_bytes(raw: &[u8]) -> Vec<Token> {
     tokens
 }
 
+pub enum CellCmd {
+    Delay(u8),
+    Broadcast,
+}
+
 impl Cell {
     /// creates new dummy cell
     pub fn dummy(cid: CircuitId, r: RoundNo) -> Self {
@@ -111,6 +116,34 @@ impl Cell {
 
     pub fn set_token(&mut self, token: Token) {
         LittleEndian::write_u64(&mut self.onion[8..16], token)
+    }
+
+    pub fn command(&self) -> Option<CellCmd> {
+        let cmd_slice = &self.onion[1..8];
+        if cmd_slice.iter().all(|b| *b == 0) {
+            Some(CellCmd::Delay(self.onion[0]))
+        } else if self.onion[0] == 255 && cmd_slice.iter().all(|b| *b == 255) {
+            Some(CellCmd::Broadcast)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_command(&mut self, cmd: CellCmd) {
+        let args_cmd_slice = &mut self.onion[0..8];
+        match cmd {
+            CellCmd::Delay(rounds) => {
+                for b in args_cmd_slice.iter_mut() {
+                    *b = 0;
+                }
+                args_cmd_slice[0] = rounds;
+            }
+            CellCmd::Broadcast => {
+                for b in args_cmd_slice.iter_mut() {
+                    *b = 255;
+                }
+            }
+        }
     }
 }
 

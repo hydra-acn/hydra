@@ -6,14 +6,14 @@ use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::x448;
-use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
+use crate::defs::{tokens_from_bytes, CellCmd, CircuitId, RoundNo, Token, ONION_LEN};
 use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::MixInfo;
 use crate::tonic_mix::*;
 
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+use byteorder::{ByteOrder, LittleEndian};
 use log::*;
 use openssl::rand::rand_bytes;
 use rand::seq::IteratorRandom;
@@ -220,16 +220,13 @@ impl Circuit {
 
                 // TODO we could skip the check if we use a delayed cell
                 // read command
-                let mut rdr = std::io::Cursor::new(&cell.onion[0..8]);
-                let cmd = rdr
-                    .read_u64::<LittleEndian>()
-                    .expect("Why should this fail?");
-                if cmd < 256 {
+                if let Some(CellCmd::Delay(rounds)) = cell.command() {
                     // we shall delay the cell -> forward dummy instead
                     let dummy = Cell::dummy(cell.circuit_id, cell.round_no);
                     // randomize cmd of original cell
                     rand_bytes(&mut cell.onion[0..8]).expect("Cell randomization failed");
-                    self.delayed_cells.insert(cell.round_no + cmd as u32, cell);
+                    self.delayed_cells
+                        .insert(cell.round_no + rounds as u32, cell);
                     cell = dummy;
                 }
 
@@ -525,6 +522,8 @@ impl ClientCircuit {
             .choose(rng)
             .expect("Expected at least one token");
         cell.set_token(*token);
+        // for now, we want the cell echoed back by the rendezvous service
+        cell.set_command(CellCmd::Broadcast);
         if self.sent_cell.is_some() {
             warn!(
                 "Seems like we did not get the last cell back on client circuit {}",

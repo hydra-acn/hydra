@@ -9,7 +9,7 @@ use tokio::time::{delay_for, Duration};
 use tonic::{Request, Response, Status};
 
 use super::directory_client;
-use crate::defs::{CircuitId, Token};
+use crate::defs::{CellCmd, CircuitId, Token};
 use crate::epoch::EpochNo;
 use crate::net::socket_addr_from_slice;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
@@ -120,8 +120,11 @@ impl Rendezvous for Service {
 
         for host in host_vec.iter() {
             if cell.circuit_id == host.circuit_id {
-                // don't send cells back on the same circuit
-                continue;
+                // don't send cells back on the same circuit, except when asked to
+                if let Some(CellCmd::Broadcast) = cell.command() {
+                } else {
+                    continue;
+                }
             }
             let sock_addr = host.sock_addr;
             let mut channels = self.dir_client.get_mix_channels(&[sock_addr]).await;
