@@ -41,31 +41,53 @@ macro_rules! define_grpc_service {
             }
         }
 
-        pub fn spawn_service(
+        pub async fn spawn_service(
             state: std::sync::Arc<State>,
             addr: std::net::SocketAddr,
-        ) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
+        ) -> Result<
+            (
+                tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+                std::net::SocketAddr,
+            ),
+            crate::error::Error,
+        > {
             spawn_service_with_shutdown::<futures_util::future::Ready<()>>(
                 state.clone(),
                 addr,
                 None,
-            )
+            ).await
         }
 
-        pub fn spawn_service_with_shutdown<F: std::future::Future<Output = ()> + Send + 'static>(
+        pub async fn spawn_service_with_shutdown<
+            F: std::future::Future<Output = ()> + Send + 'static,
+        >(
             state: std::sync::Arc<State>,
             addr: std::net::SocketAddr,
             shutdown_signal: Option<F>,
-        ) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
+        ) -> Result<
+            (
+                tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+                std::net::SocketAddr,
+            ),
+            crate::error::Error,
+        > {
             let service = $service_type {
                 state: state.clone(),
             };
             let builder =
                 tonic::transport::Server::builder().add_service($server_type::new(service));
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            let local_endpoint = listener.local_addr()?;
 
             match shutdown_signal {
-                Some(s) => tokio::spawn(builder.serve_with_shutdown(addr, s)),
-                None => tokio::spawn(builder.serve(addr)),
+                Some(s) => Ok((
+                    tokio::spawn(builder.serve_with_incoming_shutdown(listener, s)),
+                    local_endpoint,
+                )),
+                None => Ok((
+                    tokio::spawn(builder.serve_with_incoming(listener)),
+                    local_endpoint,
+                )),
             }
         }
     };

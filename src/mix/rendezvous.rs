@@ -239,17 +239,21 @@ mod tests {
         let mock_client = mocks::new(CURRENT_COMMUNICATION_EPOCH_NO);
         //start mix
         let mix_state = Arc::new(State::new());
-        let mix_to_receive_injects = spawn_service_with_shutdown(
+        let (mix_handle, _) = spawn_service_with_shutdown(
             mix_state.clone(),
             mix_addr,
             Some(time::delay_for(Duration::from_secs(5))),
-        );
+        )
+        .await
+        .expect("Spawn failed");
         //start rendezvous service
         let rend_dir_client = Arc::new(mock_client);
         let timeout = time::delay_for(Duration::from_secs(5));
         let state = Arc::new(rendezvous::State::new(rend_dir_client.clone()));
-        let rendezvous_grpc_handle =
-            rendezvous::spawn_service_with_shutdown(state.clone(), rendezvous_addr, Some(timeout));
+        let (rendezvous_grpc_handle, _) =
+            rendezvous::spawn_service_with_shutdown(state.clone(), rendezvous_addr, Some(timeout))
+                .await
+                .expect("Spawn failed");
         //initialize state for garbage collector test
         {
             let mut token_map = BTreeMap::new();
@@ -273,7 +277,7 @@ mod tests {
         } else {
             unreachable!();
         }
-        match tokio::try_join!(rendezvous_grpc_handle, mix_to_receive_injects) {
+        match tokio::try_join!(rendezvous_grpc_handle, mix_handle) {
             Ok(_) => (),
             Err(e) => error!("Something failed: {}", e),
         }

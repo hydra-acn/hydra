@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(State::new(config));
 
     let local_addr = format!("{}:9000", args.value_of("addr").unwrap()).parse()?;
-    let grpc_handle = grpc::spawn_service(state.clone(), local_addr);
+    let (grpc_handle, _) = grpc::spawn_service(state.clone(), local_addr).await?;
 
     let update_handle = tokio::spawn(state::update_loop(state.clone()));
 

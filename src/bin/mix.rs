@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.is_present("simple") {
         // simple relay only
         let state = Arc::new(simple_relay::State::new());
-        let grpc_handle = simple_relay::spawn_service(state.clone(), mix_addr);
+        let (grpc_handle, _) = simple_relay::spawn_service(state.clone(), mix_addr).await?;
         let garbage_handle = tokio::spawn(simple_relay::garbage_collector(state.clone()));
 
         match tokio::try_join!(
@@ -83,12 +83,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup_rx_queue_senders,
             cell_rx_queue_senders,
         ));
-        let mix_grpc_handle = mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr);
+        let (mix_grpc_handle, _) =
+            mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr).await?;
 
         // setup rendezvous gRPC
         let rendezvous_grpc_state = Arc::new(mix::rendezvous::State::new(dir_client.clone()));
-        let rendezvous_grpc_handle =
-            mix::rendezvous::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr);
+        let (rendezvous_grpc_handle, _) =
+            mix::rendezvous::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr).await?;
 
         // setup channels for communication between main worker and sender
         let (setup_sender, setup_receiver) = spmc::channel();

@@ -28,8 +28,10 @@ fn integration() {
         let port = 4242u16;
         let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
         let timeout = time::delay_for(Duration::from_secs(2));
-        let grpc_handle =
-            grpc::spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout));
+        let (grpc_handle, _) =
+            grpc::spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout))
+                .await
+                .expect("Spawning failed");
 
         let client_handle = tokio::spawn(client_task(state.clone(), port));
 

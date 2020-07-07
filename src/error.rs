@@ -7,6 +7,8 @@ use tonic;
 pub enum Error {
     /// something in OpenSSL went wrong
     OpenSslError(String),
+    /// IoError
+    IoError(String),
     /// some size mismatch (e.g. for keys)
     SizeMismatch(String),
     /// error due to wrong user input
@@ -21,6 +23,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::OpenSslError(msg) => write!(f, "OpenSSL error: {}", msg),
+            Error::IoError(msg) => write!(f, "IO error: {}", msg),
             Error::SizeMismatch(msg) => write!(f, "Size mismatch: {}", msg),
             Error::InputError(msg) => write!(f, "Input error: {}", msg),
             Error::ExternalError(msg) => write!(f, "External error: {}", msg),
@@ -54,5 +57,11 @@ impl std::convert::From<hkdf::InvalidLength> for Error {
 impl std::convert::From<tonic::transport::Error> for Error {
     fn from(e: tonic::transport::Error) -> Self {
         Error::ExternalError(e.to_string())
+    }
+}
+
+impl std::convert::From<tokio::io::Error> for Error {
+    fn from(e: tokio::io::Error) -> Self {
+        Error::IoError(e.to_string())
     }
 }

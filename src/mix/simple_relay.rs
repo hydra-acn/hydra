@@ -357,7 +357,10 @@ mod tests {
         }
         let local_addr: std::net::SocketAddr = ("127.0.0.1:9001").parse().expect("failed to parse");
         let timeout = time::delay_for(Duration::from_secs(5));
-        let grpc_handle = spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout));
+        let (grpc_handle, _) =
+            spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout))
+                .await
+                .expect("Spawn failed");
         let garbage_handle = tokio::spawn(simple_relay::garbage_collector(state.clone()));
         if let Err(_) = tokio::time::timeout(Duration::from_secs(5), garbage_handle).await {
         } else {
