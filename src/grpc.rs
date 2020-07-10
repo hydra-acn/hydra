@@ -41,6 +41,7 @@ macro_rules! define_grpc_service {
             }
         }
 
+        #[allow(dead_code)]
         pub async fn spawn_service(
             state: std::sync::Arc<State>,
             addr: std::net::SocketAddr,
