@@ -174,14 +174,18 @@ mod tests {
     use crate::mix::*;
     use crate::tonic_mix::mix_server::{Mix, MixServer};
     use crate::tonic_mix::rendezvous_client::RendezvousClient;
+    use std::net::SocketAddr;
     use tokio::time::{self, Duration};
 
     const CURRENT_COMMUNICATION_EPOCH_NO: EpochNo = 345678;
 
-    #[tokio::test]
-    async fn test_subscribe() {
-        time::delay_for(Duration::from_millis(300)).await;
-        let mut client = RendezvousClient::connect("http://127.0.0.1:9101")
+    async fn test_publish_subscribe(
+        rendezvous_addr: SocketAddr,
+        mix_addr: SocketAddr,
+        mix_state: Arc<State>,
+    ) {
+        time::delay_for(Duration::from_millis(100)).await;
+        let mut client = RendezvousClient::connect(format!("http://{}", rendezvous_addr))
             .await
             .expect("failed to connect");
         let addr = vec![127, 0, 0, 1];
@@ -198,7 +202,7 @@ mod tests {
         let request = tonic::Request::new(SubscriptionVector {
             epoch_no: CURRENT_COMMUNICATION_EPOCH_NO,
             addr: addr.clone(),
-            port: 1200,
+            port: mix_addr.port() as u32,
             subs: sub_vec,
         });
         let resp = client.subscribe(request).await.expect("subscribe failed");
@@ -211,35 +215,72 @@ mod tests {
         let request = tonic::Request::new(SubscriptionVector {
             epoch_no: CURRENT_COMMUNICATION_EPOCH_NO,
             addr: addr,
-            port: 1200,
+            port: mix_addr.port() as u32,
             subs: sub_vec,
         });
         let resp = client.subscribe(request).await.expect("subscribe failed.");
         assert_eq!(resp.into_inner(), SubscribeAck {});
-    }
 
-    #[tokio::test]
-    async fn test_publish() {
-        time::delay_for(Duration::from_millis(500)).await;
-        let mut client = RendezvousClient::connect("http://127.0.0.1:9101")
-            .await
-            .expect("failed to connect");
+        //test publish
+        time::delay_for(Duration::from_millis(100)).await;
         let mut cell_to_send = Cell::dummy(2, 3);
         cell_to_send.set_token(12);
-        let request = tonic::Request::new(cell_to_send);
-        let resp = client.publish(request).await.expect("publish failed");
+        let resp = client
+            .publish(tonic::Request::new(cell_to_send))
+            .await
+            .expect("publish failed");
         assert_eq!(resp.into_inner(), PublishAck {});
+        //test if mix_map contains expected cells
+        time::delay_for(Duration::from_millis(100)).await;
+        {
+            let map = mix_state.storage.read().expect("Could not acquire lock");
+            assert_eq!(map.contains_key(&2), false);
+            let v = map.get(&5).expect("CircuitId not present in token_map");
+            assert_eq!(v.len(), 1);
+            let cell = v.first().expect("Empty vector, no cell present");
+            assert_eq!(cell.token(), 12);
+        }
+        //test publish on same circuit without broadcast
+        let mut cell_to_send = Cell::dummy(2, 3);
+        cell_to_send.set_token(2);
+        let resp = client
+            .publish(tonic::Request::new(cell_to_send))
+            .await
+            .expect("publish failed");
+        assert_eq!(resp.into_inner(), PublishAck {});
+        //test if mix_map is not containing cell
+        time::delay_for(Duration::from_millis(100)).await;
+        {
+            let map = mix_state.storage.read().expect("Could not acquire lock");
+            assert_eq!(map.contains_key(&2), false);
+        }
+        //test publish on same circuit with broadcast
+        let mut cell_to_send = Cell::dummy(2, 3);
+        cell_to_send.set_token(2);
+        cell_to_send.set_command(CellCmd::Broadcast);
+        let resp = client
+            .publish(tonic::Request::new(cell_to_send))
+            .await
+            .expect("publish failed");
+        assert_eq!(resp.into_inner(), PublishAck {});
+        //test if mix_map contains expected cell
+        time::delay_for(Duration::from_millis(100)).await;
+
+        {
+            let map = mix_state.storage.read().expect("Could not acquire lock");
+            assert_eq!(map.contains_key(&2), true);
+        }
     }
 
     #[tokio::test]
     async fn rendezvous_service_with_garbage_collection() {
-        let rendezvous_addr: std::net::SocketAddr = ("127.0.0.1:9101").parse().expect("failed");
-        let mix_addr: std::net::SocketAddr = ("127.0.0.1:1200").parse().expect("failed");
+        let rendezvous_addr: std::net::SocketAddr = ("127.0.0.1:0").parse().expect("failed");
+        let mix_addr: std::net::SocketAddr = ("127.0.0.1:0").parse().expect("failed");
 
         let mock_client = mocks::new(CURRENT_COMMUNICATION_EPOCH_NO);
         //start mix
         let mix_state = Arc::new(State::new());
-        let (mix_handle, _) = spawn_service_with_shutdown(
+        let (mix_handle, mix_addr) = spawn_service_with_shutdown(
             mix_state.clone(),
             mix_addr,
             Some(time::delay_for(Duration::from_secs(5))),
@@ -250,7 +291,7 @@ mod tests {
         let rend_dir_client = Arc::new(mock_client);
         let timeout = time::delay_for(Duration::from_secs(5));
         let state = Arc::new(rendezvous::State::new(rend_dir_client.clone()));
-        let (rendezvous_grpc_handle, _) =
+        let (rendezvous_grpc_handle, rendezvous_addr) =
             rendezvous::spawn_service_with_shutdown(state.clone(), rendezvous_addr, Some(timeout))
                 .await
                 .expect("Spawn failed");
@@ -273,14 +314,21 @@ mod tests {
         }
         //start garbage_collector
         let garbage_handle = tokio::spawn(rendezvous::garbage_collector(state.clone()));
-        if let Err(_) = tokio::time::timeout(Duration::from_secs(5), garbage_handle).await {
+        if let Err(_) = tokio::time::timeout(Duration::from_secs(2), garbage_handle).await {
         } else {
             unreachable!();
         }
-        match tokio::try_join!(rendezvous_grpc_handle, mix_handle) {
+        //publish and subscribe
+        let pubsub_handle = tokio::spawn(test_publish_subscribe(
+            rendezvous_addr,
+            mix_addr,
+            mix_state.clone(),
+        ));
+        match tokio::try_join!(rendezvous_grpc_handle, mix_handle, pubsub_handle) {
             Ok(_) => (),
-            Err(e) => error!("Something failed: {}", e),
+            Err(e) => panic!("Something failed: {}", e),
         }
+
         //test if state contains expected host and work of garbage collector
         {
             let map = state
@@ -329,15 +377,6 @@ mod tests {
                 map.contains_key(&(CURRENT_COMMUNICATION_EPOCH_NO + 1)),
                 true
             );
-        }
-        //test if mix_map contains expected cells
-        {
-            let map = mix_state.storage.read().expect("Could not acquire lock");
-            assert_eq!(map.contains_key(&2), false);
-            let v = map.get(&5).expect("CircuitId not present in token_map");
-            assert_eq!(v.len(), 1);
-            let cell = v.first().expect("Empty vector, no cell present");
-            assert_eq!(cell.token(), 12);
         }
     }
 

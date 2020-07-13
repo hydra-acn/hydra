@@ -56,7 +56,8 @@ macro_rules! define_grpc_service {
                 state.clone(),
                 addr,
                 None,
-            ).await
+            )
+            .await
         }
 
         pub async fn spawn_service_with_shutdown<

@@ -225,95 +225,67 @@ mod tests {
         assert_eq!(false, cell.eq(&other_cell));
     }
 
-    #[tokio::test]
-    async fn send_dummy_cell() {
-        time::delay_for(Duration::from_millis(1000)).await;
-        let mut client = SimpleRelayClient::connect("http://127.0.0.1:9001")
+    async fn test_send_and_receive(addr: std::net::SocketAddr) {
+        time::delay_for(Duration::from_millis(100)).await;
+        //initialize client
+        let mut client = SimpleRelayClient::connect(format!("http://{}", addr))
             .await
             .expect("failed to connect");
-
+        //initialize dummy cell
         let mut my_dummy_cell = Cell::dummy(21, 3);
         let working_cell = my_dummy_cell.clone();
-        let send_onion = working_cell.onion;
-
+        let sent_onion = working_cell.onion;
         let token = my_dummy_cell.token();
-
+        //send valid request
         let request = tonic::Request::new(RelayRequest {
             cell: Some(my_dummy_cell),
             tokens: Vec::new(),
         });
-
         let response = client
             .send_and_receive(request)
             .await
             .expect("Send Receive failed");
-
         let empty_resp_cell: Cell = std::option::Option::unwrap(response.into_inner().cells.pop());
         assert_eq!(empty_resp_cell.circuit_id, 21);
-
+        //send another dummy cell to get first cell back
         my_dummy_cell = Cell::dummy(1, 3);
-
         let request = tonic::Request::new(RelayRequest {
             cell: Some(my_dummy_cell),
             tokens: vec![token],
         });
-
         let response = client
             .send_and_receive(request)
             .await
             .expect("Send Receive failed");
         let resp_cell = std::option::Option::unwrap(response.into_inner().cells.pop());
-
-        assert_eq!(resp_cell.onion, send_onion);
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "Cell has wrong size")]
-    async fn send_too_short_onion() {
-        time::delay_for(Duration::from_millis(300)).await;
-        let mut client = SimpleRelayClient::connect("http://127.0.0.1:9001")
-            .await
-            .expect("failed to connect");
-
+        assert_eq!(resp_cell.onion, sent_onion);
+        //send a too short cell
         let my_short_cell = Cell {
             circuit_id: 1,
             round_no: 1,
             onion: vec![3],
         };
-
         let request = tonic::Request::new(RelayRequest {
             cell: Some(my_short_cell),
             tokens: vec![2],
         });
-
-        client
-            .send_and_receive(request)
-            .await
-            .expect("Send Receive failed");
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "You have to send a cell each round")]
-    async fn send_none() {
-        time::delay_for(Duration::from_millis(100)).await;
-
-        let mut client = SimpleRelayClient::connect("http://127.0.0.1:9001")
-            .await
-            .expect("failed to connect");
-
+        expect_specific_fail(
+            client.send_and_receive(request).await,
+            "Cell has wrong size",
+        );
+        //send request without cell
         let request = tonic::Request::new(RelayRequest {
             cell: None,
             tokens: vec![1],
         });
-
-        client
-            .send_and_receive(request)
-            .await
-            .expect("Send Receive failed");
+        expect_specific_fail(
+            client.send_and_receive(request).await,
+            "You have to send a cell each round",
+        );
     }
 
     #[tokio::test]
-    async fn start_garbage_collector_and_server_for_testing() {
+    async fn test_simple_relay_and_garbage_collector() {
         //insert timestamped cell that should be deleted by the garbage collector
         let timestamp = current_time_in_secs() - (24 * 3600 + 33);
         let cell_to_discard = Cell::dummy(2, 3);
@@ -355,21 +327,25 @@ mod tests {
                 }
             };
         }
-        let local_addr: std::net::SocketAddr = ("127.0.0.1:9001").parse().expect("failed to parse");
-        let timeout = time::delay_for(Duration::from_secs(5));
-        let (grpc_handle, _) =
+        //start server and garbage collector
+        let local_addr: std::net::SocketAddr = ("127.0.0.1:0").parse().expect("failed to parse");
+        let timeout = time::delay_for(Duration::from_secs(2));
+        let (grpc_handle, local_addr) =
             spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout))
                 .await
                 .expect("Spawn failed");
         let garbage_handle = tokio::spawn(simple_relay::garbage_collector(state.clone()));
-        if let Err(_) = tokio::time::timeout(Duration::from_secs(5), garbage_handle).await {
+        if let Err(_) = tokio::time::timeout(Duration::from_secs(1), garbage_handle).await {
         } else {
             unreachable!();
         }
-        match tokio::try_join!(grpc_handle) {
+        //send test cells
+        let client_handle = tokio::spawn(test_send_and_receive(local_addr));
+        match tokio::try_join!(grpc_handle, client_handle) {
             Ok(_) => (),
-            Err(e) => error!("Something failed: {}", e),
+            Err(e) => panic!("Something failed: {}", e),
         }
+        //verify work of garbage collector
         {
             let mut cell_to_discard_in_tree = true;
             let mut cell_to_keep_in_tree = false;
@@ -382,6 +358,12 @@ mod tests {
             }
             assert_eq!(cell_to_discard_in_tree, false);
             assert_eq!(cell_to_keep_in_tree, true);
+        }
+    }
+    fn expect_specific_fail<T>(reply: Result<T, tonic::Status>, msg: &str) {
+        match reply {
+            Ok(_) => panic!("Expected fail did not occure"),
+            Err(e) => assert_eq!(format!("{}", e.message()), msg),
         }
     }
 }

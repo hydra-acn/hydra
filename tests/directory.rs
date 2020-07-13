@@ -25,15 +25,14 @@ fn integration() {
         let state = Arc::new(State::default());
 
         // TODO use ephemeral port
-        let port = 4242u16;
-        let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
         let timeout = time::delay_for(Duration::from_secs(2));
-        let (grpc_handle, _) =
+        let (grpc_handle, local_addr) =
             grpc::spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout))
                 .await
                 .expect("Spawning failed");
 
-        let client_handle = tokio::spawn(client_task(state.clone(), port));
+        let client_handle = tokio::spawn(client_task(state.clone(), local_addr.port()));
 
         let _ = tokio::try_join!(grpc_handle, client_handle).expect("Something failed");
     })
