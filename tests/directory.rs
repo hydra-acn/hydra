@@ -24,7 +24,6 @@ fn integration() {
     rt.block_on(async {
         let state = Arc::new(State::default());
 
-        // TODO use ephemeral port
         let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
         let timeout = time::delay_for(Duration::from_secs(2));
         let (grpc_handle, local_addr) =
