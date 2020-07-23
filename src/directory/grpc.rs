@@ -2,8 +2,9 @@ use log::*;
 use std::collections::{BTreeMap, BTreeSet};
 use tonic::{Request, Response, Status};
 
-use crate::crypto::key::Key;
+use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
+use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE};
 use crate::epoch::{current_epoch_no, EpochNo};
 use crate::grpc::valid_request_check;
 use crate::tonic_directory::directory_server::DirectoryServer;
@@ -22,7 +23,13 @@ impl directory_server::Directory for Service {
     ) -> Result<Response<RegisterReply>, Status> {
         let msg = req.into_inner();
         let pk_mix = Key::move_from_vec(msg.public_dh);
-        let (pk, s) = key_exchange(&pk_mix)?;
+        let (pk, shared_secret) = key_exchange(&pk_mix)?;
+        let auth_key = hkdf_sha256(
+            &shared_secret,
+            None,
+            Some(DIR_AUTH_KEY_INFO),
+            DIR_AUTH_KEY_SIZE,
+        )?;
 
         let fingerprint = msg.fingerprint;
         let addr = crate::net::ip_addr_from_slice(&msg.address)?;
@@ -48,7 +55,7 @@ impl directory_server::Directory for Service {
 
             let mix = Mix {
                 fingerprint: fingerprint.clone(),
-                shared_key: s,
+                auth_key,
                 addr,
                 entry_port: msg.entry_port as u16, // checked range above
                 relay_port: msg.relay_port as u16, // checked range above

@@ -130,7 +130,7 @@ impl Config {
 
 pub struct Mix {
     pub fingerprint: String,
-    pub shared_key: Key,
+    pub auth_key: Key,
     pub addr: IpAddr,
     pub entry_port: u16,
     pub relay_port: u16,

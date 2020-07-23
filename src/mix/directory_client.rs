@@ -9,9 +9,9 @@ use tokio::time::{delay_for, Duration};
 use tonic::Status;
 
 use super::channel_pool::ChannelPool;
-use crate::crypto::key::Key;
+use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
-use crate::defs::Token;
+use crate::defs::{Token, DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE};
 use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;
@@ -78,8 +78,8 @@ pub struct Client {
     pk: Key,
     config: Config,
     endpoint: String,
-    /// shared key with the directory server
-    shared_key: RwLock<Option<Key>>,
+    /// shared key for authentication at the directory server
+    auth_key: RwLock<Option<Key>>,
     epochs: RwLock<BTreeMap<EpochNo, EpochInfo>>,
     /// ephemeral keys
     keys: RwLock<BTreeMap<EpochNo, (Key, Key)>>,
@@ -102,7 +102,7 @@ impl Client {
             pk,
             config,
             endpoint,
-            shared_key: RwLock::new(None),
+            auth_key: RwLock::new(None),
             epochs: RwLock::new(BTreeMap::new()),
             keys: RwLock::new(BTreeMap::new()),
             key_count: AtomicU32::new(0),
@@ -190,14 +190,21 @@ impl Client {
             Ok(r) => {
                 info!("Registration successful");
                 let pk = Key::move_from_vec(r.into_inner().public_dh);
-                match x448::generate_shared_secret(&pk, &self.sk) {
-                    Ok(s) => *self.shared_key.write().expect("Lock failure") = Some(s),
-                    Err(e) => warn!(".. but key exchange with directory failed: {}", e),
-                }
+                let shared_secret = x448::generate_shared_secret(&pk, &self.sk)
+                    .expect("Key exchange with directory failed");
+                let auth_key = hkdf_sha256(
+                    &shared_secret,
+                    None,
+                    Some(DIR_AUTH_KEY_INFO),
+                    DIR_AUTH_KEY_SIZE,
+                )
+                .expect("Key exchange with directory failed");
+                *self.auth_key.write().expect("Lock failure") = Some(auth_key);
             }
             Err(status) => match status.code() {
                 tonic::Code::InvalidArgument if status.message().contains("registered") => {
-                    info!("Seems like we are already registered")
+                    info!("Seems like we are already registered");
+                    unimplemented!("We have to load the auth key from disk here!");
                 }
                 _ => panic!("Register failed with unexpected reason: {}", status),
             },

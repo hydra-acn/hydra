@@ -14,7 +14,12 @@ pub type Token = u64;
 pub type CircuitId = u64;
 pub type CircuitIdSet = std::collections::BTreeSet<CircuitId>;
 pub type RoundNo = u32;
+
+pub const DIR_AUTH_KEY_SIZE: usize = 32;
+pub const DIR_AUTH_KEY_INFO: &[u8; 4] = b"auth";
+
 pub const ONION_LEN: usize = 256;
+
 // TODO use these more often instead of magic numbers :)
 pub const SETUP_NONCE_LEN: usize = 12;
 pub const SETUP_AUTH_LEN: usize = 16;
