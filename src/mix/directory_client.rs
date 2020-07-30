@@ -1,5 +1,7 @@
+use hmac::{Hmac, Mac, NewMac};
 use log::*;
 use rand::seq::SliceRandom;
+use sha2::Sha256;
 use std::cmp;
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
@@ -11,7 +13,7 @@ use tonic::Status;
 use super::channel_pool::ChannelPool;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
-use crate::defs::{Token, DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE};
+use crate::defs::{Token, DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;
@@ -220,13 +222,22 @@ impl Client {
     }
 
     pub async fn unregister(&self) {
+        let mut mac = Hmac::<Sha256>::new_varkey(
+            self.auth_key
+                .read()
+                .expect("Lock poisoned")
+                .as_ref()
+                .expect("No auth_key")
+                .borrow_raw(),
+        )
+        .expect("Initialising mac failed");
+        mac.update(DIR_AUTH_UNREGISTER);
         let mut conn = DirectoryClient::connect(self.endpoint.clone())
             .await
             .expect("Connection for unregistration failed");
         let request = UnregisterRequest {
             fingerprint: self.fingerprint.clone(),
-            // TODO set auth tag appropriately
-            auth_tag: Vec::new(),
+            auth_tag: mac.finalize().into_bytes().to_vec(),
         };
         conn.unregister(request)
             .await
@@ -310,11 +321,24 @@ impl Client {
     /// create ephemeral key pair and send the public key to the directory service
     pub async fn create_ephemeral_dh(&self, conn: &mut DirectoryChannel) {
         let (pk, sk) = x448::generate_keypair().expect("keygen failed");
+        //generate mac
+        let mut mac = Hmac::<Sha256>::new_varkey(
+            self.auth_key
+                .read()
+                .expect("Lock poisoned")
+                .as_ref()
+                .expect("No auth_key")
+                .borrow_raw(),
+        )
+        .expect("Initialising mac failed");
+        let counter = self.key_count.fetch_add(1, Ordering::Relaxed);
+        mac.update(&counter.to_le_bytes());
+        mac.update(pk.borrow_raw());
         let dh_msg = DhMessage {
             fingerprint: self.fingerprint.clone(),
-            counter: self.key_count.load(Ordering::Relaxed),
+            counter,
             public_dh: pk.clone_to_vec(),
-            auth_tag: Vec::new(), // TODO gen auth tag
+            auth_tag: mac.finalize().into_bytes().to_vec(),
         };
         let epoch_no = match conn.add_static_dh(dh_msg).await {
             Ok(ack) => ack.into_inner().epoch_no,
@@ -325,7 +349,6 @@ impl Client {
         };
         let mut key_map = self.keys.write().expect("Lock failure");
         key_map.insert(epoch_no, (pk, sk));
-        self.key_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// check if we own an ephemeral DH key for the given epoch

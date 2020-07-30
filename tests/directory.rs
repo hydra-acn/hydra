@@ -1,10 +1,15 @@
-use hydra::crypto::key::Key;
+use hmac::{Hmac, Mac, NewMac};
+use hydra::crypto::key::{hkdf_sha256, Key};
 use hydra::crypto::x448;
+use hydra::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use hydra::directory::grpc;
 use hydra::directory::state::State;
 use hydra::epoch::MAX_EPOCH_NO;
 use hydra::tonic_directory::directory_client::DirectoryClient;
-use hydra::tonic_directory::{DhMessage, DirectoryRequest, RegisterRequest};
+use hydra::tonic_directory::{
+    DhMessage, DirectoryRequest, RegisterRequest, UnregisterAck, UnregisterRequest,
+};
+use sha2::Sha256;
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -49,17 +54,34 @@ async fn client_task(state: Arc<State>, port: u16) {
 
     // test some successful registers
     let m = 4;
+    let mut mix_key_vec = vec![];
     for i in 1..=m {
-        register_mix(&mut client, i).await;
+        mix_key_vec.push(register_mix(&mut client, i).await);
     }
 
     // mapping (mix index, counter) to their sent public keys
     let mut pk_map: BTreeMap<(u8, u32), Key> = BTreeMap::new();
 
+    // test send of public DH key with wrong auth_tag
+    let counter: u32 = 0;
+    let mut bad_mac = Hmac::<Sha256>::new_varkey(mix_key_vec[(1) as usize].borrow_raw())
+        .expect("Initialising bad_mac failed");
+    bad_mac.update(&counter.to_le_bytes());
+    bad_mac.update(dummy_key.borrow_raw());
+    let bad_msg = create_dh_msg(1, counter, &dummy_key, &bad_mac.finalize().into_bytes());
+    expect_fail(&client.add_static_dh(Request::new(bad_msg)).await);
+
     // test some successful sends of public DH keys
     for i in 1..=m {
         for ctr in 0..config.epochs_in_advance - 1 {
-            send_pk(&mut client, i, ctr.into(), &mut pk_map).await;
+            send_pk(
+                &mut client,
+                i,
+                ctr.into(),
+                &mut pk_map,
+                mix_key_vec[(i - 1) as usize].clone(),
+            )
+            .await;
         }
     }
 
@@ -88,11 +110,20 @@ async fn client_task(state: Arc<State>, port: u16) {
     expect_fail(&client.register(Request::new(bad_info)).await);
 
     // test bad fingerprint for adding public DH key
-    let bad_msg = create_dh_msg(m + 1, 0, &dummy_key);
+    let bad_msg = create_dh_msg(m + 1, 0, &dummy_key, &vec![]);
     expect_fail(&client.add_static_dh(Request::new(bad_msg)).await);
 
     // test bad key len for adding public DH key
-    let bad_msg = create_dh_msg(1, 0, &bad_key);
+    let bad_msg = create_dh_msg(1, 0, &bad_key, &vec![]);
+    expect_fail(&client.add_static_dh(Request::new(bad_msg)).await);
+
+    // test send of public DH key with old counter
+    let counter: u32 = 0;
+    let mut bad_mac = Hmac::<Sha256>::new_varkey(mix_key_vec[(0) as usize].borrow_raw())
+        .expect("Initialising bad_mac failed");
+    bad_mac.update(&counter.to_le_bytes());
+    bad_mac.update(dummy_key.borrow_raw());
+    let bad_msg = create_dh_msg(1, counter, &dummy_key, &bad_mac.finalize().into_bytes());
     expect_fail(&client.add_static_dh(Request::new(bad_msg)).await);
 
     // explicitly run epoch update
@@ -190,17 +221,44 @@ async fn client_task(state: Arc<State>, port: u16) {
         last_setup_start = epoch.setup_start_time;
         last_comm_start = epoch.communication_start_time;
     }
+
+    // test unregister with bad mac
+    let mut bad_mac = Hmac::<Sha256>::new_varkey(mix_key_vec[(1) as usize].borrow_raw())
+        .expect("Initialising bad_mac failed");
+    bad_mac.update(DIR_AUTH_UNREGISTER);
+    let bad_info = create_unregister_request(1, &bad_mac.finalize().into_bytes().to_vec());
+    expect_fail(&client.unregister(Request::new(bad_info)).await);
+
+    // test successful unregister
+    let mut mac = Hmac::<Sha256>::new_varkey(&mix_key_vec[(0) as usize].borrow_raw())
+        .expect("Initialising mac failed");
+    mac.update(DIR_AUTH_UNREGISTER);
+    let info = create_unregister_request(1, &mac.finalize().into_bytes().to_vec());
+    let resp = client.unregister(Request::new(info)).await;
+    assert_eq!(resp.unwrap().into_inner(), UnregisterAck {});
 }
 
-async fn register_mix(client: &mut DirectoryClient<tonic::transport::Channel>, index: u8) {
-    let (pk, _) = x448::generate_keypair().expect("Key gen failed");
+async fn register_mix(client: &mut DirectoryClient<tonic::transport::Channel>, index: u8) -> Key {
+    let (pk, sk) = x448::generate_keypair().expect("Key gen failed");
     let req = Request::new(create_register_request(index, &pk));
     let reply = client
         .register(req)
         .await
         .expect("Register failed")
         .into_inner();
-    assert_eq!(reply.public_dh.len(), pk.len());
+
+    let pk_reply = Key::move_from_vec(reply.public_dh);
+    let shared_secret =
+        x448::generate_shared_secret(&pk_reply, &sk).expect("Key exchange with directory failed");
+    let auth_key = hkdf_sha256(
+        &shared_secret,
+        None,
+        Some(DIR_AUTH_KEY_INFO),
+        DIR_AUTH_KEY_SIZE,
+    )
+    .expect("Key exchange with directory failed");
+    assert_eq!(pk_reply.len(), pk.len());
+    return auth_key;
 }
 
 async fn send_pk(
@@ -208,10 +266,21 @@ async fn send_pk(
     index: u8,
     counter: u32,
     map: &mut BTreeMap<(u8, u32), Key>,
+    auth_key: Key,
 ) {
     let pk = Key::new(x448::POINT_SIZE).expect("Key gen failed");
+    //generate mac
+    let mut mac =
+        Hmac::<Sha256>::new_varkey(auth_key.borrow_raw()).expect("Initialising mac failed");
+    mac.update(&counter.to_le_bytes());
+    mac.update(pk.borrow_raw());
     let reply = client
-        .add_static_dh(Request::new(create_dh_msg(index, counter, &pk)))
+        .add_static_dh(Request::new(create_dh_msg(
+            index,
+            counter,
+            &pk,
+            &mac.finalize().into_bytes().to_vec(),
+        )))
         .await
         .expect("Adding DH key failed")
         .into_inner();
@@ -230,13 +299,19 @@ fn create_register_request(index: u8, pk: &Key) -> RegisterRequest {
     }
 }
 
-fn create_dh_msg(index: u8, counter: u32, pk: &Key) -> DhMessage {
+fn create_dh_msg(index: u8, counter: u32, pk: &Key, auth_tag: &[u8]) -> DhMessage {
     DhMessage {
         fingerprint: format!("mix-{}", index),
         counter,
         public_dh: pk.clone_to_vec(),
-        // TODO authentication
-        auth_tag: Vec::new(),
+        auth_tag: auth_tag.to_vec(),
+    }
+}
+
+fn create_unregister_request(index: u8, auth_tag: &[u8]) -> UnregisterRequest {
+    UnregisterRequest {
+        fingerprint: format!("mix-{}", index),
+        auth_tag: auth_tag.to_vec(),
     }
 }
 

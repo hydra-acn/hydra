@@ -136,6 +136,7 @@ pub struct Mix {
     pub relay_port: u16,
     pub rendezvous_port: u16,
     pub dh_map: BTreeMap<EpochNo, Key>,
+    pub last_counter: Option<u32>,
 }
 
 pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), tonic::Status> {

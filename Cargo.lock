@@ -427,6 +427,7 @@ dependencies = [
  "generic-array",
  "hex",
  "hkdf",
+ "hmac",
  "log",
  "openssl",
  "openssl-sys",

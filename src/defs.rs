@@ -18,6 +18,8 @@ pub type RoundNo = u32;
 pub const DIR_AUTH_KEY_SIZE: usize = 32;
 pub const DIR_AUTH_KEY_INFO: &[u8; 4] = b"auth";
 
+pub const DIR_AUTH_UNREGISTER: &[u8; 10] = b"unregister";
+
 pub const ONION_LEN: usize = 256;
 
 // TODO use these more often instead of magic numbers :)

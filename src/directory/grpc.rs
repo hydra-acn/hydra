@@ -1,15 +1,19 @@
+use hmac::{Hmac, Mac, NewMac};
 use log::*;
+use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 use tonic::{Request, Response, Status};
 
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
-use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE};
+use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_epoch_no, EpochNo};
 use crate::grpc::valid_request_check;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
-use crate::{define_grpc_service, rethrow_as_internal, unwrap_or_throw_invalid};
+use crate::{
+    define_grpc_service, rethrow_as_internal, rethrow_as_invalid, unwrap_or_throw_invalid,
+};
 
 use super::state::{key_exchange, Mix, State};
 
@@ -61,6 +65,7 @@ impl directory_server::Directory for Service {
                 relay_port: msg.relay_port as u16, // checked range above
                 rendezvous_port: msg.rendezvous_port as u16, // checked range above
                 dh_map: BTreeMap::new(),
+                last_counter: None,
             };
 
             mix_map.insert(fingerprint.clone(), mix);
@@ -77,11 +82,17 @@ impl directory_server::Directory for Service {
         &self,
         req: Request<UnregisterRequest>,
     ) -> Result<Response<UnregisterAck>, Status> {
-        let fingerprint = req.into_inner().fingerprint;
-        // TODO security check auth tag
+        let msg = req.into_inner();
+        let fingerprint = msg.fingerprint;
+        let auth_tag = msg.auth_tag;
         let removed;
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Lock failure");
+            let mix = unwrap_or_throw_invalid!(mix_map.get(&fingerprint), "Not registered?");
+            let mut mac = Hmac::<Sha256>::new_varkey(&mix.auth_key.borrow_raw())
+                .expect("Initialising mac failed");
+            mac.update(DIR_AUTH_UNREGISTER);
+            rethrow_as_invalid!(mac.verify(&auth_tag), "Wrong Mac"); 
             removed = mix_map.remove(&fingerprint);
         }
         match removed {
@@ -99,9 +110,9 @@ impl directory_server::Directory for Service {
 
     async fn add_static_dh(&self, req: Request<DhMessage>) -> Result<Response<DhReply>, Status> {
         let msg = req.into_inner();
-        // TODO security check freshness (counter > last counter) and integrity
         let fingerprint = msg.fingerprint.clone();
-
+        let auth_tag = msg.auth_tag;
+        let counter = msg.counter;
         let next_free_epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
         valid_request_check(pk.len() == x448::POINT_SIZE, "x448 pk has wrong size")?;
@@ -113,12 +124,17 @@ impl directory_server::Directory for Service {
                 None => current_epoch_no(self.config().phase_duration) + 1,
             }
         }
-
         let mut use_epoch_no;
         {
             let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Lock failure");
             let mix = unwrap_or_throw_invalid!(mix_map.get_mut(&fingerprint), "Not registered?");
-
+            valid_request_check(Some(counter) > mix.last_counter, "Message not fresh")?;
+            let mut mac = Hmac::<Sha256>::new_varkey(mix.auth_key.borrow_raw())
+                .expect("Initialising mac failed");
+            mac.update(&counter.to_le_bytes());
+            mac.update(pk.borrow_raw());
+            rethrow_as_invalid!(mac.verify(&auth_tag), "Wrong mac");
+            mix.last_counter = Some(counter);
             let allocated_epochs: BTreeSet<EpochNo> = mix.dh_map.keys().cloned().collect();
             use_epoch_no = next_free_epoch_no;
             loop {
@@ -129,13 +145,11 @@ impl directory_server::Directory for Service {
                 }
             }
             mix.dh_map.insert(use_epoch_no, pk);
+            info!(
+                "Added new public DH key for mix {}, assigned it epoch {}",
+                &fingerprint, &use_epoch_no
+            );
         }
-
-        info!(
-            "Added new public DH key for mix {}, assigned it epoch {}",
-            &fingerprint, &use_epoch_no
-        );
-
         let reply = DhReply {
             counter: msg.counter,
             epoch_no: use_epoch_no,
