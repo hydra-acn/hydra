@@ -1,4 +1,5 @@
 //! Responsible for sending packets to the next mix/rendezvous
+use futures_util::stream;
 use log::*;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -188,13 +189,11 @@ async fn relay_cells(
     mut cells: Vec<Cell>,
 ) {
     shuffle(&mut cells);
-    for cell in cells {
-        let req = tonic::Request::new(cell);
-        c.relay(req)
-            .await
-            .map(|_| ())
-            .unwrap_or_else(|e| warn!("Relaying cell failed: {}", e));
-    }
+    let req = tonic::Request::new(stream::iter(cells));
+    c.relay(req)
+        .await
+        .map(|_| ())
+        .unwrap_or_else(|e| warn!("Relaying cells failed: {}", e));
 }
 
 async fn publish_cells(
@@ -203,13 +202,11 @@ async fn publish_cells(
     mut cells: Vec<Cell>,
 ) {
     shuffle(&mut cells);
-    for cell in cells {
-        let req = tonic::Request::new(cell);
-        c.publish(req)
-            .await
-            .map(|_| ())
-            .unwrap_or_else(|e| warn!("Publishing cell failed: {}", e));
-    }
+    let req = tonic::Request::new(stream::iter(cells));
+    c.publish(req)
+        .await
+        .map(|_| ())
+        .unwrap_or_else(|e| warn!("Publishing cells failed: {}", e));
 }
 
 fn shuffle<T>(_pkts: &mut Vec<T>) {

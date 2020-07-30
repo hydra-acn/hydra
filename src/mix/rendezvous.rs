@@ -1,5 +1,7 @@
 //! Rendezvous service of a mix
 
+use futures_util::stream;
+use futures_util::StreamExt;
 use log::*;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
@@ -94,47 +96,73 @@ impl Rendezvous for Service {
         Ok(Response::new(SubscribeAck {}))
     }
 
-    async fn publish(&self, req: Request<Cell>) -> Result<Response<PublishAck>, Status> {
-        let cell = req.into_inner();
+    async fn publish(
+        &self,
+        req: Request<tonic::Streaming<Cell>>,
+    ) -> Result<Response<PublishAck>, Status> {
+        let mut stream = req.into_inner();
         let mut host_vec = vec![];
-        {
-            let map = rethrow_as_internal!(self.tokens_per_epoch.read(), "Could not acquire lock");
-            let current_epoch_no = unwrap_or_throw_internal!(
-                self.dir_client.current_communication_epoch_no(),
-                "Cannot get current communication epoch no."
-            );
-            match map.get(&current_epoch_no) {
-                Some(token_map) => match token_map.get(&cell.token()) {
-                    Some(vector) => {
-                        host_vec = vector.clone();
-                    }
-                    None => {
-                        // token in map, but noone subscribed
-                    }
-                },
-                None => {
-                    // token not in map
-                }
-            }
-        }
 
-        for host in host_vec.iter() {
-            if cell.circuit_id == host.circuit_id {
-                // don't send cells back on the same circuit, except when asked to
-                if let Some(CellCmd::Broadcast) = cell.command() {
-                } else {
+        while let Some(c) = stream.next().await {
+            let cell = match c {
+                Ok(cell) => cell,
+                Err(e) => {
+                    warn!("Error during cell processing in publish: {}", e);
                     continue;
                 }
+            };
+            {
+                let map =
+                    rethrow_as_internal!(self.tokens_per_epoch.read(), "Could not acquire lock");
+                let current_epoch_no = unwrap_or_throw_internal!(
+                    self.dir_client.current_communication_epoch_no(),
+                    "Cannot get current communication epoch no."
+                );
+                match map.get(&current_epoch_no) {
+                    Some(token_map) => match token_map.get(&cell.token()) {
+                        Some(vector) => {
+                            host_vec = vector.clone();
+                        }
+                        None => {
+                            // token in map, but noone subscribed
+                        }
+                    },
+                    None => {
+                        // token not in map
+                    }
+                }
             }
-            let sock_addr = host.sock_addr;
-            let mut channels = self.dir_client.get_mix_channels(&[sock_addr]).await;
-            let channel = unwrap_or_throw_internal!(
-                channels.get_mut(&sock_addr),
-                "Not able to get matching channel for sock_addr"
-            );
-            let mut send_cell = cell.clone();
-            send_cell.circuit_id = host.circuit_id;
-            rethrow_as_internal!(channel.inject(send_cell).await, "Not able to inject cell");
+
+            for host in host_vec.iter() {
+                if cell.circuit_id == host.circuit_id {
+                    // don't send cells back on the same circuit, except when asked to
+                    if let Some(CellCmd::Broadcast) = cell.command() {
+                    } else {
+                        continue;
+                    }
+                }
+                let sock_addr = host.sock_addr;
+                let mut channels = self.dir_client.get_mix_channels(&[sock_addr]).await;
+                let channel = match channels.get_mut(&sock_addr) {
+                    Some(c) => c,
+                    None => {
+                        warn!("Not able to get matching channel for {}", sock_addr);
+                        continue;
+                    }
+                };
+                let mut send_cell = cell.clone();
+                send_cell.circuit_id = host.circuit_id;
+                match channel
+                    .inject(Request::new(stream::once(async { send_cell })))
+                    .await
+                {
+                    Ok(_) => (),
+                    Err(e) => {
+                        warn!("Not able to inject cell: {}", e);
+                        continue;
+                    }
+                }
+            }
         }
         Ok(Response::new(PublishAck {}))
     }
@@ -223,16 +251,25 @@ mod tests {
 
         //test publish
         time::delay_for(Duration::from_millis(100)).await;
-        let mut cell_to_send = Cell::dummy(2, 3);
-        cell_to_send.set_token(12);
+        let mut cell_to_send1 = Cell::dummy(2, 3);
+        cell_to_send1.set_token(12);
+        //test publish on same circuit without broadcast
+        let mut cell_to_send2 = Cell::dummy(2, 3);
+        cell_to_send2.set_token(2);
+        //stream cells
         let resp = client
-            .publish(tonic::Request::new(cell_to_send))
+            .publish(tonic::Request::new(stream::iter(vec![
+                cell_to_send1,
+                cell_to_send2,
+            ])))
             .await
             .expect("publish failed");
         assert_eq!(resp.into_inner(), PublishAck {});
+
         //test if mix_map contains expected cells
         time::delay_for(Duration::from_millis(100)).await;
         {
+            //publish
             let map = mix_state.storage.read().expect("Could not acquire lock");
             assert_eq!(map.contains_key(&2), false);
             let v = map.get(&5).expect("CircuitId not present in token_map");
@@ -240,26 +277,12 @@ mod tests {
             let cell = v.first().expect("Empty vector, no cell present");
             assert_eq!(cell.token(), 12);
         }
-        //test publish on same circuit without broadcast
-        let mut cell_to_send = Cell::dummy(2, 3);
-        cell_to_send.set_token(2);
-        let resp = client
-            .publish(tonic::Request::new(cell_to_send))
-            .await
-            .expect("publish failed");
-        assert_eq!(resp.into_inner(), PublishAck {});
-        //test if mix_map is not containing cell
-        time::delay_for(Duration::from_millis(100)).await;
-        {
-            let map = mix_state.storage.read().expect("Could not acquire lock");
-            assert_eq!(map.contains_key(&2), false);
-        }
         //test publish on same circuit with broadcast
         let mut cell_to_send = Cell::dummy(2, 3);
         cell_to_send.set_token(2);
         cell_to_send.set_command(CellCmd::Broadcast);
         let resp = client
-            .publish(tonic::Request::new(cell_to_send))
+            .publish(tonic::Request::new(stream::once(async { cell_to_send })))
             .await
             .expect("publish failed");
         assert_eq!(resp.into_inner(), PublishAck {});
@@ -419,22 +442,31 @@ mod tests {
             unimplemented!("Just a mock");
         }
 
-        async fn relay(&self, _req: Request<Cell>) -> Result<Response<RelayAck>, Status> {
+        async fn relay(
+            &self,
+            _req: Request<tonic::Streaming<Cell>>,
+        ) -> Result<Response<RelayAck>, Status> {
             unimplemented!("Just a mock");
         }
 
-        async fn inject(&self, req: Request<Cell>) -> Result<Response<InjectAck>, Status> {
-            let cell = req.into_inner();
-            let mut map = self.storage.write().expect("Could not acquire lock");
+        async fn inject(
+            &self,
+            req: Request<tonic::Streaming<Cell>>,
+        ) -> Result<Response<InjectAck>, Status> {
+            let mut stream = req.into_inner();
             let mut vec;
-            match map.get_mut(&cell.circuit_id) {
-                Some(v) => {
-                    vec = v.to_vec();
-                    vec.push(cell.clone());
-                }
-                None => vec = vec![cell.clone()],
-            };
-            map.insert(cell.circuit_id, vec);
+            while let Some(c) = stream.next().await {
+                let cell = c.expect("No valid cell for injecting");
+                let mut map = self.storage.write().expect("Could not acquire lock");
+                match map.get_mut(&cell.circuit_id) {
+                    Some(v) => {
+                        vec = v.to_vec();
+                        vec.push(cell.clone());
+                    }
+                    None => vec = vec![cell.clone()],
+                };
+                map.insert(cell.circuit_id, vec);
+            }
             Ok(Response::new(InjectAck {}))
         }
     }
