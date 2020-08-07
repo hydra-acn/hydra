@@ -88,13 +88,25 @@ impl Circuit {
 
         // decrypt onion part
         let mut decrypted = vec![0u8; setup_pkt.onion.len()];
-        Aes256Gcm::new(aes_key).decrypt(
+        let aes = Aes256Gcm::new(aes_key);
+        match aes.decrypt(
             nonce,
             &setup_pkt.onion,
             &mut decrypted,
             None,
             &setup_pkt.auth_tag,
-        )?;
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                warn!("Decryption of setup packet failed: {}", e);
+                warn!(".. client_pk = 0x{}", hex::encode(client_pk.borrow_raw()));
+                warn!(".. x448_shared_secret = 0x{}", hex::encode(master_key.borrow_raw()));
+                warn!(".. aes_key = 0x{}", hex::encode(aes.key().borrow_raw()));
+                warn!(".. nonce = 0x{}", hex::encode(nonce));
+                warn!(".. auth_tag = 0x{}", hex::encode(&setup_pkt.auth_tag));
+                return Err(e);
+            }
+        }
 
         let ttl = setup_pkt
             .ttl()
@@ -278,13 +290,17 @@ impl Circuit {
         let mut cell = match direction {
             CellDirection::Upstream => {
                 // no upstream injection -> always dummy
+                debug!("Creating dummy cell for circuit with upstream id {}", self.upstream_id);
                 Cell::dummy(circuit_id, round_no)
             }
             CellDirection::Downstream => match round_no == self.max_round_no {
                 true => self.create_nack(),
                 false => match self.inject_cells.pop_front() {
                     Some(c) => c,
-                    None => Cell::dummy(circuit_id, round_no),
+                    None => {
+                        debug!("Creating dummy cell for circuit with downstream id {}", self.downstream_id);
+                        Cell::dummy(circuit_id, round_no)
+                    }
                 },
             },
         };

@@ -85,6 +85,7 @@ impl State {
     pub fn deliver(&self, cells: Vec<Cell>) {
         let mut storage = self.storage.lock().expect("Lock poisoned");
         for cell in cells {
+            debug!("New cell ready for delivery on circuit {}", cell.circuit_id);
             if let Some(cell_vec) = storage.get_mut(&cell.circuit_id) {
                 cell_vec.push(cell);
             } else {

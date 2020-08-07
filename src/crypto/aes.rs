@@ -14,6 +14,10 @@ impl Aes256Gcm {
         Aes256Gcm { key }
     }
 
+    pub fn key(&self) -> &Key {
+        &self.key
+    }
+
     pub fn encrypt(
         &self,
         iv: &[u8],

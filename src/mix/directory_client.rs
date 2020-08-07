@@ -352,6 +352,7 @@ impl Client {
                 return;
             }
         };
+        info!("Registered pk for epoch {}: 0x{}", epoch_no, hex::encode(pk.borrow_raw()));
         let mut key_map = self.keys.write().expect("Lock failure");
         key_map.insert(epoch_no, (pk, sk));
     }
