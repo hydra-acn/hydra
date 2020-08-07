@@ -1,4 +1,5 @@
 //! shared gRPC functionality
+use crate::crypto::key::Key;
 use tonic::{async_trait, Code, Status};
 
 /// The missing (?) trait for all tonic clients
@@ -6,6 +7,25 @@ use tonic::{async_trait, Code, Status};
 pub trait Client: Sized {
     // TODO make dst a generic type, see tonics connect
     async fn connect(dst: String) -> Result<Self, tonic::transport::Error>;
+}
+
+pub struct ServerTlsCredentials {
+    key: Key,
+    cert: String,
+}
+impl ServerTlsCredentials {
+    pub fn new(key: Key, cert: &str) -> Self {
+        ServerTlsCredentials {
+            key,
+            cert: cert.to_string(),
+        }
+    }
+    pub fn key(&self) -> &Key {
+        &self.key
+    }
+    pub fn cert(&self) -> &str {
+        &self.cert
+    }
 }
 
 #[macro_export]
@@ -45,6 +65,7 @@ macro_rules! define_grpc_service {
         pub async fn spawn_service(
             state: std::sync::Arc<State>,
             addr: std::net::SocketAddr,
+            tls_cred: Option<ServerTlsCredentials>,
         ) -> Result<
             (
                 tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
@@ -56,6 +77,7 @@ macro_rules! define_grpc_service {
                 state.clone(),
                 addr,
                 None,
+                tls_cred,
             )
             .await
         }
@@ -66,6 +88,7 @@ macro_rules! define_grpc_service {
             state: std::sync::Arc<State>,
             addr: std::net::SocketAddr,
             shutdown_signal: Option<F>,
+            tls_cred: Option<ServerTlsCredentials>,
         ) -> Result<
             (
                 tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
@@ -76,8 +99,17 @@ macro_rules! define_grpc_service {
             let service = $service_type {
                 state: state.clone(),
             };
-            let builder =
-                tonic::transport::Server::builder().add_service($server_type::new(service));
+            let mut builder = tonic::transport::Server::builder();
+            if let Some(cred) = tls_cred {
+                    builder =
+                        builder.tls_config(tonic::transport::ServerTlsConfig::new().identity(
+                            tonic::transport::Identity::from_pem(
+                                &cred.cert(),
+                                cred.key().borrow_raw(),
+                            ),
+                        ))?;
+            }
+            let builder = builder.add_service($server_type::new(service));
             let listener = tokio::net::TcpListener::bind(addr).await?;
             let local_endpoint = listener.local_addr()?;
 

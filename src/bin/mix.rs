@@ -1,4 +1,4 @@
-use clap::clap_app;
+use clap::{clap_app, value_t};
 use log::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -19,7 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Mix for the Hydra system")
         (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
-        (@arg directory: -d --directory +takes_value default_value("141.24.207.69:9000") "Address and port of directory service")
+        (@arg directory_domain: -d --directory-dom +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
+        (@arg directory_port: -p --directory-port +takes_value default_value("9000") "Port of directory service")
+        (@arg cert_path: -c --directory-certificate "Path to directory server certificate")
         (@arg simple: --simple "Start a simple relay instead of a real mix")
     )
     .get_matches();
@@ -29,14 +31,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // directory client config
     let mix_addr: std::net::SocketAddr = args.value_of("sockAddr").unwrap().parse()?;
-    let directory_addr = args.value_of("directory").unwrap().parse()?;
+    let directory_domain = args.value_of("directory-domain").unwrap().parse()?;
+    let directory_port = value_t!(args, "directory-port", u16).unwrap();
+
+    let directory_certificate = match args.value_of("cert_path") {
+        Some(path) => Some(std::fs::read_to_string(&path)?),
+        None => None,
+    };
 
     let dir_cfg = directory_client::Config {
         addr: mix_addr.ip(),
         entry_port: mix_addr.port(),
         relay_port: mix_addr.port(),
         rendezvous_port: mix_addr.port() + 100,
-        directory_addr,
+        directory_certificate,
+        directory_domain,
+        directory_port,
     };
     let rendezvous_addr: std::net::SocketAddr =
         format!("{}:{}", dir_cfg.addr, dir_cfg.rendezvous_port).parse()?;
@@ -47,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.is_present("simple") {
         // simple relay only
         let state = Arc::new(simple_relay::State::new());
-        let (grpc_handle, _) = simple_relay::spawn_service(state.clone(), mix_addr).await?;
+        let (grpc_handle, _) = simple_relay::spawn_service(state.clone(), mix_addr, None).await?;
         let garbage_handle = tokio::spawn(simple_relay::garbage_collector(state.clone()));
 
         match tokio::try_join!(
@@ -84,12 +94,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cell_rx_queue_senders,
         ));
         let (mix_grpc_handle, _) =
-            mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr).await?;
+            mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr, None).await?;
 
         // setup rendezvous gRPC
         let rendezvous_grpc_state = Arc::new(mix::rendezvous::State::new(dir_client.clone()));
         let (rendezvous_grpc_handle, _) =
-            mix::rendezvous::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr).await?;
+            mix::rendezvous::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr, None)
+                .await?;
 
         // setup channels for communication between main worker and sender
         let (setup_sender, setup_receiver) = spmc::channel();

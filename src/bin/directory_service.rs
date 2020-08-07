@@ -2,8 +2,10 @@ use clap::{clap_app, value_t};
 use log::*;
 use std::sync::Arc;
 
+use hydra::crypto::key::Key;
 use hydra::directory::grpc;
 use hydra::directory::state::{self, Config, State};
+use hydra::grpc::ServerTlsCredentials;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,6 +16,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Simple, non distributed, implementation of the Hydra directory service")
         (@arg addr: +required "IP address to listen on")
+        (@arg key_path: +required "Path to key file")
+        (@arg cert_path: +required "Path to certificate file")
         (@arg phaseDuration: -d --duration +takes_value default_value("600") "Duration of one phase (setup/communication have the same duration")
     )
     .get_matches();
@@ -23,8 +27,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.phase_duration = phase_duration;
     let state = Arc::new(State::new(config));
 
+    let key = Key::read_from_file(args.value_of("key_path").unwrap()).expect("Failed to read File");
+    let cert = std::fs::read_to_string(args.value_of("cert_path").unwrap())?;
+    let tls_cred = ServerTlsCredentials::new(key, &cert);
+
     let local_addr = format!("{}:9000", args.value_of("addr").unwrap()).parse()?;
-    let (grpc_handle, _) = grpc::spawn_service(state.clone(), local_addr).await?;
+    let (grpc_handle, _) = grpc::spawn_service(state.clone(), local_addr, Some(tls_cred)).await?;
 
     let update_handle = tokio::spawn(state::update_loop(state.clone()));
 

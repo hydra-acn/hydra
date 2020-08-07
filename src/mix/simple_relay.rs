@@ -8,6 +8,7 @@ use tonic::{Request, Response, Status};
 use crate::defs::{CircuitId, Token};
 use crate::epoch::current_time_in_secs;
 use crate::grpc::valid_request_check;
+use crate::grpc::ServerTlsCredentials;
 use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
 use crate::tonic_mix::*;
 use crate::{define_grpc_service, rethrow_as_internal, unwrap_or_throw_invalid};
@@ -331,7 +332,7 @@ mod tests {
         let local_addr: std::net::SocketAddr = ("127.0.0.1:0").parse().expect("failed to parse");
         let timeout = time::delay_for(Duration::from_secs(2));
         let (grpc_handle, local_addr) =
-            spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout))
+            spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout), None)
                 .await
                 .expect("Spawn failed");
         let garbage_handle = tokio::spawn(simple_relay::garbage_collector(state.clone()));

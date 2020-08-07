@@ -9,6 +9,7 @@ use crate::crypto::x448;
 use crate::defs::{CircuitId, SETUP_AUTH_LEN, SETUP_NONCE_LEN};
 use crate::epoch::EpochNo;
 use crate::grpc::valid_request_check;
+use crate::grpc::ServerTlsCredentials;
 use crate::mix::directory_client;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
 use crate::tonic_mix::*;

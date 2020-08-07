@@ -11,6 +11,7 @@ use hydra::tonic_directory::{
 };
 use sha2::Sha256;
 
+use hydra::grpc::ServerTlsCredentials;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -31,10 +32,18 @@ fn integration() {
 
         let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
         let timeout = time::delay_for(Duration::from_secs(2));
-        let (grpc_handle, local_addr) =
-            grpc::spawn_service_with_shutdown(state.clone(), local_addr, Some(timeout))
-                .await
-                .expect("Spawning failed");
+        let key =
+            Key::read_from_file("tests/data/tls-test.key").expect("Failed to read key from file");
+        let cert = std::fs::read_to_string("tests/data/tls-test.pem").unwrap();
+        let tls_cred = ServerTlsCredentials::new(key, &cert);
+        let (grpc_handle, local_addr) = grpc::spawn_service_with_shutdown(
+            state.clone(),
+            local_addr,
+            Some(timeout),
+            Some(tls_cred),
+        )
+        .await
+        .expect("Spawning failed");
 
         let client_handle = tokio::spawn(client_task(state.clone(), local_addr.port()));
 
@@ -44,11 +53,24 @@ fn integration() {
 
 async fn client_task(state: Arc<State>, port: u16) {
     let config = state.config();
+    let cert = std::fs::read_to_string("tests/data/tls-test-ca.pem").unwrap();
+    let endpoint = format!("https://localhost:{}", port);
+
     // wait to avoid race condition client/server
     time::delay_for(Duration::from_millis(100)).await;
-    let mut client = DirectoryClient::connect(format!("http://127.0.0.1:{}", port))
+    let channel = tonic::transport::Channel::from_shared(endpoint)
+        .unwrap()
+        .tls_config(
+            tonic::transport::ClientTlsConfig::new()
+                .ca_certificate(tonic::transport::Certificate::from_pem(&cert))
+                .domain_name("localhost".to_string()),
+        )
+        .unwrap()
+        .connect()
         .await
         .expect("Connecting failed");
+
+    let mut client = DirectoryClient::new(channel);
 
     let dummy_key = Key::new(x448::POINT_SIZE).expect("Key gen failed");
 

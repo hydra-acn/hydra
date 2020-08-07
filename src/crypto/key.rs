@@ -66,6 +66,13 @@ impl Key {
     pub fn borrow_raw(&self) -> &[u8] {
         &self.key
     }
+
+    pub fn read_from_file(path: &str) -> Result<Self, Error> {
+        match std::fs::read(path) {
+            Ok(key) => Ok(Key { key }),
+            Err(e) => Err(Error::IoError(e.to_string())),
+        }
+    }
 }
 
 impl Drop for Key {

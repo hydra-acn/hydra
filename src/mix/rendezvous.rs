@@ -13,6 +13,7 @@ use tonic::{Request, Response, Status};
 use super::directory_client;
 use crate::defs::{CellCmd, CircuitId, Token};
 use crate::epoch::EpochNo;
+use crate::grpc::ServerTlsCredentials;
 use crate::net::socket_addr_from_slice;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
 use crate::tonic_mix::*;
@@ -307,6 +308,7 @@ mod tests {
             mix_state.clone(),
             mix_addr,
             Some(time::delay_for(Duration::from_secs(5))),
+            None,
         )
         .await
         .expect("Spawn failed");
@@ -314,10 +316,14 @@ mod tests {
         let rend_dir_client = Arc::new(mock_client);
         let timeout = time::delay_for(Duration::from_secs(5));
         let state = Arc::new(rendezvous::State::new(rend_dir_client.clone()));
-        let (rendezvous_grpc_handle, rendezvous_addr) =
-            rendezvous::spawn_service_with_shutdown(state.clone(), rendezvous_addr, Some(timeout))
-                .await
-                .expect("Spawn failed");
+        let (rendezvous_grpc_handle, rendezvous_addr) = rendezvous::spawn_service_with_shutdown(
+            state.clone(),
+            rendezvous_addr,
+            Some(timeout),
+            None,
+        )
+        .await
+        .expect("Spawn failed");
         //initialize state for garbage collector test
         {
             let mut token_map = BTreeMap::new();

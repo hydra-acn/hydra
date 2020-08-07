@@ -9,7 +9,7 @@ openssl-sys = "^0.9"
 openssl = "^0.10"
 hex = "^0.4"
 byteorder = "^1"
-tonic = "^0.3"
+tonic = {version = "^0.3", features = ["transport", "tls"] }
 prost = "^0.6"
 tokio = { version = "^0.2", features = ["macros", "rt-threaded"] }
 async-stream = "^0.2"

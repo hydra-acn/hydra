@@ -32,7 +32,9 @@ pub struct Config {
     pub entry_port: u16,
     pub relay_port: u16,
     pub rendezvous_port: u16,
-    pub directory_addr: SocketAddr,
+    pub directory_certificate: Option<String>,
+    pub directory_domain: String,
+    pub directory_port: u16,
 }
 
 impl Config {
@@ -96,8 +98,9 @@ impl Client {
     pub fn new(config: Config) -> Self {
         // TODO sync to disk
         let (pk, sk) = x448::generate_keypair().expect("Generation of long-term key pair failed");
-        let dir_addr = &config.directory_addr;
-        let endpoint = format!("http://{}:{}", dir_addr.ip().to_string(), dir_addr.port());
+        let dir_domain = &config.directory_domain;
+        let dir_port = &config.directory_port;
+        let endpoint = format!("https://{}:{}", dir_domain, dir_port);
         Client {
             fingerprint: format!("{}:{}", config.addr, config.entry_port),
             sk: sk,
@@ -173,7 +176,7 @@ impl Client {
 
     /// note: registration also includes the first fetch
     pub async fn register(&self) {
-        let mut conn = DirectoryClient::connect(self.endpoint.clone())
+        let mut conn = connect(self.endpoint.clone(), &self.config)
             .await
             .expect("Connection for registration failed");
         let addr_vec = match self.config.addr {
@@ -232,9 +235,11 @@ impl Client {
         )
         .expect("Initialising mac failed");
         mac.update(DIR_AUTH_UNREGISTER);
-        let mut conn = DirectoryClient::connect(self.endpoint.clone())
+
+        let mut conn = connect(self.endpoint.clone(), &self.config)
             .await
-            .expect("Connection for unregistration failed");
+            .expect("Failed to connect for unregistration");
+
         let request = UnregisterRequest {
             fingerprint: self.fingerprint.clone(),
             auth_tag: mac.finalize().into_bytes().to_vec(),
@@ -246,8 +251,8 @@ impl Client {
 
     /// update includes fetching the directory and sending more ephemeral keys if necessary
     pub async fn update(&self) {
-        let mut conn = match DirectoryClient::connect(self.endpoint.clone()).await {
-            Ok(c) => c,
+        let mut conn = match connect(self.endpoint.clone(), &self.config).await {
+            Ok(client) => client,
             Err(e) => {
                 warn!(
                     "Connection to directory service failed, skipping update: {}",
@@ -408,6 +413,22 @@ impl Client {
     }
 }
 
+pub async fn connect(
+    endpoint: String,
+    config: &Config,
+) -> Result<DirectoryChannel, tonic::transport::Error> {
+    let mut client_channel = tonic::transport::Channel::from_shared(endpoint)
+                .unwrap();
+   if let Some(cert) = &config.directory_certificate {
+            client_channel = client_channel
+                .tls_config(
+                    tonic::transport::ClientTlsConfig::new()
+                        .ca_certificate(tonic::transport::Certificate::from_pem(&cert))
+                        .domain_name(config.directory_domain.to_string()),
+                )?
+    }
+    Ok(DirectoryClient::connect(client_channel).await?)
+}
 pub async fn run(client: Arc<Client>) {
     client.register().await;
     let slack = 10;
@@ -454,13 +475,14 @@ pub mod mocks {
     use super::*;
     pub fn new(current_communication_epoch_no: EpochNo) -> Client {
         let addr: std::net::IpAddr = ("127.0.0.1").parse().expect("failed");
-        let directory_addr: std::net::SocketAddr = ("127.0.0.1:9000").parse().expect("failed");
         let config = Config {
             addr,
             entry_port: 9001,
             relay_port: 9001,
             rendezvous_port: 9101,
-            directory_addr,
+            directory_domain: "127.0.0.1".to_string(),
+            directory_port: 9000,
+            directory_certificate: Some("".to_string()),
         };
         let mock_dir_client = Client::new(config);
 

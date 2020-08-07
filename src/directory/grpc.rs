@@ -9,6 +9,7 @@ use crate::crypto::x448;
 use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_epoch_no, EpochNo};
 use crate::grpc::valid_request_check;
+use crate::grpc::ServerTlsCredentials;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
 use crate::{
@@ -92,7 +93,7 @@ impl directory_server::Directory for Service {
             let mut mac = Hmac::<Sha256>::new_varkey(&mix.auth_key.borrow_raw())
                 .expect("Initialising mac failed");
             mac.update(DIR_AUTH_UNREGISTER);
-            rethrow_as_invalid!(mac.verify(&auth_tag), "Wrong Mac"); 
+            rethrow_as_invalid!(mac.verify(&auth_tag), "Wrong Mac");
             removed = mix_map.remove(&fingerprint);
         }
         match removed {
