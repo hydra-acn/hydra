@@ -430,6 +430,7 @@ pub async fn connect(
     }
     Ok(DirectoryClient::connect(client_channel).await?)
 }
+
 pub async fn run(client: Arc<Client>) {
     client.register().await;
     let slack = 10;
@@ -472,6 +473,7 @@ impl MixInfo {
             .map(|ip| SocketAddr::new(ip, self.rendezvous_port as u16))
     }
 }
+
 pub mod mocks {
     use super::*;
     pub fn new(current_communication_epoch_no: EpochNo) -> Client {
