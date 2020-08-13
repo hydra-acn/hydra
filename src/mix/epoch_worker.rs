@@ -89,7 +89,7 @@ impl Worker {
     }
 
     fn shall_terminate(&self) -> bool {
-        self.running.load(atomic::Ordering::SeqCst)
+        self.running.load(atomic::Ordering::SeqCst) == false
     }
 
     /// endless loop for processing the epochs, starting with the upcomming epoch (setup)
