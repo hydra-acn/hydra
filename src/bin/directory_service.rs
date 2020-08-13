@@ -13,6 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Simple, non distributed, implementation of the Hydra directory service")
         (@arg addr: +required "IP address to listen on")
+        (@arg port: -p --port +takes_value default_value("9000") "Port to listen on")
         (@arg key_path: +required "Path to key file")
         (@arg cert_path: +required "Path to certificate file")
         (@arg phaseDuration: -d --duration +takes_value default_value("600") "Duration of one phase (setup/communication have the same duration")
@@ -32,8 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = std::fs::read_to_string(args.value_of("cert_path").unwrap())?;
     let tls_cred = ServerTlsCredentials::new(key, &cert);
 
-    let local_addr = format!("{}:9000", args.value_of("addr").unwrap()).parse()?;
-    let (grpc_handle, _) = grpc::spawn_service(state.clone(), local_addr, Some(tls_cred)).await?;
+    let addr = args.value_of("addr").unwrap();
+    let port = value_t!(args, "port", u16).unwrap();
+    let local_endpoint = format!("{}:{}", addr, port).parse()?;
+    let (grpc_handle, _) = grpc::spawn_service(state.clone(), local_endpoint, Some(tls_cred)).await?;
 
     let update_handle = tokio::spawn(state::update_loop(state.clone()));
 
