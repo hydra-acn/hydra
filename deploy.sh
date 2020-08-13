@@ -14,6 +14,9 @@ deploy_local() {
     fi
     localhost=$2
     dirport=9000
+    dirkey="testbed/directory.key"
+    dircrt="testbed/directory.crt"
+    cacrt="testbed/ca.pem"
     phasedur=120
     mode="debug"
 
@@ -47,7 +50,7 @@ deploy_local() {
     tmux new-session -d -s $session
     echo -n "Starting directory server on port $dirport ..."
     tmux new-window -d -t "=${session}" -n directory
-    tmux send-keys -t "=${session}:=directory" "target/$mode/directory_service $localhost -d $phasedur" Enter
+    tmux send-keys -t "=${session}:=directory" "target/$mode/directory_service 0.0.0.0 $dirkey $dircrt -d $phasedur" Enter
     sleep 1
     echo " Done"
     echo "Starting $n mixes .."
@@ -55,7 +58,7 @@ deploy_local() {
         port=`echo $dirport + $i | bc`
         echo -n "-> Starting mix on port $port ..."
         tmux new-window -d -t "=${session}" -n mix-$i
-        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -d $localhost:$dirport $simple_flag" Enter
+        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -p $dirport -c $cacrt $simple_flag" Enter
         echo " Done"
     done
     # Kill the "default" tmux window
