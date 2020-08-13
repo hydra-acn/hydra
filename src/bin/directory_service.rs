@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .get_matches();
 
-    hydra::log::init(args.occurrences_of("verbose") > 0);
+    hydra::log_cfg::init(args.occurrences_of("verbose") > 0);
     info!("Starting directory service");
 
     let phase_duration = value_t!(args, "phaseDuration", u64).unwrap();

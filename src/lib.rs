@@ -3,7 +3,7 @@ pub mod defs;
 pub mod epoch;
 pub mod error;
 pub mod grpc;
-pub mod log;
+pub mod log_cfg;
 pub mod net;
 
 pub mod directory;

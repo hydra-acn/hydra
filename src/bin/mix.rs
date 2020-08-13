@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .get_matches();
 
-    hydra::log::init(args.occurrences_of("verbose") > 0);
+    hydra::log_cfg::init(args.occurrences_of("verbose") > 0);
     info!("Starting mix");
 
     let running = Arc::new(AtomicBool::new(true));
