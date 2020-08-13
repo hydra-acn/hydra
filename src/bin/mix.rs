@@ -31,8 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // directory client config
     let mix_addr: std::net::SocketAddr = args.value_of("sockAddr").unwrap().parse()?;
-    let directory_domain = args.value_of("directory-domain").unwrap().parse()?;
-    let directory_port = value_t!(args, "directory-port", u16).unwrap();
+    let directory_domain = args.value_of("directory_domain").unwrap().parse()?;
+    let directory_port = value_t!(args, "directory_port", u16).unwrap();
 
     let directory_certificate = match args.value_of("cert_path") {
         Some(path) => Some(std::fs::read_to_string(&path)?),
