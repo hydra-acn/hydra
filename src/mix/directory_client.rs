@@ -352,7 +352,11 @@ impl Client {
                 return;
             }
         };
-        info!("Registered pk for epoch {}: 0x{}", epoch_no, hex::encode(pk.borrow_raw()));
+        info!(
+            "Registered pk for epoch {}: 0x{}",
+            epoch_no,
+            hex::encode(pk.borrow_raw())
+        );
         let mut key_map = self.keys.write().expect("Lock failure");
         key_map.insert(epoch_no, (pk, sk));
     }
@@ -418,15 +422,13 @@ pub async fn connect(
     endpoint: String,
     config: &Config,
 ) -> Result<DirectoryChannel, tonic::transport::Error> {
-    let mut client_channel = tonic::transport::Channel::from_shared(endpoint)
-                .unwrap();
-   if let Some(cert) = &config.directory_certificate {
-            client_channel = client_channel
-                .tls_config(
-                    tonic::transport::ClientTlsConfig::new()
-                        .ca_certificate(tonic::transport::Certificate::from_pem(&cert))
-                        .domain_name(config.directory_domain.to_string()),
-                )?
+    let mut client_channel = tonic::transport::Channel::from_shared(endpoint).unwrap();
+    if let Some(cert) = &config.directory_certificate {
+        client_channel = client_channel.tls_config(
+            tonic::transport::ClientTlsConfig::new()
+                .ca_certificate(tonic::transport::Certificate::from_pem(&cert))
+                .domain_name(config.directory_domain.to_string()),
+        )?
     }
     Ok(DirectoryClient::connect(client_channel).await?)
 }
