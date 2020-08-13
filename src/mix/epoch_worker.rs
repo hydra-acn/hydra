@@ -88,6 +88,10 @@ impl Worker {
         }
     }
 
+    fn shall_terminate(&self) -> bool {
+        self.running.load(atomic::Ordering::SeqCst)
+    }
+
     /// endless loop for processing the epochs, starting with the upcomming epoch (setup)
     pub fn run(&mut self) {
         let first_epoch;
@@ -99,6 +103,9 @@ impl Worker {
                     break;
                 }
                 None => (),
+            }
+            if self.shall_terminate() {
+                return;
             }
             // don't poll too hard
             sleep(Duration::from_secs(1));
@@ -119,6 +126,9 @@ impl Worker {
         loop {
             // note: process_epoch waits till the start of the epoch(s) automatically
             self.process_epoch(&setup_epoch, &communication_epoch, is_first);
+            if self.shall_terminate() {
+                return;
+            }
 
             // one more epoch done, some more to come!
             is_first = false;
@@ -161,10 +171,8 @@ impl Worker {
             .get_private_ephemeral_key(&setup_epoch.epoch_no);
 
         for round_no in 0..communication_epoch.number_of_rounds {
-            if self.running.load(atomic::Ordering::SeqCst) == false {
-                // quick and dirty panic because we shall stop
-                // TODO security this is no graceful cleanup of keys!
-                panic!("You told us to panic!")
+            if self.shall_terminate() {
+                return;
             }
             // TODO move waiting inside the process functions?
             // wait till start of next round

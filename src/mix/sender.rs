@@ -8,6 +8,7 @@ use tokio::task;
 
 use super::directory_client;
 use crate::derive_grpc_client;
+use crate::error::Error;
 use crate::grpc;
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
@@ -58,16 +59,21 @@ type RendezvousConnection = RendezvousClient<tonic::transport::Channel>;
 derive_grpc_client!(RendezvousConnection);
 
 macro_rules! send_next_batch {
-    ($state:expr, $queue:ident, $channel_getter:ident, $send_fun:ident) => {
+    ($state:expr, $queue:ident, $batch_type:ident, $channel_getter:ident, $send_fun:ident) => {
         // wait for the next batch
         let queue = $state.$queue.clone();
-        let batch = task::spawn_blocking(move || {
-            queue.recv().expect("tx queue will never be filled again")
-        })
-        .await
-        .expect("Reading tx queue failed");
-
-        debug!("Sending batch with {} packets", batch.len(),);
+        let maybe_batch = task::spawn_blocking(move || queue.recv())
+            .await
+            .expect("Spawn failed");
+        let batch: $batch_type = match maybe_batch {
+            Ok(b) => b,
+            Err(e) => {
+                error!("Seems like the worker thread is gone: {}", e);
+                // macro is expanded inside a loop
+                break;
+            }
+        };
+        debug!("Sending batch with {} packets", batch.len());
 
         // sort by destination and get corresponding channels
         let (batch_map, destinations) = sort_by_destination(batch);
@@ -92,11 +98,12 @@ macro_rules! send_next_batch {
 }
 
 macro_rules! define_send_task {
-    ($name:ident, $queue:ident, $channel_getter:ident, $send_fun:ident) => {
-        pub async fn $name(state: Arc<State>) {
+    ($name:ident, $queue:ident, $batch_type:ident, $channel_getter:ident, $send_fun:ident) => {
+        pub async fn $name(state: Arc<State>) -> Result<(), Error> {
             loop {
-                send_next_batch!(state, $queue, $channel_getter, $send_fun);
+                send_next_batch!(state, $queue, $batch_type, $channel_getter, $send_fun);
             }
+            Ok(())
         }
     };
 }
@@ -216,6 +223,7 @@ fn shuffle<T>(_pkts: &mut Vec<T>) {
 define_send_task!(
     setup_task,
     setup_tx_queue,
+    SetupBatch,
     get_mix_channels,
     send_setup_packets
 );
@@ -223,15 +231,23 @@ define_send_task!(
 define_send_task!(
     subscribe_task,
     subscribe_tx_queue,
+    SubscribeBatch,
     get_rendezvous_channels,
     send_subscriptions
 );
 
-define_send_task!(relay_task, relay_tx_queue, get_mix_channels, relay_cells);
+define_send_task!(
+    relay_task,
+    relay_tx_queue,
+    CellBatch,
+    get_mix_channels,
+    relay_cells
+);
 
 define_send_task!(
     publish_task,
     publish_tx_queue,
+    CellBatch,
     get_rendezvous_channels,
     publish_cells
 );

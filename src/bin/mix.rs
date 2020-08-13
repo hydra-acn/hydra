@@ -1,6 +1,6 @@
 use clap::{clap_app, value_t};
 use log::*;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -147,7 +147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Stopping gracefully by unregistering at the directory service");
     dir_client.unregister().await.unwrap_or_else(|e| warn!("Unregister failed: {}", e));
-    // TODO security this most likely does not terminate the worker gracefully, keys might be
-    // leaked -> better use a channel to signal shutdown
+
+    // inform threads that we are not supposed to run anymore
+    running.store(false, atomic::Ordering::SeqCst);
     Ok(())
 }
