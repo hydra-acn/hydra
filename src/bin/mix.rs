@@ -19,9 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Mix for the Hydra system")
         (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
-        (@arg directory_domain: -d --directory-dom +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
-        (@arg directory_port: -p --directory-port +takes_value default_value("9000") "Port of directory service")
-        (@arg cert_path: -c --directory-certificate "Path to directory server certificate")
+        (@arg dirDom: -d --directoryDom +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
+        (@arg dirPort: -p --directoryPort +takes_value default_value("9000") "Port of directory service")
+        (@arg certPath: -c --directoryCertificate "Path to directory server certificate")
         (@arg simple: --simple "Start a simple relay instead of a real mix")
     )
     .get_matches();
@@ -31,10 +31,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // directory client config
     let mix_addr: std::net::SocketAddr = args.value_of("sockAddr").unwrap().parse()?;
-    let directory_domain = args.value_of("directory_domain").unwrap().parse()?;
-    let directory_port = value_t!(args, "directory_port", u16).unwrap();
+    let directory_domain = args.value_of("dirDom").unwrap().parse()?;
+    let directory_port = value_t!(args, "dirPort", u16).unwrap();
 
-    let directory_certificate = match args.value_of("cert_path") {
+    let directory_certificate = match args.value_of("certPath") {
         Some(path) => Some(std::fs::read_to_string(&path)?),
         None => None,
     };
