@@ -103,6 +103,7 @@ impl directory_server::Directory for Service {
                 for epoch in epoch_queue.iter_mut() {
                     epoch.mixes.retain(|v| v.fingerprint != fingerprint);
                 }
+                info!("Unregistered mix: {}", fingerprint);
             }
             None => valid_request_check(false, "Not registered")?,
         }
