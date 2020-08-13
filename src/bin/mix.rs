@@ -146,8 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("Stopping gracefully by unregistering at the directory service");
-    dir_client.unregister().await;
-    info!("Unregistration successful");
+    dir_client.unregister().await.unwrap_or_else(|e| warn!("Unregister failed: {}", e));
     // TODO security this most likely does not terminate the worker gracefully, keys might be
     // leaked -> better use a channel to signal shutdown
     Ok(())

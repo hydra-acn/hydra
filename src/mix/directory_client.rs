@@ -15,6 +15,7 @@ use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
 use crate::defs::{Token, DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_time_in_secs, EpochNo};
+use crate::error::Error;
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;
 use crate::tonic_directory::{
@@ -224,29 +225,28 @@ impl Client {
         }
     }
 
-    pub async fn unregister(&self) {
+    pub async fn unregister(&self) -> Result<(), Error> {
         let mut mac = Hmac::<Sha256>::new_varkey(
             self.auth_key
                 .read()
                 .expect("Lock poisoned")
                 .as_ref()
-                .expect("No auth_key")
+                .ok_or_else(|| {
+                    Error::NoneError("Don't have the auth key to unregister".to_string())
+                })?
                 .borrow_raw(),
         )
         .expect("Initialising mac failed");
         mac.update(DIR_AUTH_UNREGISTER);
 
-        let mut conn = connect(self.endpoint.clone(), &self.config)
-            .await
-            .expect("Failed to connect for unregistration");
+        let mut conn = connect(self.endpoint.clone(), &self.config).await?;
 
         let request = UnregisterRequest {
             fingerprint: self.fingerprint.clone(),
             auth_tag: mac.finalize().into_bytes().to_vec(),
         };
-        conn.unregister(request)
-            .await
-            .expect("Unregistration failed");
+        conn.unregister(request).await?;
+        Ok(())
     }
 
     /// update includes fetching the directory and sending more ephemeral keys if necessary

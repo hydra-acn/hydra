@@ -15,6 +15,8 @@ pub enum Error {
     InputError(String),
     /// something external went wrong
     ExternalError(String),
+    /// something was None that should not have been
+    NoneError(String),
 }
 
 impl std::error::Error for Error {}
@@ -27,6 +29,7 @@ impl fmt::Display for Error {
             Error::SizeMismatch(msg) => write!(f, "Size mismatch: {}", msg),
             Error::InputError(msg) => write!(f, "Input error: {}", msg),
             Error::ExternalError(msg) => write!(f, "External error: {}", msg),
+            Error::NoneError(msg) => write!(f, "None error: {}", msg),
         }
     }
 }
@@ -56,7 +59,13 @@ impl std::convert::From<hkdf::InvalidLength> for Error {
 
 impl std::convert::From<tonic::transport::Error> for Error {
     fn from(e: tonic::transport::Error) -> Self {
-        Error::ExternalError(e.to_string())
+        Error::IoError(e.to_string())
+    }
+}
+
+impl std::convert::From<tonic::Status> for Error {
+    fn from(e: tonic::Status) -> Self {
+        Error::IoError(e.to_string())
     }
 }
 
