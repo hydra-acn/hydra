@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
         (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
-        (@arg certPath: -c --("directory-certificate") "Path to directory server certificate")
+        (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
         (@arg simple: --simple "Start a simple relay instead of a real mix")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
