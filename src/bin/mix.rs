@@ -12,10 +12,7 @@ use hydra::mix::{self, simple_relay};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    hydra::log::init();
-    info!("Starting mix");
-
-    let args = clap_app!(simple_relay =>
+    let args = clap_app!(hydra_mix =>
         (version: hydra::defs::hydra_version())
         (about: "Mix for the Hydra system")
         (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
@@ -23,8 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg dirPort: -p --directoryPort +takes_value default_value("9000") "Port of directory service")
         (@arg certPath: -c --directoryCertificate "Path to directory server certificate")
         (@arg simple: --simple "Start a simple relay instead of a real mix")
+        (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
     .get_matches();
+
+    hydra::log::init(args.occurrences_of("verbose") > 0);
+    info!("Starting mix");
 
     let running = Arc::new(AtomicBool::new(true));
     let sigint_handle = tokio::spawn(sigint_handler(running.clone()));
@@ -146,7 +147,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("Stopping gracefully by unregistering at the directory service");
-    dir_client.unregister().await.unwrap_or_else(|e| warn!("Unregister failed: {}", e));
+    dir_client
+        .unregister()
+        .await
+        .unwrap_or_else(|e| warn!("Unregister failed: {}", e));
 
     // inform threads that we are not supposed to run anymore
     running.store(false, atomic::Ordering::SeqCst);

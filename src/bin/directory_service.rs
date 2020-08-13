@@ -9,9 +9,6 @@ use hydra::grpc::ServerTlsCredentials;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    hydra::log::init();
-    info!("Starting directory service");
-
     let args = clap_app!(directory_service =>
         (version: hydra::defs::hydra_version())
         (about: "Simple, non distributed, implementation of the Hydra directory service")
@@ -19,8 +16,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg key_path: +required "Path to key file")
         (@arg cert_path: +required "Path to certificate file")
         (@arg phaseDuration: -d --duration +takes_value default_value("600") "Duration of one phase (setup/communication have the same duration")
+        (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
     .get_matches();
+
+    hydra::log::init(args.occurrences_of("verbose") > 0);
+    info!("Starting directory service");
 
     let phase_duration = value_t!(args, "phaseDuration", u64).unwrap();
     let mut config = Config::default();
