@@ -8,6 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Status;
 
 use super::channel_pool::ChannelPool;
@@ -24,9 +25,9 @@ use crate::tonic_directory::{
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
 
-type DirectoryChannel = DirectoryClient<tonic::transport::Channel>;
-type MixChannel = MixClient<tonic::transport::Channel>;
-type RendezvousChannel = RendezvousClient<tonic::transport::Channel>;
+type DirectoryChannel = DirectoryClient<Channel>;
+type MixChannel = MixClient<Channel>;
+type RendezvousChannel = RendezvousClient<Channel>;
 
 pub struct Config {
     pub addr: IpAddr,
@@ -422,15 +423,17 @@ pub async fn connect(
     endpoint: String,
     config: &Config,
 ) -> Result<DirectoryChannel, tonic::transport::Error> {
-    let mut client_channel = tonic::transport::Channel::from_shared(endpoint).unwrap();
+    let mut tls_config = ClientTlsConfig::new().domain_name(config.directory_domain.clone());
     if let Some(cert) = &config.directory_certificate {
-        client_channel = client_channel.tls_config(
-            tonic::transport::ClientTlsConfig::new()
-                .ca_certificate(tonic::transport::Certificate::from_pem(&cert))
-                .domain_name(config.directory_domain.to_string()),
-        )?
+        tls_config = tls_config.ca_certificate(Certificate::from_pem(&cert));
     }
-    Ok(DirectoryClient::connect(client_channel).await?)
+    let channel = Channel::from_shared(endpoint)
+        .unwrap()
+        .tls_config(tls_config)?
+        .connect()
+        .await?;
+
+    Ok(DirectoryClient::new(channel))
 }
 
 pub async fn run(client: Arc<Client>) {
