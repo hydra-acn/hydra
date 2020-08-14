@@ -24,6 +24,7 @@ use crate::tonic_directory::{
 };
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
+use crate::{assert_as_external_err, assert_as_input_err};
 
 type DirectoryChannel = DirectoryClient<Channel>;
 type MixChannel = MixClient<Channel>;
@@ -116,6 +117,10 @@ impl Client {
             mix_channels: ChannelPool::new(),
             rendezvous_channels: ChannelPool::new(),
         }
+    }
+
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
 
     pub fn config(&self) -> &Config {
@@ -394,28 +399,56 @@ impl Client {
         self.rendezvous_channels.get_channels(destinations).await
     }
 
-    pub fn select_path(&self, epoch_no: EpochNo, number_of_hops: u32) -> Option<Vec<MixInfo>> {
+    /// Default client side path selection according to the Hydra protocol for epoch `epoch_no`.
+    pub fn select_path(&self, epoch_no: EpochNo) -> Result<Vec<MixInfo>, Error> {
+        self.select_path_tunable(epoch_no, None, None)
+    }
+
+    /// Tuneable path selection for epoch `epoch_no`.
+    /// Use `number_of_hops` if you do not want to use the path length dictated by the directory.
+    /// Use `exclude_fingerprint` if you want to exclude a mix from path selection.
+    pub fn select_path_tunable(
+        &self,
+        epoch_no: EpochNo,
+        number_of_hops: Option<usize>,
+        exclude_fingerprint: Option<&str>,
+    ) -> Result<Vec<MixInfo>, Error> {
         let epoch_map = self.epochs.read().expect("Lock poisoned");
-        let epoch = epoch_map.get(&epoch_no)?;
+        let epoch = epoch_map
+            .get(&epoch_no)
+            .ok_or_else(|| Error::NoneError(format!("Epoch {} not known", epoch_no)))?;
         let canditates: Vec<&MixInfo> = epoch
             .mixes
             .iter()
-            .filter(|m| m.fingerprint != self.fingerprint)
+            .filter(|m| {
+                exclude_fingerprint.is_none() || m.fingerprint != exclude_fingerprint.unwrap()
+            })
             .collect();
-        if canditates.len() < number_of_hops as usize {
-            warn!(
-                "Don't know enough mixes to select a path of length {}",
-                number_of_hops
-            );
-            return None;
-        }
+        let official_len = epoch.path_length as usize;
+        let (len, allow_dup) = match number_of_hops {
+            Some(l) => (l, l >= official_len),
+            None => (official_len, true),
+        };
+
+        assert_as_input_err!(len > 0, "Path length of 0 makes no sense");
+        assert_as_external_err!(
+            canditates.len() >= len,
+            "Don't know enough mixes to select path of length {}",
+            len
+        );
+
         // TODO security: use secure random source
         let rng = &mut rand::thread_rng();
-        let path = canditates
-            .choose_multiple(rng, number_of_hops as usize)
+        let mut path: Vec<MixInfo> = canditates
+            .choose_multiple(rng, len)
             .map(|&mix| mix.clone())
             .collect();
-        Some(path)
+
+        if allow_dup {
+            let new_entry_ref = canditates.choose(rng).expect("Checked above");
+            path[0] = (*new_entry_ref).clone();
+        }
+        Ok(path)
     }
 }
 

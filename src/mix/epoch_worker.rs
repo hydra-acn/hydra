@@ -466,7 +466,11 @@ impl Worker {
     fn create_dummy_circuit(&mut self, epoch_no: EpochNo, layer: u32, ttl: u32) -> ExtendInfo {
         let path = self
             .dir_client
-            .select_path(epoch_no, ttl)
+            .select_path_tunable(
+                epoch_no,
+                Some(ttl as usize),
+                Some(self.dir_client.fingerprint()),
+            )
             .expect("No path available");
         let (circuit, extend) =
             ClientCircuit::new(epoch_no, layer, path).expect("Creating dummy circuit failed");
