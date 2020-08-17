@@ -61,7 +61,7 @@ impl Client {
         let mut epoch_map = self.epochs.write().expect("Lock failure");
 
         if let Some(next_epoch) = directory.epochs.first() {
-            // delete old epochs from our map (but keep current, which it is not in the directory)
+            // delete old epochs from our map (but keep current, which is not in the directory)
             let current_epoch_no = next_epoch.epoch_no - 1;
             *epoch_map = epoch_map.split_off(&current_epoch_no);
         } else {

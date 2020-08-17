@@ -220,7 +220,7 @@ impl Client {
             let mut key_map = self.keys.write().expect("Lock failure");
             match self.base_client.smallest_epoch_no() {
                 Some(epoch_no) => {
-                    key_map.split_off(&epoch_no);
+                    *key_map = key_map.split_off(&epoch_no);
                     ()
                 }
                 None => key_map.clear(),
