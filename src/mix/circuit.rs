@@ -1,6 +1,6 @@
 //! Circuit abstraction
-use super::directory_client::RendezvousMap;
 use super::grpc::SetupPacketWithPrev;
+use super::rendezvous_map::RendezvousMap;
 use super::sender::PacketWithNextHop;
 use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::key::{hkdf_sha256, Key};
@@ -100,7 +100,10 @@ impl Circuit {
             Err(e) => {
                 warn!("Decryption of setup packet failed: {}", e);
                 warn!(".. client_pk = 0x{}", hex::encode(client_pk.borrow_raw()));
-                warn!(".. x448_shared_secret = 0x{}", hex::encode(master_key.borrow_raw()));
+                warn!(
+                    ".. x448_shared_secret = 0x{}",
+                    hex::encode(master_key.borrow_raw())
+                );
                 warn!(".. aes_key = 0x{}", hex::encode(aes.key().borrow_raw()));
                 warn!(".. nonce = 0x{}", hex::encode(nonce));
                 warn!(".. auth_tag = 0x{}", hex::encode(&setup_pkt.auth_tag));
@@ -290,7 +293,10 @@ impl Circuit {
         let mut cell = match direction {
             CellDirection::Upstream => {
                 // no upstream injection -> always dummy
-                debug!("Creating dummy cell for circuit with upstream id {}", self.upstream_id);
+                debug!(
+                    "Creating dummy cell for circuit with upstream id {}",
+                    self.upstream_id
+                );
                 Cell::dummy(circuit_id, round_no)
             }
             CellDirection::Downstream => match round_no == self.max_round_no {
@@ -298,7 +304,10 @@ impl Circuit {
                 false => match self.inject_cells.pop_front() {
                     Some(c) => c,
                     None => {
-                        debug!("Creating dummy cell for circuit with downstream id {}", self.downstream_id);
+                        debug!(
+                            "Creating dummy cell for circuit with downstream id {}",
+                            self.downstream_id
+                        );
                         Cell::dummy(circuit_id, round_no)
                     }
                 },

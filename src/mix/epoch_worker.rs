@@ -11,8 +11,9 @@ use tokio::time::Duration;
 use super::circuit::{
     CellDirection, Circuit, ClientCircuit, ExtendInfo, NextCellStep, NextSetupStep,
 };
-use super::directory_client::{self, RendezvousMap};
+use super::directory_client;
 use super::grpc::SetupPacketWithPrev;
+use super::rendezvous_map::RendezvousMap;
 use super::sender::{CellBatch, PacketWithNextHop, SetupBatch, SubscribeBatch};
 use crate::crypto::key::Key;
 use crate::defs::{CircuitId, RoundNo, Token};
