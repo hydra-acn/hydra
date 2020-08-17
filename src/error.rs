@@ -38,7 +38,7 @@ impl fmt::Display for Error {
 /// enum). `args` after `type` are passed to `format!(...)` to construct the error message.
 #[macro_export]
 macro_rules! assert_as_err {
-    ($b:expr, $type:expr $(, $args:tt)*) => {
+    ($b:expr, $type:expr $(, $args:expr)*) => {
         if !$b {
             return Err($type(format!($($args, )*)));
         }
@@ -48,25 +48,25 @@ macro_rules! assert_as_err {
 /// Specializing assert_as_err
 #[macro_export]
 macro_rules! assert_as_io_err {
-    ($b:expr $(, $args:tt)*) => { crate::assert_as_err!($b, Error::IoError $(, $args)*) };
+    ($b:expr $(, $args:expr)*) => { crate::assert_as_err!($b, Error::IoError $(, $args)*) };
 }
 
 /// Specializing assert_as_err
 #[macro_export]
 macro_rules! assert_as_size_err {
-    ($b:expr $(, $args:tt)*) => { crate::assert_as_err!($b, Error::SizeMismatch $(, $args)*) };
+    ($b:expr $(, $args:expr)*) => { crate::assert_as_err!($b, Error::SizeMismatch $(, $args)*) };
 }
 
 /// Specializing assert_as_err
 #[macro_export]
 macro_rules! assert_as_input_err {
-    ($b:expr $(, $args:tt)*) => { crate::assert_as_err!($b, Error::InputError $(, $args)*) };
+    ($b:expr $(, $args:expr)*) => { crate::assert_as_err!($b, Error::InputError $(, $args)*) };
 }
 
 /// Specializing assert_as_err
 #[macro_export]
 macro_rules! assert_as_external_err {
-    ($b:expr $(, $args:tt)*) => { crate::assert_as_err!($b, Error::ExternalError $(, $args)*) };
+    ($b:expr $(, $args:expr)*) => { crate::assert_as_err!($b, Error::ExternalError $(, $args)*) };
 }
 
 impl std::convert::From<Error> for tonic::Status {

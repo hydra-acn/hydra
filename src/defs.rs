@@ -20,6 +20,8 @@ pub const DIR_AUTH_KEY_INFO: &[u8; 4] = b"auth";
 
 pub const DIR_AUTH_UNREGISTER: &[u8; 10] = b"unregister";
 
+/// Number of tokens in a setup packet
+pub const SETUP_TOKENS: usize = 256;
 pub const ONION_LEN: usize = 256;
 
 // TODO use these more often instead of magic numbers :)
@@ -31,7 +33,7 @@ pub fn hydra_version() -> &'static str {
 }
 
 impl SetupPacket {
-    /// for a given setup packet, determine how much hops in needs to be sent
+    /// for a given setup packet, determine how much hops it needs to be sent
     /// (0 if the onion encrypted part only contains the tokens to subscribe to)
     /// returns `None` if the onion encrypted part has unexpected size
     pub fn ttl(&self) -> Option<u32> {
