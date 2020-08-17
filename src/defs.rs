@@ -154,6 +154,17 @@ impl Cell {
     }
 }
 
+#[macro_export]
+macro_rules! delegate_generic {
+    ($to:ident; $doc:expr; $fnname:ident; $($arg:ident: $type:ty),* => $ret:ty) => {
+        #[doc = $doc]
+        pub fn $fnname(&self, $($arg: $type),*) -> $ret {
+            self.$to.$fnname($($arg),*)
+        }
+    };
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
