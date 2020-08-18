@@ -10,36 +10,10 @@ use super::directory_client;
 use crate::derive_grpc_client;
 use crate::error::Error;
 use crate::grpc;
+use crate::net::PacketWithNextHop;
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
 use crate::tonic_mix::*;
-
-/// Wrapping a packet of type `T` with next hop information
-pub struct PacketWithNextHop<T> {
-    inner: T,
-    next_hop: SocketAddr,
-}
-
-impl<T> PacketWithNextHop<T> {
-    pub fn new(pkt: T, next_hop: SocketAddr) -> Self {
-        PacketWithNextHop {
-            inner: pkt,
-            next_hop,
-        }
-    }
-
-    pub fn into_inner(self) -> T {
-        self.inner
-    }
-
-    pub fn next_hop(&self) -> &SocketAddr {
-        &self.next_hop
-    }
-
-    pub fn set_next_hop(&mut self, next_hop: SocketAddr) {
-        self.next_hop = next_hop;
-    }
-}
 
 pub type Batch<T> = Vec<PacketWithNextHop<T>>;
 pub type SetupBatch = Batch<SetupPacket>;
@@ -137,10 +111,10 @@ impl State {
 fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<SocketAddr>) {
     let mut batch_map: HashMap<SocketAddr, Vec<T>> = HashMap::new();
     for pkt in batch {
-        match batch_map.get_mut(&pkt.next_hop) {
+        match batch_map.get_mut(pkt.next_hop()) {
             Some(vec) => vec.push(pkt.into_inner()),
             None => {
-                batch_map.insert(pkt.next_hop, vec![pkt.into_inner()]);
+                batch_map.insert(*pkt.next_hop(), vec![pkt.into_inner()]);
             }
         }
     }

@@ -8,13 +8,13 @@ use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
-use super::circuit::{
-    CellDirection, Circuit, ClientCircuit, ExtendInfo, NextCellStep, NextSetupStep,
-};
+use super::circuit::{CellDirection, Circuit, ExtendInfo, NextCellStep, NextSetupStep};
 use super::directory_client;
+use super::dummy_circuit::DummyCircuit;
 use super::grpc::SetupPacketWithPrev;
 use super::rendezvous_map::RendezvousMap;
-use super::sender::{CellBatch, PacketWithNextHop, SetupBatch, SubscribeBatch};
+use super::sender::{CellBatch, SetupBatch, SubscribeBatch};
+use crate::net::PacketWithNextHop;
 use crate::crypto::key::Key;
 use crate::defs::{CircuitId, RoundNo, Token};
 use crate::epoch::{current_time, EpochInfo, EpochNo};
@@ -32,7 +32,7 @@ type PublishTxQueue = spmc::Sender<CellBatch>;
 
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
-type ClientCircuitMap = BTreeMap<CircuitId, ClientCircuit>;
+type ClientCircuitMap = BTreeMap<CircuitId, DummyCircuit>;
 type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
 
 /// Bundling the various circuit maps used during one epoch
@@ -474,7 +474,7 @@ impl Worker {
             )
             .expect("No path available");
         let (circuit, extend) =
-            ClientCircuit::new(epoch_no, layer, path).expect("Creating dummy circuit failed");
+            DummyCircuit::new(epoch_no, layer, path).expect("Creating dummy circuit failed");
         self.setup_circuits
             .dummy_circuits
             .insert(circuit.circuit_id(), circuit);

@@ -1,5 +1,6 @@
 pub mod channel_pool;
 pub mod circuit;
+pub mod dummy_circuit;
 pub mod directory_client;
 pub mod rendezvous_map;
 pub mod epoch_worker;
