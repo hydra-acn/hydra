@@ -4,7 +4,7 @@ use rand::seq::SliceRandom;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::RwLock;
-use tokio::time::Duration;
+use tokio::time::{delay_for, Duration};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Status;
 
@@ -101,6 +101,29 @@ impl Client {
     /// return the start time of the next epoch setup (as UNIX time in seconds)
     pub fn next_setup_start(&self) -> Option<u64> {
         self.next_epoch_info().map(|epoch| epoch.setup_start_time)
+    }
+
+    /// Sleep till the next setup phase starts, waking up `slack` seconds before.
+    /// If we are already withing `slack` seconds of the next setup start, do not sleep at all.
+    /// If we do not know the next setup start time, sleep for `default` seconds.
+    pub async fn sleep_till_next_setup(&self, slack: u64, default: u64) {
+        let current_time = current_time_in_secs();
+        let wait_for = match self.next_setup_start() {
+            Some(t) if t > current_time + slack => t - current_time - slack,
+            Some(t) if t > current_time => 0,
+            Some(t) => {
+                warn!(
+                    "Next epoch starts in the past!? ({} seconds ago)",
+                    current_time - t
+                );
+                default
+            }
+            None => {
+                warn!("Don't know when the next epoch starts");
+                default
+            }
+        };
+        delay_for(Duration::from_secs(wait_for)).await;
     }
 
     /// return the epoch number for the epoch that is currently in the communication phase

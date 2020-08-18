@@ -1,5 +1,6 @@
 use hmac::{Hmac, Mac, NewMac};
 use log::*;
+use rand::Rng;
 use sha2::Sha256;
 use std::cmp;
 use std::collections::{BTreeMap, HashMap};
@@ -328,26 +329,9 @@ impl Client {
 
 pub async fn run(client: Arc<Client>) {
     client.register().await;
-    let slack = 10;
     loop {
-        // sleep till the next epoch starts
-        let current_time = current_time_in_secs();
-        let wait_for = match client.next_setup_start() {
-            Some(t) if t > current_time + slack => t - current_time - slack,
-            Some(t) if t > current_time => 0,
-            Some(t) => {
-                warn!(
-                    "Next epoch starts in the past!? ({} seconds ago)",
-                    current_time - t
-                );
-                30
-            }
-            None => {
-                warn!("Don't know when the next epoch starts");
-                30
-            }
-        };
-        delay_for(Duration::from_secs(wait_for)).await;
+        let slack = rand::thread_rng().gen_range(10, 20);
+        client.base_client.sleep_till_next_setup(slack, 30).await;
         info!("Updating directory");
         client.update().await;
         // another sleep to avoid multiple updates per epoch
