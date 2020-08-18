@@ -231,7 +231,7 @@ impl Client {
 pub async fn run(client: Arc<Client>) {
     loop {
         let slack = rand::thread_rng().gen_range(10, 20);
-        client.sleep_till_next_setup(slack, 30).await;
+        client.sleep_till_next_setup(slack, 1).await;
         info!("Updating directory");
         match client.connect().await {
             Ok(mut conn) => {
