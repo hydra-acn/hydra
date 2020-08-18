@@ -253,23 +253,19 @@ pub async fn run(client: Arc<Client>) {
     }
 }
 
-/// implement some "complex" getters for MixInfo (gRPC message type)
+macro_rules! define_addr_getter {
+    ($getter_name:ident, $port_field:ident) => {
+        pub fn $getter_name(&self) -> Option<SocketAddr> {
+            ip_addr_from_slice(&self.address)
+                .ok()
+                .map(|ip| SocketAddr::new(ip, self.$port_field as u16))
+        }
+    };
+}
+
+/// Implement some "complex" getters for MixInfo (gRPC message type).
 impl MixInfo {
-    pub fn entry_address(&self) -> Option<SocketAddr> {
-        ip_addr_from_slice(&self.address)
-            .ok()
-            .map(|ip| SocketAddr::new(ip, self.entry_port as u16))
-    }
-
-    pub fn relay_address(&self) -> Option<SocketAddr> {
-        ip_addr_from_slice(&self.address)
-            .ok()
-            .map(|ip| SocketAddr::new(ip, self.relay_port as u16))
-    }
-
-    pub fn rendezvous_address(&self) -> Option<SocketAddr> {
-        ip_addr_from_slice(&self.address)
-            .ok()
-            .map(|ip| SocketAddr::new(ip, self.rendezvous_port as u16))
-    }
+    define_addr_getter!(entry_address, entry_port);
+    define_addr_getter!(relay_address, relay_port);
+    define_addr_getter!(rendezvous_address, rendezvous_port);
 }
