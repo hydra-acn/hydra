@@ -1,5 +1,6 @@
 use log::*;
 use rand::seq::IteratorRandom;
+use std::net::SocketAddr;
 
 use crate::client::circuit::Circuit;
 use crate::defs::{CellCmd, CircuitId, RoundNo};
@@ -32,6 +33,10 @@ impl DummyCircuit {
 
     pub fn circuit_id(&self) -> CircuitId {
         self.circuit.circuit_id()
+    }
+
+    pub fn first_hop(&self) -> &SocketAddr {
+        self.circuit.first_hop()
     }
 
     pub fn layer(&self) -> u32 {
