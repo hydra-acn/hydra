@@ -255,6 +255,12 @@ pub async fn run(client: Arc<Client>) {
 
 /// implement some "complex" getters for MixInfo (gRPC message type)
 impl MixInfo {
+    pub fn entry_address(&self) -> Option<SocketAddr> {
+        ip_addr_from_slice(&self.address)
+            .ok()
+            .map(|ip| SocketAddr::new(ip, self.entry_port as u16))
+    }
+
     pub fn relay_address(&self) -> Option<SocketAddr> {
         ip_addr_from_slice(&self.address)
             .ok()
