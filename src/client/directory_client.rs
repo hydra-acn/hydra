@@ -1,9 +1,10 @@
 //! Hydra client talking to the directory service
 use log::*;
 use rand::seq::SliceRandom;
+use rand::Rng;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Status;
@@ -224,6 +225,31 @@ impl Client {
     pub fn insert_epoch(&self, epoch: EpochInfo) {
         let mut epoch_map = self.epochs.write().expect("Lock failure");
         epoch_map.insert(epoch.epoch_no, epoch);
+    }
+}
+
+pub async fn run(client: Arc<Client>) {
+    loop {
+        let slack = rand::thread_rng().gen_range(10, 20);
+        client.sleep_till_next_setup(slack, 30).await;
+        info!("Updating directory");
+        match client.connect().await {
+            Ok(mut conn) => {
+                client.fetch(&mut conn).await.unwrap_or_else(|e| {
+                    warn!("Fetching directory failed: {}", e);
+                    0
+                });
+                ()
+            }
+            Err(e) => {
+                warn!(
+                    "Connection to directory service failed, skipping update: {}",
+                    e
+                );
+            }
+        }
+        // another sleep to avoid multiple updates per epoch
+        delay_for(Duration::from_secs(slack + 1)).await;
     }
 }
 
