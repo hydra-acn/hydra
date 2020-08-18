@@ -5,6 +5,7 @@ use openssl::rand::rand_bytes;
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::mem::size_of;
 use tokio::time::{delay_for, Duration};
 
 use crate::tonic_mix::{Cell, SetupPacket};
@@ -100,6 +101,16 @@ pub fn tokens_from_bytes(raw: &[u8]) -> Vec<Token> {
         };
     }
     tokens
+}
+
+pub fn tokens_to_byte_vec(tokens: &[Token]) -> Vec<u8> {
+    let mut vec = vec![0; size_of::<Token>() * tokens.len()];
+    let mut i = 0;
+    for t in tokens.iter() {
+        LittleEndian::write_u64(&mut vec[i..i+8], *t);
+        i += 8;
+    }
+    vec
 }
 
 pub enum CellCmd {
