@@ -380,7 +380,13 @@ impl Circuit {
         for dropped_cell in self.inject_cells.iter() {
             match cell.onion.get_mut(i..i + 8) {
                 Some(buf) => LittleEndian::write_u64(buf, dropped_cell.token()),
-                None => warn!("Nack is not big enough"),
+                None => {
+                    warn!(
+                        "Have to drop {} cells -> NACK not big enough",
+                        self.inject_cells.len()
+                    );
+                    break;
+                }
             }
             i += 8;
         }
