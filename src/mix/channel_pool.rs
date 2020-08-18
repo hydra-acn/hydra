@@ -24,6 +24,13 @@ where
             channels: Mutex::new(HashMap::new()),
         }
     }
+
+    pub async fn get_channel(&self, dst: &SocketAddr) -> Option<T> {
+        let as_vec = vec![*dst];
+        let map = self.get_channels(&as_vec).await;
+        map.get(dst).cloned()
+    }
+
     pub async fn get_channels(&self, destinations: &[SocketAddr]) -> HashMap<SocketAddr, T> {
         self.prepare_channels(destinations).await;
         let mut requested = HashMap::new();
