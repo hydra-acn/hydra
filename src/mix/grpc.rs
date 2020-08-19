@@ -183,7 +183,7 @@ impl Mix for Service {
         let mut cell_vec = CellVector {
             cells: missed_cells.clone(),
         };
-        if cell_vec.cells.is_empty() {
+        if cell_vec.cells.is_empty() && cell.round_no > 0 {
             cell_vec
                 .cells
                 .push(Cell::dummy(cell.circuit_id, cell.round_no - 1));
