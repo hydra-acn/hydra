@@ -216,8 +216,8 @@ impl Client {
             }
         };
 
-        // clear old keys and get the number of active keys
-        let sent_keys = {
+        // clear old keys and get the number of keys for future use
+        let future_keys = {
             let mut key_map = self.keys.write().expect("Lock failure");
             match self.base_client.smallest_epoch_no() {
                 Some(epoch_no) => {
@@ -226,13 +226,15 @@ impl Client {
                 }
                 None => key_map.clear(),
             }
-            key_map.len()
+            // keys for current communication phase and current setup phase are not for future use
+            // -> subtract 2
+            cmp::max(key_map.len() as isize - 2, 0) as usize
         };
 
         // send more ephemeral keys if necessary
         let goal = cmp::max(12, epochs_in_advance + 2);
-        if sent_keys < goal {
-            for _ in 0..(goal - sent_keys) {
+        if future_keys < goal {
+            for _ in 0..(goal - future_keys) {
                 self.create_ephemeral_dh(&mut conn).await;
             }
         }

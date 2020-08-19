@@ -62,8 +62,9 @@ impl Client {
         let mut epoch_map = self.epochs.write().expect("Lock failure");
 
         if let Some(next_epoch) = directory.epochs.first() {
-            // delete old epochs from our map (but keep current, which is not in the directory)
-            let current_epoch_no = next_epoch.epoch_no - 1;
+            // delete old epochs from our map (older than current communication phase)
+            // directory announces epoch x next -> we are in the communication phase for x - 2
+            let current_epoch_no = next_epoch.epoch_no - 2;
             *epoch_map = epoch_map.split_off(&current_epoch_no);
         } else {
             warn!("Directory response is empty");
