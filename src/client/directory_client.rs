@@ -158,18 +158,6 @@ impl Client {
         None
     }
 
-    /// if we are currently in a communication phase, return the duration till next receive
-    /// TODO rename/rework: time till round end (send and receive anytime between rounds)
-    pub fn next_receive_in(&self) -> Option<Duration> {
-        let epoch_map = self.epochs.read().expect("Lock failure");
-        for (_, epoch) in epoch_map.iter() {
-            if let Some(d) = epoch.next_receive_in() {
-                return Some(d);
-            }
-        }
-        None
-    }
-
     /// Default client side path selection according to the Hydra protocol for epoch `epoch_no`.
     pub fn select_path(&self, epoch_no: EpochNo) -> Result<Vec<MixInfo>, Error> {
         self.select_path_tunable(epoch_no, None, None)
