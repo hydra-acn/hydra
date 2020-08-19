@@ -474,7 +474,7 @@ impl Worker {
             )
             .expect("No path available");
         let (circuit, extend) =
-            DummyCircuit::new(epoch_no, layer, path).expect("Creating dummy circuit failed");
+            DummyCircuit::new(epoch_no, layer, &path).expect("Creating dummy circuit failed");
         self.setup_circuits
             .dummy_circuits
             .insert(circuit.circuit_id(), circuit);

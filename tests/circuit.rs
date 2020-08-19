@@ -49,7 +49,7 @@ fn setup_onion() {
     let subscribe_to = vec![13, 37];
     let rendezvous_map = Arc::new(RendezvousMap::new(&epoch_info));
     let (client_circuit, extend) =
-        ClientCircuit::new(42, path.clone(), subscribe_to.clone()).unwrap();
+        ClientCircuit::new(42, &path, subscribe_to.clone()).unwrap();
     assert_eq!(*extend.next_hop(), endpoints[0]);
     let setup_pkt = extend.into_inner();
 

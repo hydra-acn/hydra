@@ -20,7 +20,7 @@ impl DummyCircuit {
     pub fn new(
         epoch_no: EpochNo,
         layer: u32,
-        path: Vec<MixInfo>,
+        path: &[MixInfo],
     ) -> Result<(Self, PacketWithNextHop<SetupPacket>), Error> {
         let (circuit, setup_pkt) = Circuit::new(epoch_no, path, Vec::new())?;
         let dummy = DummyCircuit {

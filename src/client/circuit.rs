@@ -43,7 +43,7 @@ impl Circuit {
     /// Returns the circuit context and the setup packet.
     pub fn new(
         epoch_no: EpochNo,
-        path: Vec<MixInfo>,
+        path: &[MixInfo],
         tokens: Vec<Token>,
     ) -> Result<(Circuit, PacketWithNextHop<SetupPacket>), Error> {
         let first_mix = path
@@ -73,7 +73,7 @@ impl Circuit {
         let mut hops = Vec::new();
         let mut threefishies = Vec::new();
 
-        for mix in &path {
+        for mix in path {
             let mix_pk = Key::clone_from_slice(&mix.public_dh);
             let (pk, sk) = x448::generate_keypair()?;
             let shared_key = x448::generate_shared_secret(&mix_pk, &sk)?;
