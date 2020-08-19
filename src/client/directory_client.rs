@@ -59,19 +59,13 @@ impl Client {
     pub async fn fetch(&self, conn: &mut DirectoryChannel) -> Result<usize, Status> {
         let query = DirectoryRequest { min_epoch_no: 0 };
         let directory = conn.query_directory(query).await?.into_inner();
-        let mut epoch_map = self.epochs.write().expect("Lock failure");
-
-        if let Some(next_epoch) = directory.epochs.first() {
-            // delete old epochs from our map (older than current communication phase)
-            // directory announces epoch x next -> we are in the communication phase for x - 2
-            let current_epoch_no = next_epoch.epoch_no - 2;
-            *epoch_map = epoch_map.split_off(&current_epoch_no);
-        } else {
+        let number_of_epochs = directory.epochs.len();
+        debug!("Fetched directory with {} epochs", number_of_epochs);
+        if number_of_epochs == 0 {
             warn!("Directory response is empty");
         }
 
-        let number_of_epochs = directory.epochs.len();
-        debug!("Fetched directory with {} epochs", number_of_epochs);
+        let mut epoch_map = self.epochs.write().expect("Lock failure");
         for epoch in directory.epochs {
             debug!(
                 ".. epoch {} has {} mixes",
@@ -80,6 +74,22 @@ impl Client {
             );
             epoch_map.insert(epoch.epoch_no, epoch);
         }
+
+        // delete old epochs from our map (old = communication phase is over)
+        // for now: search the first epoch that is not old and split the map there
+        // TODO nightly: drain_filter instead
+        let current_time = current_time_in_secs();
+        let maybe_keep_epoch_no = epoch_map
+            .iter()
+            .skip_while(|(_, e)| e.communication_end_time() <= current_time)
+            .next()
+            .map(|(epoch_no, _)| *epoch_no);
+
+        match maybe_keep_epoch_no {
+            Some(e) => *epoch_map = epoch_map.split_off(&e),
+            None => epoch_map.clear(), // all epochs too old
+        }
+
         Ok(number_of_epochs)
     }
 
