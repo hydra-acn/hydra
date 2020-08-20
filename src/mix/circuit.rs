@@ -196,12 +196,18 @@ impl Circuit {
             Ordering::Less => {
                 match direction {
                     CellDirection::Upstream => return Some(NextCellStep::Wait(cell)), // too early
-                    CellDirection::Downstream => return None,                         // too late
+                    CellDirection::Downstream => {
+                        warn!("Dropping cell that's too late");
+                        return None;
+                    }
                 }
             }
             Ordering::Greater => {
                 match direction {
-                    CellDirection::Upstream => return None, // too late
+                    CellDirection::Upstream => {
+                        warn!("Dropping cell that's too late");
+                        return None;
+                    }
                     CellDirection::Downstream => return Some(NextCellStep::Wait(cell)), // too early
                 }
             }
