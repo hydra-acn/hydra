@@ -1,5 +1,6 @@
 //! Crypto stuff for Hydra
 pub mod aes;
+pub mod cprng;
 pub mod key;
 pub mod threefish;
 pub mod x448;

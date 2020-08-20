@@ -10,6 +10,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Status;
 
 use crate::epoch::{current_time_in_secs, EpochNo};
+use crate::crypto::cprng::thread_cprng;
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;
@@ -206,15 +207,14 @@ impl Client {
             len
         );
 
-        // TODO security: use secure random source
-        let rng = &mut rand::thread_rng();
+        let cprng = &mut thread_cprng();
         let mut path: Vec<MixInfo> = canditates
-            .choose_multiple(rng, len)
+            .choose_multiple(cprng, len)
             .map(|&mix| mix.clone())
             .collect();
 
         if allow_dup {
-            let new_entry_ref = canditates.choose(rng).expect("Checked above");
+            let new_entry_ref = canditates.choose(cprng).expect("Checked above");
             path[0] = (*new_entry_ref).clone();
         }
         Ok(path)

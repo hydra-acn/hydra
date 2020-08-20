@@ -439,6 +439,7 @@ dependencies = [
  "openssl-sys",
  "prost",
  "rand",
+ "rand_core",
  "sha2",
  "simplelog",
  "spmc",
