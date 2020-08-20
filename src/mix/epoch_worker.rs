@@ -284,6 +284,7 @@ impl Worker {
         let mut relay_batch = CellBatch::new();
         let mut rendezvous_batch = CellBatch::new();
         let mut deliver_batch = Vec::new();
+        let mut early_cells = Vec::new();
 
         // collect and process all cells we received on different queues
         // TODO performance: parallel
@@ -294,18 +295,12 @@ impl Worker {
             .chain(std::iter::once(early_queue_ref));
         for queue in queue_iter {
             while let Ok(cell) = queue.try_recv() {
-                if cell.round_no != round_no {
-                    warn!(
-                        "Dropping cell with wrong round number. Expected {}, got {}.",
-                        round_no, cell.round_no
-                    );
-                    continue;
-                }
                 match process_cell(
                     &mut self.communication_circuits.circuits,
                     &mut self.communication_circuits.dummy_circuits,
                     &self.communication_circuits.circuit_id_map,
                     cell,
+                    round_no,
                     layer,
                     direction,
                 ) {
@@ -313,10 +308,7 @@ impl Worker {
                         NextCellStep::Relay(c) => relay_batch.push(c),
                         NextCellStep::Rendezvous(c) => rendezvous_batch.push(c),
                         NextCellStep::Deliver(c) => deliver_batch.push(c),
-                        NextCellStep::Wait(c) => self
-                            .early_cell_enqueue
-                            .send(c)
-                            .expect("Early cell queue gone!?"),
+                        NextCellStep::Wait(c) => early_cells.push(c),
                     },
                     None => (),
                 }
@@ -364,6 +356,13 @@ impl Worker {
                 .unwrap_or_else(|e| error!("Sender task is gone!? ({}))", e));
         } else if deliver_batch.len() > 0 {
             self.grpc_state.deliver(deliver_batch);
+        }
+
+        // put early cells back into a rx queue
+        for cell in early_cells.into_iter() {
+            self.early_cell_enqueue
+                .send(cell)
+                .expect("Early cell queue gone!?");
         }
 
         if let CellDirection::Downstream = direction {
@@ -501,15 +500,24 @@ impl Worker {
 
 /// Returns either the cell to forward next (might be a dummy) together with the next action or
 /// `None` if the circuit id is not known or we are the downstream endpoint (dummy circuits) or the
-/// cell was a duplicate
+/// cell was a duplicate or the cell was dropped for other reasons.
 fn process_cell(
     circuits: &mut CircuitMap,
     dummy_circuits: &mut ClientCircuitMap,
     circuit_id_map: &CircuitIdMap,
     cell: Cell,
+    round_no: RoundNo,
     layer: u32,
     direction: CellDirection,
 ) -> Option<NextCellStep> {
+    if cell.round_no != round_no {
+        warn!(
+            "Dropping cell with wrong round number. Expected {}, got {}.",
+            round_no, cell.round_no
+        );
+        return None;
+    }
+
     match direction {
         CellDirection::Upstream => {
             if let Some(circuit) = circuits.get_mut(&cell.circuit_id) {
