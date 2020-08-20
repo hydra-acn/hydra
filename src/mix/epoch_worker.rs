@@ -14,10 +14,10 @@ use super::dummy_circuit::DummyCircuit;
 use super::grpc::SetupPacketWithPrev;
 use super::rendezvous_map::RendezvousMap;
 use super::sender::{CellBatch, SetupBatch, SubscribeBatch};
-use crate::net::PacketWithNextHop;
 use crate::crypto::key::Key;
 use crate::defs::{CircuitId, RoundNo, Token};
 use crate::epoch::{current_time, EpochInfo, EpochNo};
+use crate::net::PacketWithNextHop;
 use crate::tonic_mix::*;
 
 type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacketWithPrev>;
@@ -27,6 +27,7 @@ type SubscribeTxQueue = spmc::Sender<SubscribeBatch>;
 
 type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
 type CellTxQueue = spmc::Sender<CellBatch>;
+type EarlyCellEnqueue = tokio::sync::mpsc::UnboundedSender<Cell>;
 
 type PublishTxQueue = spmc::Sender<CellBatch>;
 
@@ -55,6 +56,8 @@ pub struct Worker {
     subscribe_tx_queue: SubscribeTxQueue,
     cell_rx_queues: Vec<CellRxQueue>,
     cell_tx_queue: CellTxQueue,
+    early_cell_enqueue: EarlyCellEnqueue,
+    early_cell_dequeue: CellRxQueue,
     publish_tx_queue: PublishTxQueue,
     pending_setup_pkts: PendingSetupMap,
     setup_circuits: CircuitMapBundle,
@@ -73,6 +76,7 @@ impl Worker {
         cell_tx_queue: CellTxQueue,
         publish_tx_queue: PublishTxQueue,
     ) -> Self {
+        let (early_cell_enqueue, early_cell_dequeue) = tokio::sync::mpsc::unbounded_channel();
         Worker {
             running: running.clone(),
             dir_client,
@@ -82,6 +86,8 @@ impl Worker {
             subscribe_tx_queue,
             cell_rx_queues,
             cell_tx_queue,
+            early_cell_enqueue,
+            early_cell_dequeue,
             publish_tx_queue,
             pending_setup_pkts: PendingSetupMap::new(),
             communication_circuits: CircuitMapBundle::default(),
@@ -278,9 +284,15 @@ impl Worker {
         let mut relay_batch = CellBatch::new();
         let mut rendezvous_batch = CellBatch::new();
         let mut deliver_batch = Vec::new();
-        // collect and process all cells we received
+
+        // collect and process all cells we received on different queues
         // TODO performance: parallel
-        for queue in self.cell_rx_queues.iter_mut() {
+        let early_queue_ref = &mut self.early_cell_dequeue;
+        let queue_iter = self
+            .cell_rx_queues
+            .iter_mut()
+            .chain(std::iter::once(early_queue_ref));
+        for queue in queue_iter {
             while let Ok(cell) = queue.try_recv() {
                 if cell.round_no != round_no {
                     warn!(
@@ -301,6 +313,10 @@ impl Worker {
                         NextCellStep::Relay(c) => relay_batch.push(c),
                         NextCellStep::Rendezvous(c) => rendezvous_batch.push(c),
                         NextCellStep::Deliver(c) => deliver_batch.push(c),
+                        NextCellStep::Wait(c) => self
+                            .early_cell_enqueue
+                            .send(c)
+                            .expect("Early cell queue gone!?"),
                     },
                     None => (),
                 }
@@ -318,6 +334,7 @@ impl Worker {
                     NextCellStep::Relay(c) => relay_batch.push(c),
                     NextCellStep::Rendezvous(c) => rendezvous_batch.push(c),
                     NextCellStep::Deliver(c) => deliver_batch.push(c),
+                    NextCellStep::Wait(_c) => error!("Why should a dummy be out of sync?"),
                 },
                 None => (),
             }

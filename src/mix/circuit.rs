@@ -14,7 +14,7 @@ use crate::tonic_mix::{Cell, SetupPacket};
 use byteorder::{ByteOrder, LittleEndian};
 use log::*;
 use openssl::rand::rand_bytes;
-use std::cmp;
+use std::cmp::{self, Ordering};
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -30,6 +30,7 @@ pub enum NextCellStep {
     Relay(PacketWithNextHop<Cell>),
     Rendezvous(PacketWithNextHop<Cell>),
     Deliver(Cell),
+    Wait(Cell),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -182,19 +183,28 @@ impl Circuit {
         self.layer
     }
 
-    /// Returns `None` for duplicates and out-of-sync cells.
+    /// Returns `None` for duplicates and out-of-sync (too late) cells.
     pub fn process_cell(
         &mut self,
         mut cell: Cell,
         layer: u32,
         direction: CellDirection,
     ) -> Option<NextCellStep> {
-        if layer != self.layer {
-            warn!(
-                "Layer mismatch in circuit with downstream id {}: expected {}, got {} -> most likely out-of-sync sending",
-                self.downstream_id, self.layer, layer
-            );
-            return None;
+        // out-of-sync detection
+        match layer.cmp(&self.layer) {
+            Ordering::Equal => (), // in-sync -> continue processing
+            Ordering::Less => {
+                match direction {
+                    CellDirection::Upstream => return Some(NextCellStep::Wait(cell)), // too early
+                    CellDirection::Downstream => return None,                         // too late
+                }
+            }
+            Ordering::Greater => {
+                match direction {
+                    CellDirection::Upstream => return None, // too late
+                    CellDirection::Downstream => return Some(NextCellStep::Wait(cell)), // too early
+                }
+            }
         }
 
         // duplicate detection
