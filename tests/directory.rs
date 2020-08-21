@@ -72,7 +72,7 @@ async fn client_task(state: Arc<State>, port: u16) {
 
     let mut client = DirectoryClient::new(channel);
 
-    let dummy_key = Key::new(x448::POINT_SIZE).expect("Key gen failed");
+    let dummy_key = Key::new(x448::POINT_SIZE);
 
     // test some successful registers
     let m = 4;
@@ -127,7 +127,7 @@ async fn client_task(state: Arc<State>, port: u16) {
     expect_fail(&client.register(Request::new(bad_info)).await);
 
     // test bad key len during registration
-    let bad_key = Key::new(x448::POINT_SIZE - 1).expect("Key gen failed");
+    let bad_key = Key::new(x448::POINT_SIZE - 1);
     let bad_info = create_register_request(m + 1, &bad_key);
     expect_fail(&client.register(Request::new(bad_info)).await);
 
@@ -261,7 +261,7 @@ async fn client_task(state: Arc<State>, port: u16) {
 }
 
 async fn register_mix(client: &mut DirectoryClient<tonic::transport::Channel>, index: u8) -> Key {
-    let (pk, sk) = x448::generate_keypair().expect("Key gen failed");
+    let (pk, sk) = x448::generate_keypair();
     let req = Request::new(create_register_request(index, &pk));
     let reply = client
         .register(req)
@@ -290,7 +290,7 @@ async fn send_pk(
     map: &mut BTreeMap<(u8, u32), Key>,
     auth_key: Key,
 ) {
-    let pk = Key::new(x448::POINT_SIZE).expect("Key gen failed");
+    let pk = Key::new(x448::POINT_SIZE);
     //generate mac
     let mut mac =
         Hmac::<Sha256>::new_varkey(auth_key.borrow_raw()).expect("Initialising mac failed");

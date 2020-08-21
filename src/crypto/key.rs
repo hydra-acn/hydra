@@ -1,9 +1,9 @@
 //! Safe abstraction (overwrite mem with zero on drop) for raw bytes that are used as keys
-
+use super::cprng::thread_cprng;
 use crate::error::Error;
 
 use hkdf::Hkdf;
-use openssl::rand::rand_bytes;
+use rand::Rng;
 
 /// the Key datatype
 /// TODO type parameter to indicate public/private keys?
@@ -14,12 +14,11 @@ pub struct Key {
 
 impl Key {
     /// generate a random key (cryptographically secure) with a given size
-    pub fn new(size: usize) -> Result<Self, Error> {
+    pub fn new(size: usize) -> Self {
         let mut key = Key { key: vec![0; size] };
-        match rand_bytes(&mut key.key) {
-            Ok(_) => Ok(key),
-            Err(e) => Err(Error::OpenSslError(e.to_string())),
-        }
+        let mut rng = thread_cprng();
+        rng.fill(key.key.as_mut_slice());
+        key
     }
 
     /// move from byte vector
@@ -105,7 +104,7 @@ mod tests {
     #[test]
     fn generate_random_key() {
         let size = 1337;
-        let key = Key::new(size).expect("Key gen failed");
+        let key = Key::new(size);
         assert_eq!(key.len(), size);
     }
 

@@ -48,8 +48,7 @@ fn setup_onion() {
     epoch_info.mixes = path.clone();
     let subscribe_to = vec![13, 37];
     let rendezvous_map = Arc::new(RendezvousMap::new(&epoch_info));
-    let (client_circuit, extend) =
-        ClientCircuit::new(42, &path, subscribe_to.clone()).unwrap();
+    let (client_circuit, extend) = ClientCircuit::new(42, &path, subscribe_to.clone()).unwrap();
     assert_eq!(*extend.next_hop(), endpoints[0]);
     let setup_pkt = extend.into_inner();
 
@@ -102,7 +101,7 @@ fn setup_onion() {
 }
 
 fn create_mix_info(index: u8) -> (MixInfo, Key) {
-    let (pk, sk) = x448::generate_keypair().unwrap();
+    let (pk, sk) = x448::generate_keypair();
     let info = MixInfo {
         address: vec![127, 0, 0, index],
         entry_port: 9001,

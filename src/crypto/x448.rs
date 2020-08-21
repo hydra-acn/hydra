@@ -5,15 +5,15 @@ pub use super::x448_bindings::POINT_SIZE;
 use super::x448_bindings::{self, x448_derive_public_key, x448_int, SCALAR_SIZE};
 use crate::error::Error;
 
-/// return Ok((pk, sk)) on success
-pub fn generate_keypair() -> Result<(Key, Key), Error> {
-    let sk = Key::new(SCALAR_SIZE)?;
+/// return (pk, sk)
+pub fn generate_keypair() -> (Key, Key) {
+    let sk = Key::new(SCALAR_SIZE);
     let mut pk_vec = vec![0u8; POINT_SIZE];
     unsafe {
         x448_derive_public_key(&mut (pk_vec[0]) as *mut u8, sk.head_ptr());
     }
     let pk = Key::move_from_vec(pk_vec);
-    Ok((pk, sk))
+    (pk, sk)
 }
 
 /// generate shared secret

@@ -77,7 +77,7 @@ macro_rules! delegate {
 impl Client {
     pub fn new(config: Config) -> Self {
         // TODO sync to disk
-        let (pk, sk) = x448::generate_keypair().expect("Generation of long-term key pair failed");
+        let (pk, sk) = x448::generate_keypair();
         let dir_domain = &config.directory_domain;
         let dir_port = &config.directory_port;
         Client {
@@ -260,7 +260,7 @@ impl Client {
 
     /// create ephemeral key pair and send the public key to the directory service
     pub async fn create_ephemeral_dh(&self, conn: &mut DirectoryChannel) {
-        let (pk, sk) = x448::generate_keypair().expect("keygen failed");
+        let (pk, sk) = x448::generate_keypair();
         //generate mac
         let mut mac = Hmac::<Sha256>::new_varkey(
             self.auth_key

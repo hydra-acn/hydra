@@ -8,7 +8,7 @@ impl CryptoRng for Cprng {}
 
 impl RngCore for Cprng {
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        openssl::rand::rand_bytes(dest).expect("openssl rng died");
+        openssl::rand::rand_bytes(dest).expect("openssl could not seed CPRNG");
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {

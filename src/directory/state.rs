@@ -1,6 +1,7 @@
 use crate::crypto::key::Key;
 use crate::crypto::x448;
 use crate::epoch::{current_epoch_no, EpochNo, MAX_EPOCH_NO};
+use crate::error::Error;
 use crate::tonic_directory::{EpochInfo, MixInfo};
 
 use log::*;
@@ -139,8 +140,8 @@ pub struct Mix {
     pub last_counter: Option<u32>,
 }
 
-pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), tonic::Status> {
-    let (pk, sk) = x448::generate_keypair()?;
+pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), Error> {
+    let (pk, sk) = x448::generate_keypair();
     let s = x448::generate_shared_secret(&pk_mix, &sk)?;
     Ok((pk, s))
 }

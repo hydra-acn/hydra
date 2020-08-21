@@ -75,7 +75,7 @@ impl Circuit {
 
         for mix in path {
             let mix_pk = Key::clone_from_slice(&mix.public_dh);
-            let (pk, sk) = x448::generate_keypair()?;
+            let (pk, sk) = x448::generate_keypair();
             let shared_key = x448::generate_shared_secret(&mix_pk, &sk)?;
             let mut nonce = vec![0u8; 12];
             rand_bytes(&mut nonce)?;
