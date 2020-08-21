@@ -125,11 +125,11 @@ impl Rendezvous for Service {
                             host_vec = vector.clone();
                         }
                         None => {
-                            // token in map, but noone subscribed
+                            // no one subcscribed
                         }
                     },
                     None => {
-                        // token not in map
+                        warn!("Publish in epoch {}, but no subscriptions?", current_epoch_no);
                     }
                 }
             }
