@@ -1,15 +1,16 @@
 //! Various definitions and helper functions
 
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use ctrlc;
-use openssl::rand::rand_bytes;
+use rand::Rng;
 use std::convert::TryInto;
+use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::mem::size_of;
 use tokio::time::{delay_for, Duration};
 
+use crate::crypto::cprng::thread_cprng;
 use crate::tonic_mix::{Cell, SetupPacket};
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 
 pub type Token = u64;
 pub type CircuitId = u64;
@@ -107,7 +108,7 @@ pub fn tokens_to_byte_vec(tokens: &[Token]) -> Vec<u8> {
     let mut vec = vec![0; size_of::<Token>() * tokens.len()];
     let mut i = 0;
     for t in tokens.iter() {
-        LittleEndian::write_u64(&mut vec[i..i+8], *t);
+        LittleEndian::write_u64(&mut vec[i..i + 8], *t);
         i += 8;
     }
     vec
@@ -121,13 +122,13 @@ pub enum CellCmd {
 impl Cell {
     /// creates new dummy cell
     pub fn dummy(cid: CircuitId, r: RoundNo) -> Self {
-        let mut rand_onion = vec![0; ONION_LEN];
-        rand_bytes(&mut rand_onion).expect("Could not randomize dummy cell, better crash now");
-        Cell {
+        let mut cell = Cell {
             circuit_id: cid,
             round_no: r,
-            onion: rand_onion,
-        }
+            onion: vec![0; ONION_LEN],
+        };
+        cell.randomize();
+        cell
     }
 
     pub fn token(&self) -> Token {
@@ -165,6 +166,11 @@ impl Cell {
             }
         }
     }
+
+    /// Turn existing cell into dummy by randomizing the onion encrypted part.
+    pub fn randomize(&mut self) {
+        thread_cprng().fill(self.onion.as_mut_slice());
+    }
 }
 
 #[macro_export]
@@ -176,7 +182,6 @@ macro_rules! delegate_generic {
         }
     };
 }
-
 
 #[cfg(test)]
 mod tests {

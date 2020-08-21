@@ -1,5 +1,4 @@
 use log::*;
-use openssl::rand::rand_bytes;
 use rand::seq::SliceRandom;
 use rand::Rng;
 
@@ -7,6 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use crate::assert_as_size_err;
 use crate::crypto::aes::Aes256Gcm;
+use crate::crypto::cprng::thread_cprng;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::x448;
@@ -78,7 +78,8 @@ impl Circuit {
             let (pk, sk) = x448::generate_keypair();
             let shared_key = x448::generate_shared_secret(&mix_pk, &sk)?;
             let mut nonce = vec![0u8; 12];
-            rand_bytes(&mut nonce)?;
+            let mut rng = thread_cprng();
+            rng.fill(nonce.as_mut_slice());
             let (aes_key, onion_key) = derive_keys(&shared_key, &nonce)?;
             let aes = Aes256Gcm::new(aes_key);
             let sock_addr = mix.relay_address().ok_or_else(|| {

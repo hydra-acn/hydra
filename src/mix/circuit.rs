@@ -3,6 +3,7 @@ use super::grpc::SetupPacketWithPrev;
 use super::rendezvous_map::RendezvousMap;
 use crate::client::circuit::derive_keys;
 use crate::crypto::aes::Aes256Gcm;
+use crate::crypto::cprng::thread_cprng;
 use crate::crypto::key::Key;
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::x448;
@@ -13,7 +14,7 @@ use crate::tonic_mix::{Cell, SetupPacket};
 
 use byteorder::{ByteOrder, LittleEndian};
 use log::*;
-use openssl::rand::rand_bytes;
+use rand::Rng;
 use std::cmp::{self, Ordering};
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
@@ -252,7 +253,7 @@ impl Circuit {
                     // we shall delay the cell -> forward dummy instead
                     let dummy = Cell::dummy(cell.circuit_id, cell.round_no);
                     // randomize cmd of original cell
-                    rand_bytes(&mut cell.onion[0..8]).expect("Cell randomization failed");
+                    thread_cprng().fill(&mut cell.onion[0..8]);
                     self.delayed_cells
                         .insert(cell.round_no + rounds as u32, cell);
                     cell = dummy;
@@ -361,8 +362,8 @@ impl Circuit {
                 match self.threefish.decrypt(tweak_src, &mut cell.onion) {
                     Ok(()) => (),
                     Err(e) => {
-                        warn!("Onion decryption failed: {}", e);
-                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
+                        warn!("Onion decryption failed, randomizing instead: {}", e);
+                        cell.randomize();
                     }
                 }
             }
@@ -371,8 +372,8 @@ impl Circuit {
                 match self.threefish.encrypt(tweak_src, &mut cell.onion) {
                     Ok(()) => (),
                     Err(e) => {
-                        warn!("Onion encryption failed: {}", e);
-                        rand_bytes(&mut cell.onion).expect("Failed to generate dummy");
+                        warn!("Onion encryption failed, randomizing instead: {}", e);
+                        cell.randomize();
                     }
                 }
             }
