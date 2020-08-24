@@ -63,7 +63,7 @@ macro_rules! define_grpc_service {
 
         #[allow(dead_code)]
         pub async fn spawn_service(
-            state: std::sync::Arc<State>,
+            state: std::sync::Arc<$state_type>,
             addr: std::net::SocketAddr,
             tls_cred: Option<ServerTlsCredentials>,
         ) -> Result<
@@ -85,7 +85,7 @@ macro_rules! define_grpc_service {
         pub async fn spawn_service_with_shutdown<
             F: std::future::Future<Output = ()> + Send + 'static,
         >(
-            state: std::sync::Arc<State>,
+            state: std::sync::Arc<$state_type>,
             addr: std::net::SocketAddr,
             shutdown_signal: Option<F>,
             tls_cred: Option<ServerTlsCredentials>,
