@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::time::{delay_for, Duration};
 
 use crate::crypto::cprng::thread_cprng;
-use crate::tonic_mix::{Cell, SetupPacket};
+use crate::tonic_mix::{Cell, SetupPacket, SubscriptionVector};
 
 pub type Token = u64;
 pub type CircuitId = u64;
@@ -34,6 +34,7 @@ pub fn hydra_version() -> &'static str {
     option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
 }
 
+// TODO move additional `impl`s of gRPC data types to separate module
 impl SetupPacket {
     /// for a given setup packet, determine how much hops it needs to be sent
     /// (0 if the onion encrypted part only contains the tokens to subscribe to)
@@ -49,6 +50,31 @@ impl SetupPacket {
             return None;
         }
         Some((nom / denom) as u32)
+    }
+}
+
+impl SubscriptionVector {
+    /// Check if address and port for injection are valid.
+    // TODO security: check for IP addr should be better (e.g. localhost); or use the real src
+    // address instead
+    pub fn is_valid(&self) -> bool {
+        let addr_check = match self.addr.len() {
+            4 | 16 => true,
+            _ => false,
+        };
+        let port_check = self.port <= u16::MAX as u32;
+        addr_check && port_check
+    }
+
+    /// Return the socket address to inject to if it is valid.
+    pub fn socket_addr(&self) -> Option<std::net::SocketAddr> {
+        match self.is_valid() {
+            true => Some(
+                crate::net::socket_addr_from_slice(&self.addr, self.port as u16)
+                    .expect("Checked before"),
+            ),
+            false => None,
+        }
     }
 }
 
