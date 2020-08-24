@@ -59,8 +59,8 @@ impl Circuit {
             tokens.len()
         );
 
-        // TODO security: better use cPRNG?
-        let circuit_id = rand::random();
+        let mut rng = thread_cprng();
+        let circuit_id = rng.gen();
 
         struct Hop {
             nonce: Vec<u8>,
@@ -107,8 +107,6 @@ impl Circuit {
         // fill with random tokens
         let mut subscribe_to = tokens.clone();
         let mut dummy_tokens = Vec::new();
-        // TODO security: CPRNG
-        let mut rng = rand::thread_rng();
         while subscribe_to.len() < SETUP_TOKENS {
             let t = rng.gen();
             subscribe_to.push(t);

@@ -118,8 +118,7 @@ impl Circuit {
             rendezvous_map,
             layer,
             downstream_id: setup_pkt.circuit_id,
-            // TODO security: better use cPRNG?
-            upstream_id: rand::random(),
+            upstream_id: thread_cprng().gen(),
             downstream_hop,
             upstream_hop: None,
             threefish,

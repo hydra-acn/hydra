@@ -3,6 +3,7 @@ use rand::seq::IteratorRandom;
 use std::net::SocketAddr;
 
 use crate::client::circuit::Circuit;
+use crate::crypto::cprng::thread_cprng;
 use crate::defs::{CellCmd, CircuitId, RoundNo};
 use crate::epoch::EpochNo;
 use crate::error::Error;
@@ -51,14 +52,12 @@ impl DummyCircuit {
         // otherwise rendezvous nodes find out that a circuit never has dummy circuits -> return
         // `None` in this case
         let mut cell = Cell::dummy(self.circuit.circuit_id(), round_no);
-        // TODO security: use secure random source?
-        let rng = &mut rand::thread_rng();
         // TODO security: use some Zipf-like distribution
         let token = self
             .circuit
             .dummy_tokens()
             .iter()
-            .choose(rng)
+            .choose(&mut thread_cprng())
             .expect("Expected at least one token");
         cell.set_token(*token);
         // for now, we want the cell echoed back by the rendezvous service
