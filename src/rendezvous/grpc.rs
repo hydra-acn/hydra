@@ -4,42 +4,31 @@ use futures_util::stream;
 use futures_util::StreamExt;
 use log::*;
 use std::collections::BTreeMap;
-use std::convert::TryFrom;
-use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::{Request, Response, Status};
 
-use crate::defs::{CellCmd, CircuitId, Token};
+use super::subscription_map::SubscriptionMap;
+use crate::defs::CellCmd;
 use crate::epoch::EpochNo;
-use crate::grpc::ServerTlsCredentials;
+use crate::grpc::{valid_request_check, ServerTlsCredentials};
 use crate::mix::directory_client;
-use crate::net::socket_addr_from_slice;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
 use crate::tonic_mix::*;
-use crate::{
-    define_grpc_service, rethrow_as_internal, rethrow_as_invalid, unwrap_or_throw_internal,
-};
+use crate::{define_grpc_service, rethrow_as_internal, unwrap_or_throw_internal};
 
-#[derive(Clone, Debug, PartialEq)]
-struct Endpoint {
-    sock_addr: SocketAddr,
-    circuit_id: CircuitId,
-}
-
-type EndpointMap = BTreeMap<Token, Vec<Endpoint>>;
-type EpochMap = BTreeMap<EpochNo, EndpointMap>;
+type EpochMap = BTreeMap<EpochNo, SubscriptionMap>;
 
 pub struct State {
     dir_client: Arc<directory_client::Client>,
-    tokens_per_epoch: RwLock<EpochMap>,
+    subs_per_epoch: RwLock<EpochMap>,
 }
 
 impl State {
     pub fn new(dir_client: Arc<directory_client::Client>) -> Self {
         State {
             dir_client,
-            tokens_per_epoch: RwLock::new(EpochMap::new()),
+            subs_per_epoch: RwLock::new(EpochMap::new()),
         }
     }
 }
@@ -52,45 +41,19 @@ impl Rendezvous for Service {
         &self,
         req: Request<SubscriptionVector>,
     ) -> Result<Response<SubscribeAck>, Status> {
-        let msg = req.into_inner();
-        let port = rethrow_as_invalid!(u16::try_from(msg.port), "Error during port conversion");
-        let sock_address = rethrow_as_invalid!(
-            socket_addr_from_slice(&msg.addr, port),
-            "Could not get socket address"
-        );
         {
+            let msg = req.into_inner();
+            valid_request_check(msg.is_valid(), "Address or port for injection invalid")?;
             let mut map =
-                rethrow_as_internal!(self.tokens_per_epoch.write(), "Could not acquire lock");
+                rethrow_as_internal!(self.subs_per_epoch.write(), "Could not acquire lock");
             match map.get_mut(&msg.epoch_no) {
-                Some(token_map) => {
-                    for subs in msg.subs.into_iter() {
-                        let endpoint = Endpoint {
-                            sock_addr: sock_address,
-                            circuit_id: subs.circuit_id,
-                        };
-                        for token in subs.tokens.into_iter() {
-                            match token_map.get_mut(&token) {
-                                Some(vec) => vec.push(endpoint.clone()),
-                                None => {
-                                    token_map.insert(token, vec![endpoint.clone()]);
-                                }
-                            }
-                        }
-                    }
+                Some(sub_map) => {
+                    sub_map.subscribe(&msg);
                 }
                 None => {
-                    let mut token_map = BTreeMap::new();
-                    for subs in msg.subs.into_iter() {
-                        let endpoint = Endpoint {
-                            sock_addr: sock_address,
-                            circuit_id: subs.circuit_id,
-                        };
-                        let vec = vec![endpoint.clone()];
-                        for token in subs.tokens.into_iter() {
-                            token_map.insert(token, vec.clone());
-                        }
-                    }
-                    map.insert(msg.epoch_no, token_map);
+                    let mut sub_map = SubscriptionMap::new();
+                    sub_map.subscribe(&msg);
+                    map.insert(msg.epoch_no, sub_map);
                 }
             };
         }
@@ -102,7 +65,6 @@ impl Rendezvous for Service {
         req: Request<tonic::Streaming<Cell>>,
     ) -> Result<Response<PublishAck>, Status> {
         let mut stream = req.into_inner();
-        let mut host_vec = vec![];
 
         while let Some(c) = stream.next().await {
             let cell = match c {
@@ -112,41 +74,35 @@ impl Rendezvous for Service {
                     continue;
                 }
             };
+            let mut host_vec = Vec::new();
             {
                 let map =
-                    rethrow_as_internal!(self.tokens_per_epoch.read(), "Could not acquire lock");
+                    rethrow_as_internal!(self.subs_per_epoch.read(), "Could not acquire lock");
                 let current_epoch_no = unwrap_or_throw_internal!(
                     self.dir_client.current_communication_epoch_no(),
                     "Cannot get current communication epoch no."
                 );
                 match map.get(&current_epoch_no) {
-                    Some(token_map) => match token_map.get(&cell.token()) {
-                        Some(vector) => {
-                            host_vec = vector.clone();
-                        }
-                        None => {
-                            // no one subcscribed
-                        }
-                    },
+                    Some(sub_map) => host_vec = sub_map.get_subscribers(&cell.token()),
                     None => {
                         warn!(
                             "Publish in epoch {}, but no subscriptions?",
                             current_epoch_no
                         );
                     }
-                }
+                };
             }
 
             for host in host_vec.iter() {
-                if cell.circuit_id == host.circuit_id {
+                if cell.circuit_id == host.circuit_id() {
                     // don't send cells back on the same circuit, except when asked to
                     if let Some(CellCmd::Broadcast) = cell.command() {
                     } else {
                         continue;
                     }
                 }
-                let sock_addr = host.sock_addr;
-                let mut channels = self.dir_client.get_mix_channels(&[sock_addr]).await;
+                let sock_addr = host.addr();
+                let mut channels = self.dir_client.get_mix_channels(&[*sock_addr]).await;
                 let channel = match channels.get_mut(&sock_addr) {
                     Some(c) => c,
                     None => {
@@ -155,7 +111,7 @@ impl Rendezvous for Service {
                     }
                 };
                 let mut send_cell = cell.clone();
-                send_cell.circuit_id = host.circuit_id;
+                send_cell.circuit_id = host.circuit_id();
                 match channel
                     .inject(Request::new(stream::once(async { send_cell })))
                     .await
@@ -176,7 +132,7 @@ pub async fn garbage_collector(state: Arc<State>) {
     loop {
         info!("Garbage collector strikes again!");
         {
-            let mut map = match state.tokens_per_epoch.write() {
+            let mut map = match state.subs_per_epoch.write() {
                 Ok(m) => m,
                 Err(e) => {
                     error!("Acquiring lock for cleanup failed: {}", e);
@@ -202,7 +158,9 @@ pub async fn garbage_collector(state: Arc<State>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::defs::CircuitId;
     use crate::mix::directory_client::mocks;
+    use crate::rendezvous::subscription_map::Endpoint;
     use crate::tonic_mix::mix_server::{Mix, MixServer};
     use crate::tonic_mix::rendezvous_client::RendezvousClient;
     use std::net::SocketAddr;
@@ -324,20 +282,12 @@ mod tests {
                 .expect("Spawn failed");
         //initialize state for garbage collector test
         {
-            let mut token_map = BTreeMap::new();
-            token_map.insert(
-                34,
-                vec![Endpoint {
-                    sock_addr: mix_addr,
-                    circuit_id: 22,
-                }],
-            );
-            let mut map = state
-                .tokens_per_epoch
+            let mut epoch_map = state
+                .subs_per_epoch
                 .write()
                 .expect("Could not acquire lock");
-            map.insert(CURRENT_COMMUNICATION_EPOCH_NO - 1, token_map.clone());
-            map.insert(CURRENT_COMMUNICATION_EPOCH_NO + 1, token_map.clone());
+            epoch_map.insert(CURRENT_COMMUNICATION_EPOCH_NO - 1, SubscriptionMap::new());
+            epoch_map.insert(CURRENT_COMMUNICATION_EPOCH_NO + 1, SubscriptionMap::new());
         }
         //start garbage_collector
         let garbage_handle = tokio::spawn(garbage_collector(state.clone()));
@@ -358,50 +308,24 @@ mod tests {
 
         //test if state contains expected host and work of garbage collector
         {
-            let map = state
-                .tokens_per_epoch
-                .read()
-                .expect("Could not acquire lock");
-            let token_map = map
+            let epoch_map = state.subs_per_epoch.read().expect("Could not acquire lock");
+            let sub_map = epoch_map
                 .get(&CURRENT_COMMUNICATION_EPOCH_NO)
                 .expect("Epoch not present in map");
-            let host_vec = token_map
-                .get(&55)
-                .expect("CircuitId not present in token_map");
-            assert_eq!(
-                host_vec.contains(&Endpoint {
-                    sock_addr: mix_addr,
-                    circuit_id: 5
-                }),
-                true
-            );
-            let host_vec = token_map
-                .get(&2)
-                .expect("CircuitId not present in token_map");
-            assert_eq!(
-                host_vec.contains(&Endpoint {
-                    sock_addr: mix_addr,
-                    circuit_id: 2
-                }),
-                true
-            );
-            let host_vec = token_map
-                .get(&4)
-                .expect("CircuitId not present in token_map");
-            assert_eq!(
-                host_vec.contains(&Endpoint {
-                    sock_addr: mix_addr,
-                    circuit_id: 2
-                }),
-                true
-            );
+            let host_vec = sub_map.get_subscribers(&55);
+            assert!(host_vec.contains(&Endpoint::new(mix_addr, 5)));
+            let host_vec = sub_map.get_subscribers(&2);
+            assert!(host_vec.contains(&Endpoint::new(mix_addr, 2)));
+            let host_vec = sub_map.get_subscribers(&4);
+            assert!(host_vec.contains(&Endpoint::new(mix_addr, 2)));
+
             //verify work of garbage collector
             assert_eq!(
-                map.contains_key(&(CURRENT_COMMUNICATION_EPOCH_NO - 1)),
+                epoch_map.contains_key(&(CURRENT_COMMUNICATION_EPOCH_NO - 1)),
                 false
             );
             assert_eq!(
-                map.contains_key(&(CURRENT_COMMUNICATION_EPOCH_NO + 1)),
+                epoch_map.contains_key(&(CURRENT_COMMUNICATION_EPOCH_NO + 1)),
                 true
             );
         }
