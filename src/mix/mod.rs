@@ -1,10 +1,9 @@
 pub mod channel_pool;
 pub mod circuit;
-pub mod dummy_circuit;
 pub mod directory_client;
-pub mod rendezvous_map;
+pub mod dummy_circuit;
 pub mod epoch_worker;
 pub mod grpc;
-pub mod rendezvous;
+pub mod rendezvous_map;
 pub mod sender;
 pub mod simple_relay;

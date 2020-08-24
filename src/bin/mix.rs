@@ -7,8 +7,8 @@ use tokio::sync::mpsc::unbounded_channel;
 use hydra::defs::sigint_handler;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
-use hydra::mix::sender;
-use hydra::mix::{self, simple_relay};
+use hydra::mix::{self, sender, simple_relay};
+use hydra::rendezvous;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -98,9 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr, None).await?;
 
         // setup rendezvous gRPC
-        let rendezvous_grpc_state = Arc::new(mix::rendezvous::State::new(dir_client.clone()));
+        let rendezvous_grpc_state = Arc::new(rendezvous::grpc::State::new(dir_client.clone()));
         let (rendezvous_grpc_handle, _) =
-            mix::rendezvous::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr, None)
+            rendezvous::grpc::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr, None)
                 .await?;
 
         // setup channels for communication between main worker and sender

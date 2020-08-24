@@ -10,10 +10,10 @@ use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::{Request, Response, Status};
 
-use super::directory_client;
 use crate::defs::{CellCmd, CircuitId, Token};
 use crate::epoch::EpochNo;
 use crate::grpc::ServerTlsCredentials;
+use crate::mix::directory_client;
 use crate::net::socket_addr_from_slice;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
 use crate::tonic_mix::*;
@@ -129,7 +129,10 @@ impl Rendezvous for Service {
                         }
                     },
                     None => {
-                        warn!("Publish in epoch {}, but no subscriptions?", current_epoch_no);
+                        warn!(
+                            "Publish in epoch {}, but no subscriptions?",
+                            current_epoch_no
+                        );
                     }
                 }
             }
@@ -200,7 +203,6 @@ pub async fn garbage_collector(state: Arc<State>) {
 mod tests {
     use super::*;
     use crate::mix::directory_client::mocks;
-    use crate::mix::*;
     use crate::tonic_mix::mix_server::{Mix, MixServer};
     use crate::tonic_mix::rendezvous_client::RendezvousClient;
     use std::net::SocketAddr;
@@ -211,7 +213,7 @@ mod tests {
     async fn test_publish_subscribe(
         rendezvous_addr: SocketAddr,
         mix_addr: SocketAddr,
-        mix_state: Arc<State>,
+        mix_state: Arc<MixState>,
     ) {
         time::delay_for(Duration::from_millis(100)).await;
         let mut client = RendezvousClient::connect(format!("http://{}", rendezvous_addr))
@@ -303,8 +305,8 @@ mod tests {
 
         let mock_client = mocks::new(CURRENT_COMMUNICATION_EPOCH_NO);
         //start mix
-        let mix_state = Arc::new(State::new());
-        let (mix_handle, mix_addr) = spawn_service_with_shutdown(
+        let mix_state = Arc::new(MixState::new());
+        let (mix_handle, mix_addr) = tests::spawn_service_with_shutdown(
             mix_state.clone(),
             mix_addr,
             Some(time::delay_for(Duration::from_secs(5))),
@@ -315,15 +317,11 @@ mod tests {
         //start rendezvous service
         let rend_dir_client = Arc::new(mock_client);
         let timeout = time::delay_for(Duration::from_secs(5));
-        let state = Arc::new(rendezvous::State::new(rend_dir_client.clone()));
-        let (rendezvous_grpc_handle, rendezvous_addr) = rendezvous::spawn_service_with_shutdown(
-            state.clone(),
-            rendezvous_addr,
-            Some(timeout),
-            None,
-        )
-        .await
-        .expect("Spawn failed");
+        let state = Arc::new(State::new(rend_dir_client.clone()));
+        let (rendezvous_grpc_handle, rendezvous_addr) =
+            super::spawn_service_with_shutdown(state.clone(), rendezvous_addr, Some(timeout), None)
+                .await
+                .expect("Spawn failed");
         //initialize state for garbage collector test
         {
             let mut token_map = BTreeMap::new();
@@ -342,7 +340,7 @@ mod tests {
             map.insert(CURRENT_COMMUNICATION_EPOCH_NO + 1, token_map.clone());
         }
         //start garbage_collector
-        let garbage_handle = tokio::spawn(rendezvous::garbage_collector(state.clone()));
+        let garbage_handle = tokio::spawn(garbage_collector(state.clone()));
         if let Err(_) = tokio::time::timeout(Duration::from_secs(2), garbage_handle).await {
         } else {
             unreachable!();
@@ -411,19 +409,19 @@ mod tests {
 
     type CellStorage = BTreeMap<CircuitId, Vec<Cell>>;
 
-    pub struct State {
+    pub struct MixState {
         storage: RwLock<CellStorage>,
     }
 
-    impl State {
+    impl MixState {
         pub fn new() -> Self {
-            State {
+            MixState {
                 storage: RwLock::new(CellStorage::new()),
             }
         }
     }
 
-    define_grpc_service!(Service, State, MixServer);
+    define_grpc_service!(Service, MixState, MixServer);
 
     #[tonic::async_trait]
     impl Mix for Service {

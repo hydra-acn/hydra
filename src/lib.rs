@@ -8,6 +8,7 @@ pub mod net;
 
 pub mod directory;
 pub mod mix;
+pub mod rendezvous;
 pub mod client;
 
 pub mod tonic_directory {
