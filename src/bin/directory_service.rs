@@ -3,9 +3,9 @@ use log::*;
 use std::sync::Arc;
 
 use hydra::crypto::key::Key;
+use hydra::crypto::tls::ServerCredentials;
 use hydra::directory::grpc;
 use hydra::directory::state::{self, Config, State};
-use hydra::grpc::ServerTlsCredentials;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,12 +31,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let key = Key::read_from_file(args.value_of("key_path").unwrap()).expect("Failed to read File");
     let cert = std::fs::read_to_string(args.value_of("cert_path").unwrap())?;
-    let tls_cred = ServerTlsCredentials::new(key, &cert);
+    let tls_cred = ServerCredentials::new(key, &cert);
 
     let addr = args.value_of("addr").unwrap();
     let port = value_t!(args, "port", u16).unwrap();
     let local_endpoint = format!("{}:{}", addr, port).parse()?;
-    let (grpc_handle, _) = grpc::spawn_service(state.clone(), local_endpoint, Some(tls_cred)).await?;
+    let (grpc_handle, _) =
+        grpc::spawn_service(state.clone(), local_endpoint, Some(tls_cred)).await?;
 
     let update_handle = tokio::spawn(state::update_loop(state.clone()));
 

@@ -9,7 +9,6 @@ use tokio::task;
 use super::directory_client;
 use crate::derive_grpc_client;
 use crate::error::Error;
-use crate::grpc;
 use crate::net::PacketWithNextHop;
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;

@@ -4,9 +4,10 @@ use std::net::SocketAddr;
 
 use crate::client::circuit::Circuit;
 use crate::crypto::cprng::thread_cprng;
-use crate::defs::{CellCmd, CircuitId, RoundNo};
+use crate::defs::{CircuitId, RoundNo};
 use crate::epoch::EpochNo;
 use crate::error::Error;
+use crate::grpc::type_extensions::CellCmd;
 use crate::net::PacketWithNextHop;
 use crate::tonic_directory::MixInfo;
 use crate::tonic_mix::{Cell, SetupPacket};

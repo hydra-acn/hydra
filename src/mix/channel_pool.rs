@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Mutex;
 
 use crate::error::Error;
-use crate::grpc::Client;
+use crate::grpc::macros::Client;
 use log::*;
 
 /// TODO polish, i.e.

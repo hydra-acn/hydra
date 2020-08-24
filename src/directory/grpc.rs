@@ -8,8 +8,7 @@ use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::x448;
 use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_epoch_no, EpochNo};
-use crate::grpc::valid_request_check;
-use crate::grpc::ServerTlsCredentials;
+use crate::grpc::macros::valid_request_check;
 use crate::tonic_directory::directory_server::DirectoryServer;
 use crate::tonic_directory::*;
 use crate::{

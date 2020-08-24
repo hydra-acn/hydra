@@ -1,5 +1,4 @@
-//! Rendezvous service of a mix
-
+//! gRPC service for the rendezvous part of a mix.
 use futures_util::stream;
 use futures_util::StreamExt;
 use log::*;
@@ -9,9 +8,9 @@ use tokio::time::{delay_for, Duration};
 use tonic::{Request, Response, Status};
 
 use super::subscription_map::SubscriptionMap;
-use crate::defs::CellCmd;
 use crate::epoch::EpochNo;
-use crate::grpc::{valid_request_check, ServerTlsCredentials};
+use crate::grpc::macros::valid_request_check;
+use crate::grpc::type_extensions::CellCmd;
 use crate::mix::directory_client;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
 use crate::tonic_mix::*;

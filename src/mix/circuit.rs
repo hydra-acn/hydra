@@ -7,8 +7,9 @@ use crate::crypto::cprng::thread_cprng;
 use crate::crypto::key::Key;
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::x448;
-use crate::defs::{tokens_from_bytes, CellCmd, CircuitId, RoundNo, Token, ONION_LEN};
+use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
 use crate::error::Error;
+use crate::grpc::type_extensions::CellCmd;
 use crate::net::{ip_addr_from_slice, PacketWithNextHop};
 use crate::tonic_mix::{Cell, SetupPacket};
 

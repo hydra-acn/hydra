@@ -7,8 +7,7 @@ use tonic::{Request, Response, Status};
 
 use crate::defs::{CircuitId, Token};
 use crate::epoch::current_time_in_secs;
-use crate::grpc::valid_request_check;
-use crate::grpc::ServerTlsCredentials;
+use crate::grpc::macros::valid_request_check;
 use crate::tonic_mix::simple_relay_server::{SimpleRelay, SimpleRelayServer};
 use crate::tonic_mix::*;
 use crate::{define_grpc_service, rethrow_as_internal, unwrap_or_throw_invalid};

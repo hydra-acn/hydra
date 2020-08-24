@@ -11,7 +11,7 @@ use hydra::tonic_directory::{
 };
 use sha2::Sha256;
 
-use hydra::grpc::ServerTlsCredentials;
+use hydra::crypto::tls::ServerCredentials;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -35,7 +35,7 @@ fn integration() {
         let key =
             Key::read_from_file("tests/data/tls-test.key").expect("Failed to read key from file");
         let cert = std::fs::read_to_string("tests/data/tls-test.pem").unwrap();
-        let tls_cred = ServerTlsCredentials::new(key, &cert);
+        let tls_cred = ServerCredentials::new(key, &cert);
         let (grpc_handle, local_addr) = grpc::spawn_service_with_shutdown(
             state.clone(),
             local_addr,

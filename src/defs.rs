@@ -1,16 +1,10 @@
 //! Various definitions and helper functions
-
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use ctrlc;
-use rand::Rng;
-use std::convert::TryInto;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::{delay_for, Duration};
-
-use crate::crypto::cprng::thread_cprng;
-use crate::tonic_mix::{Cell, SetupPacket, SubscriptionVector};
 
 pub type Token = u64;
 pub type CircuitId = u64;
@@ -26,56 +20,12 @@ pub const DIR_AUTH_UNREGISTER: &[u8; 10] = b"unregister";
 pub const SETUP_TOKENS: usize = 256;
 pub const ONION_LEN: usize = 256;
 
-// TODO use these more often instead of magic numbers :)
+// TODO code: use these more often instead of magic numbers :)
 pub const SETUP_NONCE_LEN: usize = 12;
 pub const SETUP_AUTH_LEN: usize = 16;
 
 pub fn hydra_version() -> &'static str {
     option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
-}
-
-// TODO move additional `impl`s of gRPC data types to separate module
-impl SetupPacket {
-    /// for a given setup packet, determine how much hops it needs to be sent
-    /// (0 if the onion encrypted part only contains the tokens to subscribe to)
-    /// returns `None` if the onion encrypted part has unexpected size
-    pub fn ttl(&self) -> Option<u32> {
-        let token_len = 256 * 8;
-        if self.onion.len() < token_len {
-            return None;
-        }
-        let nom = self.onion.len() - token_len;
-        let denom = 102;
-        if nom % denom != 0 {
-            return None;
-        }
-        Some((nom / denom) as u32)
-    }
-}
-
-impl SubscriptionVector {
-    /// Check if address and port for injection are valid.
-    // TODO security: check for IP addr should be better (e.g. localhost); or use the real src
-    // address instead
-    pub fn is_valid(&self) -> bool {
-        let addr_check = match self.addr.len() {
-            4 | 16 => true,
-            _ => false,
-        };
-        let port_check = self.port <= u16::MAX as u32;
-        addr_check && port_check
-    }
-
-    /// Return the socket address to inject to if it is valid.
-    pub fn socket_addr(&self) -> Option<std::net::SocketAddr> {
-        match self.is_valid() {
-            true => Some(
-                crate::net::socket_addr_from_slice(&self.addr, self.port as u16)
-                    .expect("Checked before"),
-            ),
-            false => None,
-        }
-    }
 }
 
 /// Usage: create an `AtomicBool` with value `true` and spawn the handler on a separate thread. As
@@ -140,65 +90,6 @@ pub fn tokens_to_byte_vec(tokens: &[Token]) -> Vec<u8> {
     vec
 }
 
-pub enum CellCmd {
-    Delay(u8),
-    Broadcast,
-}
-
-impl Cell {
-    /// creates new dummy cell
-    pub fn dummy(cid: CircuitId, r: RoundNo) -> Self {
-        let mut cell = Cell {
-            circuit_id: cid,
-            round_no: r,
-            onion: vec![0; ONION_LEN],
-        };
-        cell.randomize();
-        cell
-    }
-
-    pub fn token(&self) -> Token {
-        token_from_bytes(self.onion[8..16].try_into().expect("Failed")).unwrap()
-    }
-
-    pub fn set_token(&mut self, token: Token) {
-        LittleEndian::write_u64(&mut self.onion[8..16], token)
-    }
-
-    pub fn command(&self) -> Option<CellCmd> {
-        let cmd_slice = &self.onion[1..8];
-        if cmd_slice.iter().all(|b| *b == 0) {
-            Some(CellCmd::Delay(self.onion[0]))
-        } else if self.onion[0] == 255 && cmd_slice.iter().all(|b| *b == 255) {
-            Some(CellCmd::Broadcast)
-        } else {
-            None
-        }
-    }
-
-    pub fn set_command(&mut self, cmd: CellCmd) {
-        let args_cmd_slice = &mut self.onion[0..8];
-        match cmd {
-            CellCmd::Delay(rounds) => {
-                for b in args_cmd_slice.iter_mut() {
-                    *b = 0;
-                }
-                args_cmd_slice[0] = rounds;
-            }
-            CellCmd::Broadcast => {
-                for b in args_cmd_slice.iter_mut() {
-                    *b = 255;
-                }
-            }
-        }
-    }
-
-    /// Turn existing cell into dummy by randomizing the onion encrypted part.
-    pub fn randomize(&mut self) {
-        thread_cprng().fill(self.onion.as_mut_slice());
-    }
-}
-
 #[macro_export]
 macro_rules! delegate_generic {
     ($to:ident; $doc:expr; $fnname:ident; $($arg:ident: $type:ty),* => $ret:ty) => {
@@ -212,14 +103,6 @@ macro_rules! delegate_generic {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_set_token() {
-        let mut my_cell: Cell = Cell::dummy(1, 2);
-        my_cell.set_token(1000);
-        let token: Token = my_cell.token();
-        assert_eq!(token, 1000);
-    }
 
     #[test]
     fn test_bytes_to_token() {
