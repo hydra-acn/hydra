@@ -9,10 +9,10 @@ use std::time::Duration;
 
 use crate::epoch::current_time;
 
+pub type Pipeline<I, O> = (RxQueue<I>, Processor<I, O>);
+
 /// Create a new pipeline with `size` threads.
-pub fn new_pipeline<I: std::fmt::Debug + Scalable + Send, O: Send>(
-    size: usize,
-) -> (RxQueue<I>, Processor<I, O>) {
+pub fn new_pipeline<I: std::fmt::Debug + Scalable + Send, O: Send>(size: usize) -> Pipeline<I, O> {
     let mut senders = Vec::new();
     let mut threads = Vec::new();
     for _ in 0..size {
@@ -63,6 +63,8 @@ impl<I: Scalable + std::fmt::Debug> RxQueue<I> {
 pub enum ProcessResult<I, O> {
     /// Regular output.
     Ok(O),
+    /// Generate multiple outputs from one request.
+    Multiple(Vec<O>),
     /// Requeue the request for the next call to `process`.
     Requeue(I),
     /// Drop the request without producing an output.
@@ -174,6 +176,7 @@ fn process_pending<I, O, F: FnMut(I) -> ProcessResult<I, O>>(
         }
         match f(req) {
             ProcessResult::Ok(out) => thread.out_queue.push(out),
+            ProcessResult::Multiple(out_vec) => thread.out_queue.extend(out_vec),
             ProcessResult::Requeue(req) => new_pending.push_back(req),
             ProcessResult::Drop => (),
         }
@@ -194,6 +197,7 @@ fn process_new<I, O, F: FnMut(I) -> ProcessResult<I, O>>(
         }
         match thread.in_queue.try_recv().map(|req| match f(req) {
             ProcessResult::Ok(out) => thread.out_queue.push(out),
+            ProcessResult::Multiple(out_vec) => thread.out_queue.extend(out_vec),
             ProcessResult::Requeue(req) => thread.pending_queue.push_back(req),
             ProcessResult::Drop => (),
         }) {
@@ -220,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_mut_closure() {
+    pub fn test_simple_type() {
         let (rx, mut proc) = new_pipeline::<u32, u32>(3);
         rx.enqueue(0);
         rx.enqueue(42);
@@ -231,6 +235,7 @@ mod tests {
         let sum = Arc::new(Mutex::new(0u32));
         let inc = 1u32;
         let f = |x: u32| match x {
+            0 => ProcessResult::Multiple(vec![0, 0]),
             42 => ProcessResult::Requeue(x),
             1337 => ProcessResult::Drop,
             _ => {
@@ -244,7 +249,7 @@ mod tests {
         proc.process_till(f, till);
 
         let out = proc.output();
-        let expected_out: Vec<Vec<u32>> = vec![vec![1, 10], vec![], vec![3]];
+        let expected_out: Vec<Vec<u32>> = vec![vec![0, 0, 10], vec![], vec![3]];
         let requeued = proc.requeued();
         let mut pending = VecDeque::new();
         pending.push_back(42);
@@ -252,6 +257,6 @@ mod tests {
 
         assert_eq!(out, expected_out);
         assert_eq!(requeued, requeued_expected);
-        assert_eq!(*sum.lock().unwrap(), 14);
+        assert_eq!(*sum.lock().unwrap(), 13);
     }
 }
