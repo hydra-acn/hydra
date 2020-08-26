@@ -126,30 +126,3 @@ impl Rendezvous for Service {
         Ok(Response::new(PublishAck {}))
     }
 }
-
-pub async fn garbage_collector(state: Arc<State>) {
-    loop {
-        info!("Garbage collector strikes again!");
-        {
-            let mut map = match state.subs_per_epoch.write() {
-                Ok(m) => m,
-                Err(e) => {
-                    error!("Acquiring lock for cleanup failed: {}", e);
-                    continue;
-                }
-            };
-            let split_epoch = match state.dir_client.current_communication_epoch_no() {
-                Some(ep) => ep,
-                None => {
-                    error!("Acquiring current epoch failed");
-                    continue;
-                }
-            };
-            // keep current epoch and everything above
-            *map = map.split_off(&split_epoch);
-        }
-
-        // TODO better cleanup after every epoch?
-        delay_for(Duration::from_secs(600)).await;
-    }
-}
