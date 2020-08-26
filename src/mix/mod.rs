@@ -5,5 +5,6 @@ pub mod dummy_circuit;
 pub mod epoch_worker;
 pub mod grpc;
 pub mod rendezvous_map;
+pub mod rss_pipeline;
 pub mod sender;
 pub mod simple_relay;

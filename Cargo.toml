@@ -28,6 +28,8 @@ spmc = "^0.3"
 generic-array = "^0.14"
 block-cipher = "^0.7"
 threefish = "^0.1"
+rayon = "^1"
+crossbeam-channel = "^0.4"
 
 [build-dependencies]
 cmake = "^0.1"

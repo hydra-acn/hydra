@@ -191,6 +191,8 @@ async fn publish_cells(
 
 fn shuffle<T>(_pkts: &mut Vec<T>) {
     // TODO security: shuffle for real!
+    // TODO perforamance: but not in place -> need a "shuffle iterator" instead -> use as input for
+    // the sending streams
 }
 
 define_send_task!(

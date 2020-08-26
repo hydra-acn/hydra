@@ -1,4 +1,4 @@
-//! processing of one epoch
+//! Main loop for processing epochs
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
