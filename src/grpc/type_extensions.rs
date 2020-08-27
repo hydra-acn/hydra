@@ -34,7 +34,7 @@ impl SubscriptionVector {
             4 | 16 => true,
             _ => false,
         };
-        let port_check = self.port <= u16::MAX as u32;
+        let port_check = self.port <= std::u16::MAX as u32;
         addr_check && port_check
     }
 
