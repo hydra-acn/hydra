@@ -1,10 +1,11 @@
 //! `impl` some helper methods for gRPC message types.
 use byteorder::{ByteOrder, LittleEndian};
-use rand::Rng;
+use rand::{thread_rng, Rng};
 use std::convert::TryInto;
 
 use crate::crypto::cprng::thread_cprng;
 use crate::defs::{token_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
+use crate::mix::rss_pipeline::Scalable;
 use crate::tonic_mix::{Cell, SetupPacket, SubscriptionVector};
 
 impl SetupPacket {
@@ -22,6 +23,12 @@ impl SetupPacket {
             return None;
         }
         Some((nom / denom) as u32)
+    }
+}
+
+impl Scalable for SetupPacket {
+    fn thread_id(&self, size: usize) -> usize {
+        self.circuit_id as usize % size
     }
 }
 
@@ -47,6 +54,12 @@ impl SubscriptionVector {
             ),
             false => None,
         }
+    }
+}
+
+impl Scalable for SubscriptionVector {
+    fn thread_id(&self, size: usize) -> usize {
+        thread_rng().gen_range(0, size)
     }
 }
 
@@ -106,6 +119,12 @@ impl Cell {
     /// Turn existing cell into dummy by randomizing the onion encrypted part.
     pub fn randomize(&mut self) {
         thread_cprng().fill(self.onion.as_mut_slice());
+    }
+}
+
+impl Scalable for Cell {
+    fn thread_id(&self, size: usize) -> usize {
+        self.circuit_id as usize % size
     }
 }
 
