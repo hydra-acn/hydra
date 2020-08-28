@@ -14,7 +14,7 @@ use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
 use crate::tonic_mix::*;
 
-pub type Batch<T> = Vec<PacketWithNextHop<T>>;
+pub type Batch<T> = Vec<Vec<PacketWithNextHop<T>>>;
 pub type SetupBatch = Batch<SetupPacket>;
 pub type SubscribeBatch = Batch<SubscriptionVector>;
 pub type CellBatch = Batch<Cell>;
@@ -46,7 +46,6 @@ macro_rules! send_next_batch {
                 break;
             }
         };
-        debug!("Sending batch with {} packets", batch.len());
 
         // sort by destination and get corresponding channels
         let (batch_map, destinations) = sort_by_destination(batch);
@@ -109,11 +108,13 @@ impl State {
 
 fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<SocketAddr>) {
     let mut batch_map: HashMap<SocketAddr, Vec<T>> = HashMap::new();
-    for pkt in batch {
-        match batch_map.get_mut(pkt.next_hop()) {
-            Some(vec) => vec.push(pkt.into_inner()),
-            None => {
-                batch_map.insert(*pkt.next_hop(), vec![pkt.into_inner()]);
+    for vec in batch.into_iter() {
+        for pkt in vec.into_iter() {
+            match batch_map.get_mut(pkt.next_hop()) {
+                Some(vec) => vec.push(pkt.into_inner()),
+                None => {
+                    batch_map.insert(*pkt.next_hop(), vec![pkt.into_inner()]);
+                }
             }
         }
     }

@@ -281,8 +281,8 @@ impl Worker {
             ".. processing sub-round of round {}, layer {}, direction {:?}",
             round_no, layer, direction
         );
-        let mut relay_batch = CellBatch::new();
-        let mut rendezvous_batch = CellBatch::new();
+        let mut relay_batch = Vec::new();
+        let mut rendezvous_batch = Vec::new();
         let mut deliver_batch = Vec::new();
         let mut early_cells = Vec::new();
 
@@ -348,11 +348,11 @@ impl Worker {
 
         if relay_batch.len() > 0 {
             self.cell_tx_queue
-                .send(relay_batch)
+                .send(vec![relay_batch])
                 .unwrap_or_else(|e| error!("Sender task is gone!? ({}))", e));
         } else if rendezvous_batch.len() > 0 {
             self.publish_tx_queue
-                .send(rendezvous_batch)
+                .send(vec![rendezvous_batch])
                 .unwrap_or_else(|e| error!("Sender task is gone!? ({}))", e));
         } else if deliver_batch.len() > 0 {
             self.grpc_state.deliver(deliver_batch);
@@ -388,7 +388,7 @@ impl Worker {
         // TODO performance we could create the map once per epoch instead
         let rendezvous_map = Arc::new(RendezvousMap::new(epoch));
 
-        let mut setup_batch = SetupBatch::new();
+        let mut setup_batch = Vec::new();
         let mut subscription_map = HashMap::new();
 
         // first, check for new setup packets in the rx queues
@@ -466,7 +466,7 @@ impl Worker {
         // send batch
         if setup_batch.len() > 0 {
             self.setup_tx_queue
-                .send(setup_batch)
+                .send(vec![setup_batch])
                 .unwrap_or_else(|_| error!("Sender is gone!?"));
         } else {
             send_subscribe_batch(
@@ -655,7 +655,7 @@ fn send_subscribe_batch(
 ) {
     let inject_addr = crate::net::ip_addr_to_vec(&dir_client.config().addr);
     let inject_port = dir_client.config().relay_port as u32;
-    let mut batch = SubscribeBatch::new();
+    let mut batch = Vec::new();
     for (rendezvous_addr, circuit_map) in sub_map.into_iter() {
         let mut pkt = SubscriptionVector {
             epoch_no,
@@ -674,6 +674,6 @@ fn send_subscribe_batch(
         batch.push(PacketWithNextHop::new(pkt, *rendezvous_addr));
     }
     tx_queue
-        .send(batch)
+        .send(vec![batch])
         .unwrap_or_else(|e| warn!("Sender is gone!? ({})", e));
 }

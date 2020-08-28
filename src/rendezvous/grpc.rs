@@ -4,7 +4,6 @@ use futures_util::StreamExt;
 use log::*;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
-use tokio::time::{delay_for, Duration};
 use tonic::{Request, Response, Status};
 
 use super::subscription_map::SubscriptionMap;
