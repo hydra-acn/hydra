@@ -10,25 +10,29 @@ use std::time::Duration;
 
 use crate::epoch::current_time;
 
-pub type Pipeline<I, O> = (RxQueue<I>, Processor<I, O>);
+pub type Pipeline<I, O> = (RxQueue<I>, Processor<I, O>, TxQueue<O>);
 
 /// Create a new pipeline with `size` threads.
 pub fn new_pipeline<I: std::fmt::Debug + Scalable + Send, O: Send>(size: usize) -> Pipeline<I, O> {
     let mut senders = Vec::new();
     let mut threads = Vec::new();
     for _ in 0..size {
-        let (s, r) = crossbeam_channel::unbounded();
-        senders.push(s);
+        let (rx_sender, rx_receiver) = crossbeam_channel::unbounded();
+        senders.push(rx_sender);
         let t = ThreadState {
-            in_queue: r,
+            in_queue: rx_receiver,
             out_queue: Vec::new(),
             pending_queue: VecDeque::new(),
         };
         threads.push(t);
     }
     let rx = RxQueue { queues: senders };
-    let processor = Processor { threads };
-    (rx, processor)
+    let (tx_sender, tx_receiver) = crossbeam_channel::unbounded();
+    let processor = Processor {
+        threads,
+        tx_queue: tx_sender,
+    };
+    (rx, processor, tx_receiver)
 }
 
 /// Trait for valid requests to an RSS pipeline.
@@ -42,12 +46,9 @@ pub trait Scalable {
     }
 }
 
-type Sender<I> = crossbeam_channel::Sender<I>;
-type Receiver<I> = crossbeam_channel::Receiver<I>;
-
-/// Struct for handling incomming requests of type `I`.
+/// Sender end of the rx channel.
 pub struct RxQueue<I: Scalable + std::fmt::Debug> {
-    queues: Vec<Sender<I>>,
+    queues: Vec<crossbeam_channel::Sender<I>>,
 }
 
 impl<I: Scalable + std::fmt::Debug> RxQueue<I> {
@@ -63,6 +64,9 @@ impl<I: Scalable + std::fmt::Debug> RxQueue<I> {
     }
 }
 
+/// Receiver end of the tx channel.
+pub type TxQueue<O> = crossbeam_channel::Receiver<Vec<Vec<O>>>;
+
 /// Enum to decide what should happen after processing a request.
 pub enum ProcessResult<I, O> {
     /// Regular output.
@@ -76,15 +80,15 @@ pub enum ProcessResult<I, O> {
 }
 
 struct ThreadState<I, O> {
-    in_queue: Receiver<I>,
+    in_queue: crossbeam_channel::Receiver<I>,
     pending_queue: VecDeque<I>,
     out_queue: Vec<O>,
 }
 
-/// Struct for doing the work on requests of type `I`, transforming each to output type `O`. Most
-/// functions panic if the matching `RxQueue` is gone.
+/// Struct for doing the work on requests of type `I`, transforming each to output type `O`.
 pub struct Processor<I: Send, O: Send> {
     threads: Vec<ThreadState<I, O>>,
+    tx_queue: crossbeam_channel::Sender<Vec<Vec<O>>>,
 }
 
 impl<I: Send, O: Send> Processor<I, O> {
@@ -96,6 +100,7 @@ impl<I: Send, O: Send> Processor<I, O> {
     /// Receives and processes new request by applying the function `f` to each until the given
     /// `time` is reached. Also blocks till `time` is reached if no new requests arrive.
     /// Returns `true` iff all requests have been processed in time.
+    /// Panics if the matching rx queue is gone.
     pub fn process_till<F: FnMut(I) -> ProcessResult<I, O> + Clone + Sync>(
         &mut self,
         f: F,
@@ -126,6 +131,13 @@ impl<I: Send, O: Send> Processor<I, O> {
             }
         }
         true
+    }
+
+    /// Send the output to the tx queue by moving.
+    /// Panics if the matching tx queue is gone.
+    pub fn send(&mut self) {
+        let out = self.output();
+        self.tx_queue.send(out).expect("Pipeline consumer gone?");
     }
 
     /// Get the output by moving.
@@ -229,7 +241,7 @@ mod tests {
 
     #[test]
     pub fn test_simple_type() {
-        let (rx, mut proc) = new_pipeline::<u32, u32>(3);
+        let (rx, mut proc, tx) = new_pipeline::<u32, u32>(3);
         rx.enqueue(0);
         rx.enqueue(42);
         rx.enqueue(2);
@@ -251,8 +263,9 @@ mod tests {
 
         let till = current_time() + Duration::from_millis(500);
         proc.process_till(f, till);
+        proc.send();
 
-        let out = proc.output();
+        let out = tx.try_recv().expect("Expected to receive output");
         let expected_out: Vec<Vec<u32>> = vec![vec![0, 0, 10], vec![], vec![3]];
         let requeued = proc.requeued();
         let mut pending = VecDeque::new();
