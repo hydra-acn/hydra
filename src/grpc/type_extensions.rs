@@ -1,6 +1,6 @@
 //! `impl` some helper methods for gRPC message types.
 use byteorder::{ByteOrder, LittleEndian};
-use rand::{thread_rng, Rng};
+use rand::Rng;
 use std::convert::TryInto;
 
 use crate::crypto::cprng::thread_cprng;
@@ -57,11 +57,7 @@ impl SubscriptionVector {
     }
 }
 
-impl Scalable for SubscriptionVector {
-    fn thread_id(&self, size: usize) -> usize {
-        thread_rng().gen_range(0, size)
-    }
-}
+impl Scalable for SubscriptionVector {}
 
 pub enum CellCmd {
     Delay(u8),

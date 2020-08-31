@@ -3,6 +3,7 @@
 //! Generic types are `I` for the type of the incomming requests and `O` for the result of each
 //! request throughout the module.
 use log::*;
+use rand::{thread_rng, Rng};
 use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -35,7 +36,10 @@ pub trait Scalable {
     /// Given the `size` of the pipeline (number of threads), return the id of the thread this
     /// request should run on. Return value has to be in the range `0..size`, otherwise the request
     /// is dropped.
-    fn thread_id(&self, size: usize) -> usize;
+    /// Default implementation: random
+    fn thread_id(&self, size: usize) -> usize {
+        thread_rng().gen_range(0, size)
+    }
 }
 
 type Sender<I> = crossbeam_channel::Sender<I>;
