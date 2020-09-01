@@ -2,6 +2,7 @@ pub mod channel_pool;
 pub mod circuit;
 pub mod directory_client;
 pub mod dummy_circuit;
+pub mod epoch_state;
 pub mod epoch_worker;
 pub mod grpc;
 pub mod rendezvous_map;

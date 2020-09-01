@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{self, AtomicBool};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
@@ -13,12 +13,12 @@ use crate::defs::{CircuitId, RoundNo, Token};
 use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::net::PacketWithNextHop;
 use crate::rendezvous::processor::{process_publish, process_subscribe, publish_t, subscribe_t};
-use crate::rendezvous::subscription_map::SubscriptionMap;
 use crate::tonic_mix::*;
 
 use super::circuit::{CellDirection, Circuit, ExtendInfo, NextCellStep, NextSetupStep};
 use super::directory_client;
 use super::dummy_circuit::DummyCircuit;
+use super::epoch_state::{EpochSetupState, EpochState};
 use super::grpc::SetupPacketWithPrev;
 use super::rendezvous_map::RendezvousMap;
 use super::sender::{CellBatch, SetupBatch, SubscribeBatch};
@@ -36,30 +36,6 @@ type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
 type ClientCircuitMap = BTreeMap<CircuitId, DummyCircuit>;
 type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
-
-/// All the state a mix collects about an epoch during the setup phase, filled by multiple threads.
-#[derive(Default)]
-struct EpochSetupState {
-    subscriptions: Arc<RwLock<SubscriptionMap>>,
-}
-
-#[derive(Default)]
-/// Thread safe "read only" view (interior mutability still possible) of the epoch state after setup.
-struct EpochState {
-    subscriptions: Arc<SubscriptionMap>,
-}
-
-impl EpochState {
-    /// Create a "read only" view by moving the given setup view (which will be empty afterwards)
-    fn finalize_setup(epoch: &mut EpochSetupState) -> EpochState {
-        let mut sub_guard = epoch.subscriptions.write().expect("Lock poisoned");
-        let subscriptions = std::mem::replace(&mut *sub_guard, SubscriptionMap::new());
-
-        EpochState {
-            subscriptions: Arc::new(subscriptions),
-        }
-    }
-}
 
 /// Bundling the various circuit maps used during one epoch
 // TODO should be part of EpochSetupState and EpochState
@@ -250,7 +226,7 @@ impl Worker {
             }
             if setup_layer == setup_epoch.path_length {
                 // subscription time
-                let sub_map = &self.setup_state.subscriptions;
+                let sub_map = self.setup_state.subscription_map();
                 let f = |req| process_subscribe(req, sub_map.clone());
                 let deadline = next_round_start - Duration::from_secs(1);
                 self.subscribe_processor.process_till(f, deadline);
@@ -292,7 +268,7 @@ impl Worker {
         }
 
         // process publish
-        let sub_map = &self.state.subscriptions;
+        let sub_map = self.state.subscription_map();
         let f = |cell| process_publish(cell, sub_map.clone());
         self.publish_processor.process_till(f, subround_end);
         self.publish_processor.send(); // injection
