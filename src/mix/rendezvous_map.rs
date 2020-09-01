@@ -5,6 +5,7 @@ use crate::defs::Token;
 use crate::tonic_directory::EpochInfo;
 
 /// Map tokens to rendezvous nodes.
+#[derive(Default)]
 pub struct RendezvousMap {
     map: Vec<SocketAddr>,
 }

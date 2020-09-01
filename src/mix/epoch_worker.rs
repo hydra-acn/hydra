@@ -166,6 +166,8 @@ impl Worker {
         communication_epoch: &EpochInfo,
         is_first: bool,
     ) {
+        self.setup_state.init_rendezvous_map(setup_epoch);
+
         let round_duration = Duration::from_secs(communication_epoch.round_duration as u64);
         let round_waiting = Duration::from_secs(communication_epoch.round_waiting as u64);
         let interval = round_duration + round_waiting;
@@ -424,8 +426,6 @@ impl Worker {
             layer, epoch.epoch_no
         );
         let current_ttl = epoch.path_length - layer - 1;
-        // TODO performance we could create the map once per epoch instead
-        let rendezvous_map = Arc::new(RendezvousMap::new(epoch));
 
         let mut setup_batch = Vec::new();
         let mut subscription_map = HashMap::new();
@@ -454,15 +454,17 @@ impl Worker {
                 );
                 continue;
             }
+
             if self.setup_circuits.circuits.contains_key(&pkt.circuit_id()) {
                 warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
                 continue;
             }
+
             // TODO security: replay protection based on auth_tag of pkt
             match Circuit::new(
                 pkt,
                 sk,
-                rendezvous_map.clone(),
+                self.setup_state.rendezvous_map().clone(),
                 layer,
                 epoch.number_of_rounds - 1,
             ) {
@@ -474,7 +476,7 @@ impl Worker {
                                 &mut subscription_map,
                                 circuit.upstream_id(),
                                 tokens,
-                                &rendezvous_map,
+                                self.setup_state.rendezvous_map(),
                             );
                         }
                     }
