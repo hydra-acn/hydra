@@ -13,18 +13,21 @@ deploy_local() {
         simple_flag=""
     fi
     localhost=$2
+
+    dirdom="hydra-swp.prakinf.tu-ilmenau.de"
     dirport=9000
-    dirkey="testbed/directory.key"
-    dircrt="testbed/directory.crt"
-    cacrt="testbed/ca.pem"
+    dirkey=".testbed/directory.key"
+    dircrt=".testbed/directory.crt"
+    cacrt=".testbed/ca.pem"
     phasedur=120
-    mode="debug"
+    mode="release"
 
     shift
     shift
     while [ -n "$1" ]; do
         case "$1" in
-            --release) mode="release" ;;
+            --debug) mode="debug" ;;
+            -d|--dirdom) dirdom=$2; shift ;;
             *) echo "Unknown option $1"; exit -1 ;;
         esac
         shift
@@ -58,7 +61,7 @@ deploy_local() {
         port=`echo $dirport + $i | bc`
         echo -n "-> Starting mix on port $port ..."
         tmux new-window -d -t "=${session}" -n mix-$i
-        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -p $dirport -c $cacrt $simple_flag" Enter
+        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -d $dirdom -p $dirport -c $cacrt $simple_flag" Enter
         echo " Done"
     done
     # Kill the "default" tmux window
