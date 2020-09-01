@@ -7,8 +7,8 @@ use crate::tonic_mix::{Cell, SubscriptionVector};
 
 use super::subscription_map::SubscriptionMap;
 
-crate::define_pipeline_types!(subscribe_t, SubscriptionVector, ());
-crate::define_pipeline_types!(publish_t, Cell, PacketWithNextHop<Cell>);
+crate::define_pipeline_types!(subscribe_t, SubscriptionVector, (), ());
+crate::define_pipeline_types!(publish_t, Cell, PacketWithNextHop<Cell>, ());
 
 pub fn process_subscribe(
     req: SubscriptionVector,
@@ -50,8 +50,8 @@ mod tests {
     #[test]
     fn test_pubsub() {
         let map = Arc::new(RwLock::new(SubscriptionMap::default()));
-        let (sub_rx, mut sub_processor, _): subscribe_t::Pipeline = new_pipeline(2);
-        let (pub_rx, mut pub_processor, inject_tx): publish_t::Pipeline = new_pipeline(2);
+        let (sub_rx, mut sub_processor, _, _): subscribe_t::Pipeline = new_pipeline(2);
+        let (pub_rx, mut pub_processor, inject_tx, _): publish_t::Pipeline = new_pipeline(2);
         let sub_1 = Subscription {
             circuit_id: 1337,
             tokens: vec![1, 2, 3],

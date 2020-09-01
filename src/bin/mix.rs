@@ -101,9 +101,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr, None).await?;
 
         // setup rendezvous gRPC
-        let (subscribe_rx_queue, subscribe_processor, _): subscribe_t::Pipeline =
+        let (subscribe_rx_queue, subscribe_processor, _, _): subscribe_t::Pipeline =
             new_pipeline(no_of_worker_threads);
-        let (publish_rx_queue, publish_processor, inject_tx_queue): publish_t::Pipeline =
+        let (publish_rx_queue, publish_processor, inject_tx_queue, _): publish_t::Pipeline =
             new_pipeline(no_of_worker_threads);
         let rendezvous_grpc_state = Arc::new(rendezvous::grpc::State::new(
             subscribe_rx_queue,
