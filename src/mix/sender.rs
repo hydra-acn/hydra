@@ -10,6 +10,7 @@ use super::directory_client;
 use crate::derive_grpc_client;
 use crate::error::Error;
 use crate::net::PacketWithNextHop;
+use crate::rendezvous::processor::InjectTxQueue;
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
 use crate::tonic_mix::*;
@@ -86,6 +87,7 @@ pub struct State {
     subscribe_tx_queue: SubscribeTxQueue,
     relay_tx_queue: RelayTxQueue,
     publish_tx_queue: PublishTxQueue,
+    inject_tx_queue: InjectTxQueue,
 }
 
 impl State {
@@ -95,6 +97,7 @@ impl State {
         subscribe_tx_queue: SubscribeTxQueue,
         relay_tx_queue: RelayTxQueue,
         publish_tx_queue: PublishTxQueue,
+        inject_tx_queue: InjectTxQueue,
     ) -> Self {
         State {
             dir_client,
@@ -102,6 +105,7 @@ impl State {
             subscribe_tx_queue,
             relay_tx_queue,
             publish_tx_queue,
+            inject_tx_queue,
         }
     }
 }
@@ -190,6 +194,19 @@ async fn publish_cells(
         .unwrap_or_else(|e| warn!("Publishing cells failed: {}", e));
 }
 
+async fn inject_cells(
+    _dir_client: Arc<directory_client::Client>,
+    mut c: MixConnection,
+    mut cells: Vec<Cell>,
+) {
+    shuffle(&mut cells);
+    let req = tonic::Request::new(stream::iter(cells));
+    c.inject(req)
+        .await
+        .map(|_| ())
+        .unwrap_or_else(|e| warn!("Relaying cells failed: {}", e));
+}
+
 fn shuffle<T>(_pkts: &mut Vec<T>) {
     // TODO security: shuffle for real!
     // TODO perforamance: but not in place -> need a "shuffle iterator" instead -> use as input for
@@ -228,13 +245,28 @@ define_send_task!(
     publish_cells
 );
 
+define_send_task!(
+    inject_task,
+    inject_tx_queue,
+    CellBatch,
+    get_mix_channels,
+    inject_cells
+);
+
 pub async fn run(state: Arc<State>) {
     let setup_handle = tokio::spawn(setup_task(state.clone()));
     let subscribe_handle = tokio::spawn(subscribe_task(state.clone()));
     let relay_handle = tokio::spawn(relay_task(state.clone()));
     let publish_handle = tokio::spawn(publish_task(state.clone()));
+    let inject_handle = tokio::spawn(inject_task(state.clone()));
 
-    match tokio::try_join!(setup_handle, subscribe_handle, relay_handle, publish_handle) {
+    match tokio::try_join!(
+        setup_handle,
+        subscribe_handle,
+        relay_handle,
+        publish_handle,
+        inject_handle
+    ) {
         Ok(_) => (),
         Err(e) => error!("Something panicked: {}", e),
     }

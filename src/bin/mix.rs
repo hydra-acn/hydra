@@ -7,8 +7,10 @@ use tokio::sync::mpsc::unbounded_channel;
 use hydra::defs::sigint_handler;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
+use hydra::mix::rss_pipeline::new_pipeline;
 use hydra::mix::{self, sender, simple_relay};
 use hydra::rendezvous;
+use hydra::rendezvous::processor::{PublishPipeline, SubscribePipeline};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -77,7 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut setup_rx_queue_receivers = Vec::new();
         let mut cell_rx_queue_senders = Vec::new();
         let mut cell_rx_queue_receivers = Vec::new();
-        let no_of_worker_threads = 2u8;
+        // TODO read from command line
+        let no_of_worker_threads = 2usize;
         for _ in 0..no_of_worker_threads {
             let (sender, receiver) = unbounded_channel();
             setup_rx_queue_senders.push(sender);
@@ -98,7 +101,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr, None).await?;
 
         // setup rendezvous gRPC
-        let rendezvous_grpc_state = Arc::new(rendezvous::grpc::State::new(dir_client.clone()));
+        let (subscribe_rx_queue, subscribe_processor, _): SubscribePipeline =
+            new_pipeline(no_of_worker_threads);
+        let (publish_rx_queue, publish_processor, inject_tx_queue): PublishPipeline =
+            new_pipeline(no_of_worker_threads);
+        let rendezvous_grpc_state = Arc::new(rendezvous::grpc::State::new(
+            subscribe_rx_queue,
+            publish_rx_queue,
+        ));
         let (rendezvous_grpc_handle, _) =
             rendezvous::grpc::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr, None)
                 .await?;
@@ -116,6 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             subscribe_receiver,
             relay_receiver,
             publish_receiver,
+            inject_tx_queue,
         ));
         let sender_handle = tokio::spawn(sender::run(sender));
 
@@ -130,6 +141,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cell_rx_queue_receivers,
             relay_sender,
             publish_sender,
+            subscribe_processor,
+            publish_processor,
         );
         let main_handle = tokio::task::spawn_blocking(move || worker.run());
 

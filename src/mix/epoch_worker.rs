@@ -4,9 +4,19 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{self, AtomicBool};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread::sleep;
 use tokio::time::Duration;
+
+use crate::crypto::key::Key;
+use crate::defs::{CircuitId, RoundNo, Token};
+use crate::epoch::{current_time, EpochInfo, EpochNo};
+use crate::net::PacketWithNextHop;
+use crate::rendezvous::processor::{
+    process_publish, process_subscribe, PublishProcessor, SubscribeProcessor,
+};
+use crate::rendezvous::subscription_map::SubscriptionMap;
+use crate::tonic_mix::*;
 
 use super::circuit::{CellDirection, Circuit, ExtendInfo, NextCellStep, NextSetupStep};
 use super::directory_client;
@@ -14,11 +24,6 @@ use super::dummy_circuit::DummyCircuit;
 use super::grpc::SetupPacketWithPrev;
 use super::rendezvous_map::RendezvousMap;
 use super::sender::{CellBatch, SetupBatch, SubscribeBatch};
-use crate::crypto::key::Key;
-use crate::defs::{CircuitId, RoundNo, Token};
-use crate::epoch::{current_time, EpochInfo, EpochNo};
-use crate::net::PacketWithNextHop;
-use crate::tonic_mix::*;
 
 type SetupRxQueue = tokio::sync::mpsc::UnboundedReceiver<SetupPacketWithPrev>;
 type SetupTxQueue = spmc::Sender<SetupBatch>;
@@ -29,14 +34,37 @@ type CellRxQueue = tokio::sync::mpsc::UnboundedReceiver<Cell>;
 type CellTxQueue = spmc::Sender<CellBatch>;
 type EarlyCellEnqueue = tokio::sync::mpsc::UnboundedSender<Cell>;
 
-type PublishTxQueue = spmc::Sender<CellBatch>;
-
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
 type CircuitMap = BTreeMap<CircuitId, Circuit>;
 type ClientCircuitMap = BTreeMap<CircuitId, DummyCircuit>;
 type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
 
+/// All the state a mix collects about an epoch during the setup phase, filled by multiple threads.
+#[derive(Default)]
+struct EpochSetupState {
+    subscriptions: Arc<RwLock<SubscriptionMap>>,
+}
+
+#[derive(Default)]
+/// Thread safe "read only" view (interior mutability still possible) of the epoch state after setup.
+struct EpochState {
+    subscriptions: Arc<SubscriptionMap>,
+}
+
+impl EpochState {
+    /// Create a "read only" view by moving the given setup view (which will be empty afterwards)
+    fn finalize_setup(epoch: &mut EpochSetupState) -> EpochState {
+        let mut sub_guard = epoch.subscriptions.write().expect("Lock poisoned");
+        let subscriptions = std::mem::replace(&mut *sub_guard, SubscriptionMap::new());
+
+        EpochState {
+            subscriptions: Arc::new(subscriptions),
+        }
+    }
+}
+
 /// Bundling the various circuit maps used during one epoch
+// TODO should be part of EpochSetupState and EpochState
 #[derive(Default)]
 struct CircuitMapBundle {
     // mapping downstream ids to circuits
@@ -56,10 +84,14 @@ pub struct Worker {
     subscribe_tx_queue: SubscribeTxQueue,
     cell_rx_queues: Vec<CellRxQueue>,
     cell_tx_queue: CellTxQueue,
+    publish_tx_queue: CellTxQueue,
     early_cell_enqueue: EarlyCellEnqueue,
     early_cell_dequeue: CellRxQueue,
-    publish_tx_queue: PublishTxQueue,
     pending_setup_pkts: PendingSetupMap,
+    subscribe_processor: SubscribeProcessor,
+    publish_processor: PublishProcessor,
+    setup_state: EpochSetupState,
+    state: EpochState,
     setup_circuits: CircuitMapBundle,
     communication_circuits: CircuitMapBundle,
 }
@@ -74,7 +106,9 @@ impl Worker {
         subscribe_tx_queue: SubscribeTxQueue,
         cell_rx_queues: Vec<CellRxQueue>,
         cell_tx_queue: CellTxQueue,
-        publish_tx_queue: PublishTxQueue,
+        publish_tx_queue: CellTxQueue,
+        subscribe_processor: SubscribeProcessor,
+        publish_processor: PublishProcessor,
     ) -> Self {
         let (early_cell_enqueue, early_cell_dequeue) = tokio::sync::mpsc::unbounded_channel();
         Worker {
@@ -86,10 +120,14 @@ impl Worker {
             subscribe_tx_queue,
             cell_rx_queues,
             cell_tx_queue,
+            publish_tx_queue,
             early_cell_enqueue,
             early_cell_dequeue,
-            publish_tx_queue,
             pending_setup_pkts: PendingSetupMap::new(),
+            subscribe_processor,
+            publish_processor,
+            setup_state: EpochSetupState::default(),
+            state: EpochState::default(),
             communication_circuits: CircuitMapBundle::default(),
             setup_circuits: CircuitMapBundle::default(),
         }
@@ -212,10 +250,19 @@ impl Worker {
                     None => warn!("We could setup layer {} of epoch {} now, but we don't have the matching ephemeral key", setup_layer, setup_epoch.epoch_no)
                 }
             }
+            if setup_layer == setup_epoch.path_length {
+                // subscription time
+                let sub_map = &self.setup_state.subscriptions;
+                let f = |req| process_subscribe(req, sub_map.clone());
+                let deadline = next_round_start - Duration::from_secs(1);
+                self.subscribe_processor.process_till(f, deadline);
+            }
         }
         info!("Communication of epoch {} and setup of epoch {} done, updating the circuit maps accordingly", communication_epoch.epoch_no, setup_epoch.epoch_no);
-        // TODO performance: swap is most likely expensive here ...
+        // TODO performance: swap is most likely expensive here ... (but will be solved anyway when
+        // using EpochState for everything)
         std::mem::swap(&mut self.communication_circuits, &mut self.setup_circuits);
+        self.state = EpochState::finalize_setup(&mut self.setup_state);
         debug!(
             "We have {} circuits and {} dummy circuits for the next communication",
             self.communication_circuits.circuits.len(),
@@ -235,19 +282,33 @@ impl Worker {
         let mut subround_end = round_start + subround_interval;
         // upstream
         for layer in 0..epoch.path_length {
-            self.process_subround(round_no, layer, CellDirection::Upstream, &subround_end);
-            subround_end += subround_interval;
+            let end = if layer == epoch.path_length - 1 {
+                None // don't sleep in last subround
+            } else {
+                Some(&subround_end)
+            };
+            self.process_subround(round_no, layer, CellDirection::Upstream, end);
+            if layer != epoch.path_length - 1 {
+                subround_end += subround_interval;
+            }
         }
 
-        // sleep another interval to allow rendezvous service to respond
-        let wait_time = subround_end
-            .checked_sub(current_time())
-            .expect("Did not finish last upstream subround in time?");
-        sleep(wait_time);
+        // process publish
+        let sub_map = &self.state.subscriptions;
+        let f = |cell| process_publish(cell, sub_map.clone());
+        self.publish_processor.process_till(f, subround_end);
+        self.publish_processor.send(); // injection
         subround_end += subround_interval;
 
-        // inject cells from the rendezvous service
-        // TODO performance: parallel
+        // sleep till first downstream subround
+        sleep(
+            subround_end
+                .checked_sub(current_time())
+                .expect("Did not finish injection in time?"),
+        );
+        subround_end += subround_interval;
+        // process injected cells from the rendezvous service
+        // TODO performance: parallel -> separate pipeline
         for queue in self.cell_rx_queues.iter_mut() {
             while let Ok(cell) = queue.try_recv() {
                 inject_cell(
@@ -260,7 +321,12 @@ impl Worker {
 
         // downstream
         for layer in (0..epoch.path_length).rev() {
-            self.process_subround(round_no, layer, CellDirection::Downstream, &subround_end);
+            self.process_subround(
+                round_no,
+                layer,
+                CellDirection::Downstream,
+                Some(&subround_end),
+            );
             subround_end += subround_interval;
         }
         info!(
@@ -269,20 +335,20 @@ impl Worker {
         );
     }
 
-    /// Process subround and sleep till it is over.
+    /// Process subround and sleep till it is over (if `subround_end` is not `None`).
     fn process_subround(
         &mut self,
         round_no: RoundNo,
         layer: u32,
         direction: CellDirection,
-        subround_end: &Duration,
+        subround_end: Option<&Duration>,
     ) {
         info!(
             ".. processing sub-round of round {}, layer {}, direction {:?}",
             round_no, layer, direction
         );
         let mut relay_batch = Vec::new();
-        let mut rendezvous_batch = Vec::new();
+        let mut publish_batch = Vec::new();
         let mut deliver_batch = Vec::new();
         let mut early_cells = Vec::new();
 
@@ -306,7 +372,7 @@ impl Worker {
                 ) {
                     Some(step) => match step {
                         NextCellStep::Relay(c) => relay_batch.push(c),
-                        NextCellStep::Rendezvous(c) => rendezvous_batch.push(c),
+                        NextCellStep::Rendezvous(c) => publish_batch.push(c),
                         NextCellStep::Deliver(c) => deliver_batch.push(c),
                         NextCellStep::Wait(c) => early_cells.push(c),
                     },
@@ -324,7 +390,7 @@ impl Worker {
             match circuit.pad(round_no, direction) {
                 Some(step) => match step {
                     NextCellStep::Relay(c) => relay_batch.push(c),
-                    NextCellStep::Rendezvous(c) => rendezvous_batch.push(c),
+                    NextCellStep::Rendezvous(c) => publish_batch.push(c),
                     NextCellStep::Deliver(c) => deliver_batch.push(c),
                     NextCellStep::Wait(_c) => error!("Why should a dummy be out of sync?"),
                 },
@@ -350,9 +416,9 @@ impl Worker {
             self.cell_tx_queue
                 .send(vec![relay_batch])
                 .unwrap_or_else(|e| error!("Sender task is gone!? ({}))", e));
-        } else if rendezvous_batch.len() > 0 {
+        } else if publish_batch.len() > 0 {
             self.publish_tx_queue
-                .send(vec![rendezvous_batch])
+                .send(vec![publish_batch])
                 .unwrap_or_else(|e| error!("Sender task is gone!? ({}))", e));
         } else if deliver_batch.len() > 0 {
             self.grpc_state.deliver(deliver_batch);
@@ -373,10 +439,9 @@ impl Worker {
         }
 
         // sleep till round end
-        let wait_time = subround_end
-            .checked_sub(current_time())
-            .expect("Did not finish subround in time?");
-        sleep(wait_time);
+        if let Some(end) = subround_end {
+            sleep(end.checked_sub(current_time()).expect("Out of sync"));
+        }
     }
 
     fn process_setup_layer(&mut self, epoch: &EpochInfo, layer: u32, sk: &Key) {

@@ -27,7 +27,7 @@ impl Endpoint {
 type MapType = std::collections::BTreeMap<Token, Vec<Endpoint>>;
 
 /// Mapping tokens to subscribers
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SubscriptionMap {
     map: MapType,
 }
