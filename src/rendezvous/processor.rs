@@ -1,38 +1,25 @@
 use std::sync::{Arc, RwLock};
 
 use crate::grpc::type_extensions::CellCmd;
-use crate::mix::rss_pipeline::{Pipeline, ProcessResult, Processor, RxQueue, TxQueue};
+use crate::mix::rss_pipeline::ProcessResult;
 use crate::net::PacketWithNextHop;
 use crate::tonic_mix::{Cell, SubscriptionVector};
 
 use super::subscription_map::SubscriptionMap;
 
-// TODO code: macro :)
-pub type SubscribeIn = SubscriptionVector;
-pub type SubscribeOut = ();
-pub type SubscribeResult = ProcessResult<SubscribeIn, SubscribeOut>;
-pub type SubscribeRxQueue = RxQueue<SubscribeIn>;
-pub type SubscribeProcessor = Processor<SubscribeIn, SubscribeOut>;
-pub type SubscribePipeline = Pipeline<SubscribeIn, SubscribeOut>;
-
-pub type PublishIn = Cell;
-pub type PublishOut = PacketWithNextHop<Cell>;
-pub type PublishResult = ProcessResult<PublishIn, PublishOut>;
-pub type PublishRxQueue = RxQueue<PublishIn>;
-pub type PublishProcessor = Processor<PublishIn, PublishOut>;
-pub type InjectTxQueue = TxQueue<PublishOut>;
-pub type PublishPipeline = Pipeline<PublishIn, PublishOut>;
+crate::define_pipeline_types!(subscribe_t, SubscriptionVector, ());
+crate::define_pipeline_types!(publish_t, Cell, PacketWithNextHop<Cell>);
 
 pub fn process_subscribe(
     req: SubscriptionVector,
     map: Arc<RwLock<SubscriptionMap>>,
-) -> SubscribeResult {
+) -> subscribe_t::Result {
     let mut map = map.write().expect("Lock poisoned");
     map.subscribe(&req);
     ProcessResult::Drop
 }
 
-pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> PublishResult {
+pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> publish_t::Result {
     let subscribers = map.get_subscribers(&cell.token());
     let mut out = Vec::new();
     for sub in subscribers {
@@ -63,8 +50,8 @@ mod tests {
     #[test]
     fn test_pubsub() {
         let map = Arc::new(RwLock::new(SubscriptionMap::default()));
-        let (sub_rx, mut sub_processor, _): SubscribePipeline = new_pipeline(2);
-        let (pub_rx, mut pub_processor, inject_tx): PublishPipeline = new_pipeline(2);
+        let (sub_rx, mut sub_processor, _): subscribe_t::Pipeline = new_pipeline(2);
+        let (pub_rx, mut pub_processor, inject_tx): publish_t::Pipeline = new_pipeline(2);
         let sub_1 = Subscription {
             circuit_id: 1337,
             tokens: vec![1, 2, 3],

@@ -228,6 +228,23 @@ fn process_new<I, O, F: FnMut(I) -> ProcessResult<I, O>>(
     }
 }
 
+#[macro_export]
+macro_rules! define_pipeline_types {
+    ($modname:ident, $in_t:ty, $out_t:ty) => {
+        pub mod $modname {
+            use super::*;
+
+            pub type In = $in_t;
+            pub type Out = $out_t;
+            pub type Result = crate::mix::rss_pipeline::ProcessResult<In, Out>;
+            pub type RxQueue = crate::mix::rss_pipeline::RxQueue<In>;
+            pub type Processor = crate::mix::rss_pipeline::Processor<In, Out>;
+            pub type TxQueue = crate::mix::rss_pipeline::TxQueue<Out>;
+            pub type Pipeline = crate::mix::rss_pipeline::Pipeline<In, Out>;
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

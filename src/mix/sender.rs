@@ -10,7 +10,7 @@ use super::directory_client;
 use crate::derive_grpc_client;
 use crate::error::Error;
 use crate::net::PacketWithNextHop;
-use crate::rendezvous::processor::InjectTxQueue;
+use crate::rendezvous::processor::publish_t;
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
 use crate::tonic_mix::*;
@@ -87,7 +87,7 @@ pub struct State {
     subscribe_tx_queue: SubscribeTxQueue,
     relay_tx_queue: RelayTxQueue,
     publish_tx_queue: PublishTxQueue,
-    inject_tx_queue: InjectTxQueue,
+    inject_tx_queue: publish_t::TxQueue,
 }
 
 impl State {
@@ -97,7 +97,7 @@ impl State {
         subscribe_tx_queue: SubscribeTxQueue,
         relay_tx_queue: RelayTxQueue,
         publish_tx_queue: PublishTxQueue,
-        inject_tx_queue: InjectTxQueue,
+        inject_tx_queue: publish_t::TxQueue,
     ) -> Self {
         State {
             dir_client,

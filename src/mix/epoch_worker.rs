@@ -12,9 +12,7 @@ use crate::crypto::key::Key;
 use crate::defs::{CircuitId, RoundNo, Token};
 use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::net::PacketWithNextHop;
-use crate::rendezvous::processor::{
-    process_publish, process_subscribe, PublishProcessor, SubscribeProcessor,
-};
+use crate::rendezvous::processor::{process_publish, process_subscribe, publish_t, subscribe_t};
 use crate::rendezvous::subscription_map::SubscriptionMap;
 use crate::tonic_mix::*;
 
@@ -88,8 +86,8 @@ pub struct Worker {
     early_cell_enqueue: EarlyCellEnqueue,
     early_cell_dequeue: CellRxQueue,
     pending_setup_pkts: PendingSetupMap,
-    subscribe_processor: SubscribeProcessor,
-    publish_processor: PublishProcessor,
+    subscribe_processor: subscribe_t::Processor,
+    publish_processor: publish_t::Processor,
     setup_state: EpochSetupState,
     state: EpochState,
     setup_circuits: CircuitMapBundle,
@@ -107,8 +105,8 @@ impl Worker {
         cell_rx_queues: Vec<CellRxQueue>,
         cell_tx_queue: CellTxQueue,
         publish_tx_queue: CellTxQueue,
-        subscribe_processor: SubscribeProcessor,
-        publish_processor: PublishProcessor,
+        subscribe_processor: subscribe_t::Processor,
+        publish_processor: publish_t::Processor,
     ) -> Self {
         let (early_cell_enqueue, early_cell_dequeue) = tokio::sync::mpsc::unbounded_channel();
         Worker {

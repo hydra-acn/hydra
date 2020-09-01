@@ -7,15 +7,18 @@ use crate::grpc::macros::valid_request_check;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
 use crate::tonic_mix::{Cell, PublishAck, SubscribeAck, SubscriptionVector};
 
-use super::processor::{PublishRxQueue, SubscribeRxQueue};
+use super::processor::{publish_t, subscribe_t};
 
 pub struct State {
-    subscribe_rx_queue: SubscribeRxQueue,
-    publish_rx_queue: PublishRxQueue,
+    subscribe_rx_queue: subscribe_t::RxQueue,
+    publish_rx_queue: publish_t::RxQueue,
 }
 
 impl State {
-    pub fn new(subscribe_rx_queue: SubscribeRxQueue, publish_rx_queue: PublishRxQueue) -> Self {
+    pub fn new(
+        subscribe_rx_queue: subscribe_t::RxQueue,
+        publish_rx_queue: publish_t::RxQueue,
+    ) -> Self {
         State {
             subscribe_rx_queue,
             publish_rx_queue,
