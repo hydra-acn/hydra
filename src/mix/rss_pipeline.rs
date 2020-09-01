@@ -12,10 +12,11 @@ use crate::epoch::current_time;
 
 pub type Pipeline<I, O, A> = (RxQueue<I>, Processor<I, O, A>, TxQueue<O>, TxQueue<A>);
 
-/// Create a new pipeline with `size` threads.
+/// Create a new pipeline with `size` threads. Panics if `size == 0`.
 pub fn new_pipeline<I: std::fmt::Debug + Scalable + Send, O: Send, A: Send>(
     size: usize,
 ) -> Pipeline<I, O, A> {
+    assert!(size > 0);
     let mut senders = Vec::new();
     let mut threads = Vec::new();
     for _ in 0..size {
@@ -143,6 +144,16 @@ impl<I: Send, O: Send, A: Send> Processor<I, O, A> {
             }
         }
         true
+    }
+
+    /// Add additional output that does not belong to any input.
+    pub fn pad(&mut self, out: Vec<O>) {
+        self.threads[0].out_queue.extend(out.into_iter());
+    }
+
+    /// Add additional alternative output that does not belong to any input.
+    pub fn alt_pad(&mut self, out: Vec<A>) {
+        self.threads[0].alt_out_queue.extend(out.into_iter());
     }
 
     /// Send the output to the tx queue by moving.
@@ -320,11 +331,13 @@ mod tests {
 
         let till = current_time() + Duration::from_millis(500);
         proc.process_till(f, till);
+        proc.pad(vec![1, 3, 3, 7]);
+        proc.alt_pad(vec![false, false]);
         proc.send();
         proc.alt_send();
 
         let out = tx.try_recv().unwrap();
-        let expected_out: Vec<Vec<u32>> = vec![vec![0, 0, 10], vec![], vec![3]];
+        let expected_out: Vec<Vec<u32>> = vec![vec![0, 0, 10, 1, 3, 3, 7], vec![], vec![3]];
         let requeued = proc.requeued();
         let mut pending = VecDeque::new();
         pending.push_back(42);
@@ -335,7 +348,7 @@ mod tests {
         assert_eq!(*sum.lock().unwrap(), 13);
 
         let alt_out = alt_tx.try_recv().unwrap();
-        let expected_alt_out = vec![vec![], vec![true], vec![true, true]];
+        let expected_alt_out = vec![vec![false, false], vec![true], vec![true, true]];
         assert_eq!(alt_out, expected_alt_out);
     }
 }
