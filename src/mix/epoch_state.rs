@@ -23,7 +23,7 @@ pub struct EpochSetupState {
     /// Map downstream ids to circuits.
     circuits: Arc<RwLock<CircuitMap>>,
     /// Map *upstream* ids to dummy circuits (they have no downstream id).
-    dummy_circuits: DummyCircuitMap,
+    dummy_circuits: Arc<RwLock<DummyCircuitMap>>,
     /// Map the upstream circuit id to the downstream id of an circuit.
     circuit_id_map: Arc<RwLock<CircuitIdMap>>,
 }
@@ -45,8 +45,8 @@ impl EpochSetupState {
         &self.circuits
     }
 
-    pub fn dummy_circuits(&mut self) -> &mut DummyCircuitMap {
-        &mut self.dummy_circuits
+    pub fn dummy_circuits(&self) -> &Arc<RwLock<DummyCircuitMap>> {
+        &self.dummy_circuits
     }
 
     pub fn circuit_id_map(&self) -> &Arc<RwLock<CircuitIdMap>> {
@@ -60,7 +60,7 @@ pub struct EpochState {
     rendezvous_map: Arc<RendezvousMap>,
     sub_map: Arc<SubscriptionMap>,
     circuits: Arc<CircuitMap>,
-    dummy_circuits: DummyCircuitMap,
+    dummy_circuits: Arc<DummyCircuitMap>,
     circuit_id_map: Arc<CircuitIdMap>,
 }
 
@@ -76,14 +76,15 @@ impl EpochState {
         let mut circuit_id_guard = state.circuit_id_map.write().expect("Lock poisoned");
         let circuit_id_map = std::mem::replace(&mut *circuit_id_guard, CircuitIdMap::default());
 
+        let mut dummy_circuits_guard = state.dummy_circuits.write().expect("Lock poisoned");
+        let dummy_circuits =
+            std::mem::replace(&mut *dummy_circuits_guard, DummyCircuitMap::default());
+
         EpochState {
             rendezvous_map: std::mem::replace(&mut state.rendezvous_map, Arc::default()),
             sub_map: Arc::new(sub_map),
             circuits: Arc::new(circuits),
-            dummy_circuits: std::mem::replace(
-                &mut state.dummy_circuits,
-                DummyCircuitMap::default(),
-            ),
+            dummy_circuits: Arc::new(dummy_circuits),
             circuit_id_map: Arc::new(circuit_id_map),
         }
     }
@@ -100,7 +101,7 @@ impl EpochState {
         &self.circuits
     }
 
-    pub fn dummy_circuits(&self) -> &DummyCircuitMap {
+    pub fn dummy_circuits(&self) -> &Arc<DummyCircuitMap> {
         &self.dummy_circuits
     }
 

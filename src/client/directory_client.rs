@@ -9,8 +9,8 @@ use tokio::time::{delay_for, Duration};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Status;
 
-use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::crypto::cprng::thread_cprng;
+use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::error::Error;
 use crate::net::ip_addr_from_slice;
 use crate::tonic_directory::directory_client::DirectoryClient;

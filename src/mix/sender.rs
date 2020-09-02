@@ -9,6 +9,7 @@ use tokio::task;
 use super::directory_client;
 use crate::derive_grpc_client;
 use crate::error::Error;
+use crate::mix::setup_processor::setup_t;
 use crate::net::PacketWithNextHop;
 use crate::rendezvous::processor::publish_t;
 use crate::tonic_mix::mix_client::MixClient;
@@ -21,8 +22,6 @@ pub type SubscribeBatch = Batch<SubscriptionVector>;
 pub type CellBatch = Batch<Cell>;
 pub type PublishBatch = Batch<Cell>;
 
-type SetupTxQueue = spmc::Receiver<SetupBatch>;
-type SubscribeTxQueue = spmc::Receiver<SubscribeBatch>;
 type RelayTxQueue = spmc::Receiver<CellBatch>;
 type PublishTxQueue = spmc::Receiver<CellBatch>;
 
@@ -83,8 +82,8 @@ macro_rules! define_send_task {
 
 pub struct State {
     dir_client: Arc<directory_client::Client>,
-    setup_tx_queue: SetupTxQueue,
-    subscribe_tx_queue: SubscribeTxQueue,
+    setup_tx_queue: setup_t::TxQueue,
+    subscribe_tx_queue: setup_t::AltTxQueue,
     relay_tx_queue: RelayTxQueue,
     publish_tx_queue: PublishTxQueue,
     inject_tx_queue: publish_t::TxQueue,
@@ -93,8 +92,8 @@ pub struct State {
 impl State {
     pub fn new(
         dir_client: Arc<directory_client::Client>,
-        setup_tx_queue: SetupTxQueue,
-        subscribe_tx_queue: SubscribeTxQueue,
+        setup_tx_queue: setup_t::TxQueue,
+        subscribe_tx_queue: setup_t::AltTxQueue,
         relay_tx_queue: RelayTxQueue,
         publish_tx_queue: PublishTxQueue,
         inject_tx_queue: publish_t::TxQueue,
@@ -155,10 +154,7 @@ async fn send_subscriptions(
     mut c: RendezvousConnection,
     mut pkts: Vec<SubscriptionVector>,
 ) {
-    if pkts.len() > 1 {
-        warn!("Expected only one subscription packet per rendezvous node");
-        shuffle(&mut pkts);
-    }
+    shuffle(&mut pkts);
     for pkt in pkts {
         let req = tonic::Request::new(pkt);
         c.subscribe(req)

@@ -1,6 +1,4 @@
 //! Circuit abstraction
-use super::grpc::SetupPacketWithPrev;
-use super::rendezvous_map::RendezvousMap;
 use crate::client::circuit::derive_keys;
 use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::cprng::thread_cprng;
@@ -10,8 +8,11 @@ use crate::crypto::x448;
 use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
 use crate::error::Error;
 use crate::grpc::type_extensions::CellCmd;
+use crate::grpc::type_extensions::SetupPacketWithPrev;
 use crate::net::{ip_addr_from_slice, PacketWithNextHop};
 use crate::tonic_mix::{Cell, SetupPacket};
+
+use super::rendezvous_map::RendezvousMap;
 
 use byteorder::{ByteOrder, LittleEndian};
 use log::*;

@@ -2,9 +2,11 @@
 use byteorder::{ByteOrder, LittleEndian};
 use rand::Rng;
 use std::convert::TryInto;
+use std::net::SocketAddr;
 
 use crate::crypto::cprng::thread_cprng;
 use crate::defs::{token_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
+use crate::epoch::EpochNo;
 use crate::mix::rss_pipeline::Scalable;
 use crate::tonic_mix::{Cell, SetupPacket, SubscriptionVector};
 
@@ -29,6 +31,49 @@ impl SetupPacket {
 impl Scalable for SetupPacket {
     fn thread_id(&self, size: usize) -> usize {
         self.circuit_id as usize % size
+    }
+}
+
+/// The `previous_hop` will be used to forward cells in downstream direction. It is `None` for the
+/// first layer.
+#[derive(Debug)]
+pub struct SetupPacketWithPrev {
+    inner: SetupPacket,
+    previous_hop: Option<SocketAddr>,
+}
+
+impl SetupPacketWithPrev {
+    pub fn new(pkt: SetupPacket, previous_hop: Option<SocketAddr>) -> Self {
+        SetupPacketWithPrev {
+            inner: pkt,
+            previous_hop,
+        }
+    }
+
+    pub fn epoch_no(&self) -> EpochNo {
+        self.inner.epoch_no
+    }
+
+    pub fn circuit_id(&self) -> CircuitId {
+        self.inner.circuit_id
+    }
+
+    pub fn ttl(&self) -> Option<u32> {
+        self.inner.ttl()
+    }
+
+    pub fn previous_hop(&self) -> Option<SocketAddr> {
+        self.previous_hop
+    }
+
+    pub fn into_inner(self) -> SetupPacket {
+        self.inner
+    }
+}
+
+impl Scalable for SetupPacketWithPrev {
+    fn thread_id(&self, size: usize) -> usize {
+        self.inner.thread_id(size)
     }
 }
 

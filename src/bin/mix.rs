@@ -8,6 +8,7 @@ use hydra::defs::sigint_handler;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
 use hydra::mix::rss_pipeline::new_pipeline;
+use hydra::mix::setup_processor::setup_t;
 use hydra::mix::{self, sender, simple_relay};
 use hydra::rendezvous;
 use hydra::rendezvous::processor::{publish_t, subscribe_t};
@@ -74,18 +75,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         // real mix
-        // setup channels for communication between gRPC service and main worker
-        let mut setup_rx_queue_senders = Vec::new();
-        let mut setup_rx_queue_receivers = Vec::new();
-        let mut cell_rx_queue_senders = Vec::new();
-        let mut cell_rx_queue_receivers = Vec::new();
         // TODO read from command line
         let no_of_worker_threads = 2usize;
-        for _ in 0..no_of_worker_threads {
-            let (sender, receiver) = unbounded_channel();
-            setup_rx_queue_senders.push(sender);
-            setup_rx_queue_receivers.push(receiver);
 
+        // setup pipelines
+        let (setup_rx_queue, setup_processor, setup_tx_queue, subscribe_tx_queue): setup_t::Pipeline = new_pipeline(no_of_worker_threads);
+
+        // setup channels for communication between gRPC service and main worker
+        let mut cell_rx_queue_senders = Vec::new();
+        let mut cell_rx_queue_receivers = Vec::new();
+        for _ in 0..no_of_worker_threads {
             let (sender, receiver) = unbounded_channel();
             cell_rx_queue_senders.push(sender);
             cell_rx_queue_receivers.push(receiver);
@@ -94,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // setup mix gRPC
         let mix_grpc_state = Arc::new(mix::grpc::State::new(
             dir_client.clone(),
-            setup_rx_queue_senders,
+            setup_rx_queue,
             cell_rx_queue_senders,
         ));
         let (mix_grpc_handle, _) =
@@ -114,16 +113,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
 
         // setup channels for communication between main worker and sender
-        let (setup_sender, setup_receiver) = spmc::channel();
-        let (subscribe_sender, subscribe_receiver) = spmc::channel();
         let (relay_sender, relay_receiver) = spmc::channel();
         let (publish_sender, publish_receiver) = spmc::channel();
 
         // setup sender
         let sender = Arc::new(sender::State::new(
             dir_client.clone(),
-            setup_receiver,
-            subscribe_receiver,
+            setup_tx_queue,
+            subscribe_tx_queue,
             relay_receiver,
             publish_receiver,
             inject_tx_queue,
@@ -135,12 +132,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             running.clone(),
             dir_client.clone(),
             mix_grpc_state.clone(),
-            setup_rx_queue_receivers,
-            setup_sender,
-            subscribe_sender,
             cell_rx_queue_receivers,
             relay_sender,
             publish_sender,
+            setup_processor,
             subscribe_processor,
             publish_processor,
         );

@@ -8,4 +8,5 @@ pub mod grpc;
 pub mod rendezvous_map;
 pub mod rss_pipeline;
 pub mod sender;
+pub mod setup_processor;
 pub mod simple_relay;

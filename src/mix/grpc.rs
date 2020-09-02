@@ -1,15 +1,13 @@
 use futures_util::StreamExt;
 use log::*;
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tonic::{Code, Request, Response, Status};
 
 use crate::crypto::x448;
 use crate::defs::{CircuitId, SETUP_AUTH_LEN, SETUP_NONCE_LEN};
-use crate::epoch::EpochNo;
 use crate::grpc::macros::valid_request_check;
-use crate::mix::directory_client;
+use crate::grpc::type_extensions::SetupPacketWithPrev;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
 use crate::tonic_mix::*;
 use crate::{
@@ -17,50 +15,15 @@ use crate::{
     unwrap_or_throw_invalid,
 };
 
-/// The `previous_hop` will be used to forward dummy cells in downstream direction. It is `None`
-/// for the first layer.
-#[derive(Debug)]
-pub struct SetupPacketWithPrev {
-    inner: SetupPacket,
-    previous_hop: Option<SocketAddr>,
-}
+use super::directory_client;
+use super::setup_processor::setup_t;
 
-impl SetupPacketWithPrev {
-    pub fn new(pkt: SetupPacket, previous_hop: Option<SocketAddr>) -> Self {
-        SetupPacketWithPrev {
-            inner: pkt,
-            previous_hop,
-        }
-    }
-
-    pub fn epoch_no(&self) -> EpochNo {
-        self.inner.epoch_no
-    }
-
-    pub fn circuit_id(&self) -> CircuitId {
-        self.inner.circuit_id
-    }
-
-    pub fn ttl(&self) -> Option<u32> {
-        self.inner.ttl()
-    }
-
-    pub fn previous_hop(&self) -> Option<SocketAddr> {
-        self.previous_hop
-    }
-
-    pub fn into_inner(self) -> SetupPacket {
-        self.inner
-    }
-}
-
-type SetupRxQueue = tokio::sync::mpsc::UnboundedSender<SetupPacketWithPrev>;
 type CellRxQueue = tokio::sync::mpsc::UnboundedSender<Cell>;
 type CellStorage = BTreeMap<CircuitId, Vec<Cell>>;
 
 pub struct State {
     dir_client: Arc<directory_client::Client>,
-    setup_rx_queues: Vec<SetupRxQueue>,
+    setup_rx_queue: setup_t::RxQueue,
     cell_rx_queues: Vec<CellRxQueue>,
     // TODO cleanup once in a while (see garbage collector of simple relay)
     // TODO performance: avoid global lock on complete storage; "RSS" by circuit id instead
@@ -70,12 +33,12 @@ pub struct State {
 impl State {
     pub fn new(
         dir_client: Arc<directory_client::Client>,
-        setup_rx_queues: Vec<SetupRxQueue>,
+        setup_rx_queue: setup_t::RxQueue,
         cell_rx_queues: Vec<CellRxQueue>,
     ) -> Self {
         State {
             dir_client,
-            setup_rx_queues,
+            setup_rx_queue,
             cell_rx_queues,
             storage: Mutex::new(CellStorage::new()),
         }
@@ -162,13 +125,8 @@ impl Mix for Service {
                 ));
             }
         }
-        let i = pkt.circuit_id as usize % self.setup_rx_queues.len();
-        let queue = unwrap_or_throw_internal!(self.setup_rx_queues.get(i), "Logical index error");
-        let pkt_with_prev = SetupPacketWithPrev {
-            inner: pkt,
-            previous_hop,
-        };
-        rethrow_as_internal!(queue.send(pkt_with_prev), "Sync error");
+        let pkt_with_prev = SetupPacketWithPrev::new(pkt, previous_hop);
+        self.setup_rx_queue.enqueue(pkt_with_prev);
         Ok(Response::new(SetupAck {}))
     }
 
