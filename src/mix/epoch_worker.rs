@@ -18,7 +18,7 @@ use crate::tonic_mix::*;
 use super::circuit::{CellDirection, Circuit, ExtendInfo, NextCellStep, NextSetupStep};
 use super::directory_client;
 use super::dummy_circuit::DummyCircuit;
-use super::epoch_state::{EpochSetupState, EpochState};
+use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap, EpochSetupState, EpochState};
 use super::grpc::SetupPacketWithPrev;
 use super::rendezvous_map::RendezvousMap;
 use super::sender::{CellBatch, SetupBatch, SubscribeBatch};
@@ -33,21 +33,6 @@ type CellTxQueue = spmc::Sender<CellBatch>;
 type EarlyCellEnqueue = tokio::sync::mpsc::UnboundedSender<Cell>;
 
 type PendingSetupMap = BTreeMap<EpochNo, VecDeque<SetupPacketWithPrev>>;
-type CircuitMap = BTreeMap<CircuitId, Circuit>;
-type ClientCircuitMap = BTreeMap<CircuitId, DummyCircuit>;
-type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
-
-/// Bundling the various circuit maps used during one epoch
-// TODO should be part of EpochSetupState and EpochState
-#[derive(Default)]
-struct CircuitMapBundle {
-    // mapping downstream ids to circuits
-    circuits: CircuitMap,
-    // mapping *upstream* ids to dummy circuits (they have no downstream id)
-    dummy_circuits: ClientCircuitMap,
-    // mapping the upstream circuit id to the downstream id of an circuit
-    circuit_id_map: CircuitIdMap,
-}
 
 pub struct Worker {
     running: Arc<AtomicBool>,
@@ -66,8 +51,6 @@ pub struct Worker {
     publish_processor: publish_t::Processor,
     setup_state: EpochSetupState,
     state: EpochState,
-    setup_circuits: CircuitMapBundle,
-    communication_circuits: CircuitMapBundle,
 }
 
 impl Worker {
@@ -102,8 +85,6 @@ impl Worker {
             publish_processor,
             setup_state: EpochSetupState::default(),
             state: EpochState::default(),
-            communication_circuits: CircuitMapBundle::default(),
-            setup_circuits: CircuitMapBundle::default(),
         }
     }
 
@@ -235,16 +216,12 @@ impl Worker {
             }
         }
         info!("Communication of epoch {} and setup of epoch {} done, updating the circuit maps accordingly", communication_epoch.epoch_no, setup_epoch.epoch_no);
-        // TODO performance: swap is most likely expensive here ... (but will be solved anyway when
-        // using EpochState for everything)
-        std::mem::swap(&mut self.communication_circuits, &mut self.setup_circuits);
         self.state = EpochState::finalize_setup(&mut self.setup_state);
-        debug!(
+        info!(
             "We have {} circuits and {} dummy circuits for the next communication",
-            self.communication_circuits.circuits.len(),
-            self.communication_circuits.dummy_circuits.len()
+            self.state.circuits().len(),
+            self.state.dummy_circuits().len()
         );
-        self.setup_circuits = CircuitMapBundle::default();
     }
 
     fn process_communication_round(&mut self, epoch: &EpochInfo, round_no: RoundNo) {
@@ -287,11 +264,7 @@ impl Worker {
         // TODO performance: parallel -> separate pipeline
         for queue in self.cell_rx_queues.iter_mut() {
             while let Ok(cell) = queue.try_recv() {
-                inject_cell(
-                    &mut self.communication_circuits.circuits,
-                    &self.communication_circuits.circuit_id_map,
-                    cell,
-                );
+                inject_cell(&self.state.circuits(), &self.state.circuit_id_map(), cell);
             }
         }
 
@@ -338,9 +311,9 @@ impl Worker {
         for queue in queue_iter {
             while let Ok(cell) = queue.try_recv() {
                 match process_cell(
-                    &mut self.communication_circuits.circuits,
-                    &mut self.communication_circuits.dummy_circuits,
-                    &self.communication_circuits.circuit_id_map,
+                    &self.state.circuits(),
+                    &self.state.dummy_circuits(),
+                    &self.state.circuit_id_map(),
                     cell,
                     round_no,
                     layer,
@@ -358,7 +331,7 @@ impl Worker {
         }
 
         // insert dummy cells if necessary
-        for (_, circuit) in self.communication_circuits.circuits.iter_mut() {
+        for (_, circuit) in self.state.circuits().iter() {
             if layer != circuit.layer() {
                 // no out-of-sync dummies
                 continue;
@@ -376,7 +349,7 @@ impl Worker {
 
         // send on dummy circuits as well, but only upstream
         if let CellDirection::Upstream = direction {
-            for (_, dummy_circuit) in self.communication_circuits.dummy_circuits.iter_mut() {
+            for (_, dummy_circuit) in self.state.dummy_circuits().iter() {
                 if layer != dummy_circuit.layer() {
                     // no out-of-sync dummies
                     continue;
@@ -455,9 +428,12 @@ impl Worker {
                 continue;
             }
 
-            if self.setup_circuits.circuits.contains_key(&pkt.circuit_id()) {
-                warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
-                continue;
+            {
+                let circuit_map = self.setup_state.circuits().read().expect("Lock poisoned");
+                if circuit_map.contains_key(&pkt.circuit_id()) {
+                    warn!("Ignoring setup pkt with already used circuit id; should be catched earlier by gRPC");
+                    continue;
+                }
             }
 
             // TODO security: replay protection based on auth_tag of pkt
@@ -480,12 +456,15 @@ impl Worker {
                             );
                         }
                     }
-                    self.setup_circuits
-                        .circuit_id_map
-                        .insert(circuit.upstream_id(), circuit.downstream_id());
-                    self.setup_circuits
-                        .circuits
-                        .insert(circuit.downstream_id(), circuit);
+
+                    let mut circuit_id_map = self
+                        .setup_state
+                        .circuit_id_map()
+                        .write()
+                        .expect("Lock poisoned");
+                    let mut circuit_map = self.setup_state.circuits().write().expect("Lock poisoned");
+                    circuit_id_map.insert(circuit.upstream_id(), circuit.downstream_id());
+                    circuit_map.insert(circuit.downstream_id(), circuit);
                 }
                 Err(e) => {
                     warn!(
@@ -532,8 +511,8 @@ impl Worker {
             .expect("No path available");
         let (circuit, extend) =
             DummyCircuit::new(epoch_no, layer, &path).expect("Creating dummy circuit failed");
-        self.setup_circuits
-            .dummy_circuits
+        self.setup_state
+            .dummy_circuits()
             .insert(circuit.circuit_id(), circuit);
         extend
     }
@@ -543,8 +522,8 @@ impl Worker {
 /// `None` if the circuit id is not known or we are the downstream endpoint (dummy circuits) or the
 /// cell was a duplicate or the cell was dropped for other reasons.
 fn process_cell(
-    circuits: &mut CircuitMap,
-    dummy_circuits: &mut ClientCircuitMap,
+    circuits: &CircuitMap,
+    dummy_circuits: &DummyCircuitMap,
     circuit_id_map: &CircuitIdMap,
     cell: Cell,
     round_no: RoundNo,
@@ -561,7 +540,7 @@ fn process_cell(
 
     match direction {
         CellDirection::Upstream => {
-            if let Some(circuit) = circuits.get_mut(&cell.circuit_id) {
+            if let Some(circuit) = circuits.get(&cell.circuit_id) {
                 return circuit.process_cell(cell, layer, direction);
             } else {
                 warn!(
@@ -571,13 +550,13 @@ fn process_cell(
             }
         }
         CellDirection::Downstream => {
-            if let Some(dummy_circuit) = dummy_circuits.get_mut(&cell.circuit_id) {
+            if let Some(dummy_circuit) = dummy_circuits.get(&cell.circuit_id) {
                 dummy_circuit.receive_cell(cell);
                 return None;
             }
 
             if let Some(mapped_id) = circuit_id_map.get(&cell.circuit_id) {
-                if let Some(circuit) = circuits.get_mut(&mapped_id) {
+                if let Some(circuit) = circuits.get(&mapped_id) {
                     return circuit.process_cell(cell, layer, direction);
                 }
             }
@@ -591,9 +570,9 @@ fn process_cell(
     None
 }
 
-fn inject_cell(circuits: &mut CircuitMap, circuit_id_map: &CircuitIdMap, cell: Cell) {
+fn inject_cell(circuits: &CircuitMap, circuit_id_map: &CircuitIdMap, cell: Cell) {
     if let Some(downstream_id) = circuit_id_map.get(&cell.circuit_id) {
-        if let Some(circuit) = circuits.get_mut(&downstream_id) {
+        if let Some(circuit) = circuits.get(&downstream_id) {
             circuit.inject(cell);
         } else {
             warn!("Circuit for upstream id {} is gone!?", cell.circuit_id);

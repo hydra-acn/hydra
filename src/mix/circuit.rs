@@ -19,7 +19,7 @@ use rand::Rng;
 use std::cmp::{self, Ordering};
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 pub type ExtendInfo = PacketWithNextHop<SetupPacket>;
 
@@ -51,11 +51,11 @@ pub struct Circuit {
     // None for last layer
     upstream_hop: Option<SocketAddr>,
     threefish: Threefish2048,
-    delayed_cells: BTreeMap<RoundNo, Cell>,
-    inject_cells: VecDeque<Cell>,
+    delayed_cells: RwLock<BTreeMap<RoundNo, Cell>>,
+    inject_cells: RwLock<VecDeque<Cell>>,
     max_round_no: RoundNo,
-    last_upstream_round_no: Option<RoundNo>,
-    last_downstream_round_no: Option<RoundNo>,
+    last_upstream_round_no: RwLock<Option<RoundNo>>,
+    last_downstream_round_no: RwLock<Option<RoundNo>>,
 }
 
 impl Circuit {
@@ -123,11 +123,11 @@ impl Circuit {
             downstream_hop,
             upstream_hop: None,
             threefish,
-            delayed_cells: BTreeMap::new(),
-            inject_cells: VecDeque::new(),
+            delayed_cells: RwLock::default(),
+            inject_cells: RwLock::default(),
             max_round_no,
-            last_upstream_round_no: None,
-            last_downstream_round_no: None,
+            last_upstream_round_no: RwLock::default(),
+            last_downstream_round_no: RwLock::default(),
         };
 
         if ttl == 0 {
@@ -186,7 +186,7 @@ impl Circuit {
 
     /// Returns `None` for duplicates and out-of-sync (too late) cells.
     pub fn process_cell(
-        &mut self,
+        &self,
         mut cell: Cell,
         layer: u32,
         direction: CellDirection,
@@ -215,19 +215,22 @@ impl Circuit {
         }
 
         // duplicate detection
-        let maybe_last_round_no: &mut Option<RoundNo> = match direction {
-            CellDirection::Upstream => &mut self.last_upstream_round_no,
-            CellDirection::Downstream => &mut self.last_downstream_round_no,
+        let mut last_round_no_guard = match direction {
+            CellDirection::Upstream => self.last_upstream_round_no.write().expect("Lock poisoned"),
+            CellDirection::Downstream => self
+                .last_downstream_round_no
+                .write()
+                .expect("Lock poisoned"),
         };
 
-        if let Some(last_round_no) = maybe_last_round_no {
-            if cell.round_no <= *last_round_no {
+        if let Some(last_round_no) = *last_round_no_guard {
+            if cell.round_no <= last_round_no {
                 warn!("Dropping duplicate");
                 return None;
             }
         }
 
-        *maybe_last_round_no = Some(cell.round_no);
+        *last_round_no_guard = Some(cell.round_no);
 
         // re-write circuit id
         let next_circuit_id = match direction {
@@ -243,7 +246,12 @@ impl Circuit {
         match direction {
             CellDirection::Upstream => {
                 // check if we have a delayed cell
-                if let Some(delayed_cell) = self.delayed_cells.remove(&cell.round_no) {
+                if let Some(delayed_cell) = self
+                    .delayed_cells
+                    .write()
+                    .expect("Lock poisoned")
+                    .remove(&cell.round_no)
+                {
                     cell = delayed_cell;
                 }
 
@@ -255,6 +263,8 @@ impl Circuit {
                     // randomize cmd of original cell
                     thread_cprng().fill(&mut cell.onion[0..8]);
                     self.delayed_cells
+                        .write()
+                        .expect("Lock poisoned")
                         .insert(cell.round_no + rounds as u32, cell);
                     cell = dummy;
                 }
@@ -280,14 +290,17 @@ impl Circuit {
         }
     }
 
-    /// Use an injected cell or create a dummy cell to pad the circuit.
-    pub fn pad(&mut self, round_no: RoundNo, direction: CellDirection) -> Option<NextCellStep> {
-        let maybe_last_round_no: &mut Option<RoundNo> = match direction {
-            CellDirection::Upstream => &mut self.last_upstream_round_no,
-            CellDirection::Downstream => &mut self.last_downstream_round_no,
+    /// Use an injected cell or create a dummy cell to pad the circuit if necessary.
+    pub fn pad(&self, round_no: RoundNo, direction: CellDirection) -> Option<NextCellStep> {
+        let mut last_round_no_guard = match direction {
+            CellDirection::Upstream => self.last_upstream_round_no.write().expect("Lock poisoned"),
+            CellDirection::Downstream => self
+                .last_downstream_round_no
+                .write()
+                .expect("Lock poisoned"),
         };
 
-        let need_dummy = match *maybe_last_round_no {
+        let need_dummy = match *last_round_no_guard {
             Some(last_round_no) => round_no != last_round_no,
             None => true,
         };
@@ -296,7 +309,7 @@ impl Circuit {
             return None;
         }
 
-        *maybe_last_round_no = Some(round_no);
+        *last_round_no_guard = Some(round_no);
 
         let circuit_id = match direction {
             CellDirection::Upstream => self.upstream_id,
@@ -315,7 +328,12 @@ impl Circuit {
             }
             CellDirection::Downstream => match round_no == self.max_round_no {
                 true => self.create_nack(),
-                false => match self.inject_cells.pop_front() {
+                false => match self
+                    .inject_cells
+                    .write()
+                    .expect("Lock poisoned")
+                    .pop_front()
+                {
                     Some(c) => c,
                     None => {
                         debug!(
@@ -380,9 +398,12 @@ impl Circuit {
         }
     }
 
-    pub fn inject(&mut self, mut cell: Cell) {
+    pub fn inject(&self, mut cell: Cell) {
         cell.circuit_id = self.downstream_id;
-        self.inject_cells.push_back(cell);
+        self.inject_cells
+            .write()
+            .expect("Lock poisoned")
+            .push_back(cell);
     }
 
     fn create_nack(&self) -> Cell {
@@ -391,16 +412,17 @@ impl Circuit {
             round_no: self.max_round_no,
             onion: vec![0u8; ONION_LEN],
         };
-        let n = cmp::min((ONION_LEN - 8) / 8, self.inject_cells.len()) as u8;
+        let inject_cells_guard = self.inject_cells.read().expect("Lock poisoned");
+        let n = cmp::min((ONION_LEN - 8) / 8, inject_cells_guard.len()) as u8;
         cell.onion[0] = n;
         let mut i = 8;
-        for dropped_cell in self.inject_cells.iter() {
+        for dropped_cell in inject_cells_guard.iter() {
             match cell.onion.get_mut(i..i + 8) {
                 Some(buf) => LittleEndian::write_u64(buf, dropped_cell.token()),
                 None => {
                     warn!(
                         "Have to drop {} cells -> NACK not big enough",
-                        self.inject_cells.len()
+                        inject_cells_guard.len()
                     );
                     break;
                 }
