@@ -4,9 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use tonic::{Code, Request, Response, Status};
 
-use crate::crypto::x448;
-use crate::defs::{CircuitId, SETUP_AUTH_LEN, SETUP_NONCE_LEN};
-use crate::grpc::macros::valid_request_check;
+use crate::defs::CircuitId;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
 use crate::net::PacketWithNextHop;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
@@ -92,23 +90,7 @@ impl Mix for Service {
             None => None,
         };
         let pkt = req.into_inner();
-        unwrap_or_throw_invalid!(pkt.ttl(), "Your setup packet has a strange size");
-        valid_request_check(
-            self.dir_client.has_ephemeral_key(&pkt.epoch_no),
-            "Seems like we are not part of the given epoch",
-        )?;
-        valid_request_check(
-            pkt.public_dh.len() == x448::POINT_SIZE,
-            "Public key has not the expected size",
-        )?;
-        valid_request_check(
-            pkt.nonce.len() == SETUP_NONCE_LEN,
-            "Nonce has not the expected size",
-        )?;
-        valid_request_check(
-            pkt.auth_tag.len() == SETUP_AUTH_LEN,
-            "Authentication has not the expected size",
-        )?;
+        pkt.validity_check(&*self.dir_client)?;
         {
             let mut storage = rethrow_as_internal!(self.storage.lock(), "Lock failure");
             let already_in_use = match storage.get_mut(&pkt.circuit_id) {

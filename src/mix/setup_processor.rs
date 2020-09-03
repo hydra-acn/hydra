@@ -78,7 +78,7 @@ pub fn process_setup_pkt(
     {
         let circuit_map_guard = circuit_map.read().expect("Lock poisoned");
         if circuit_map_guard.contains_key(&pkt.circuit_id()) {
-            warn!("Dropping setup pkt with already used circuit id; should be catched earlier by gRPC");
+            warn!("Dropping setup pkt with already used circuit id");
             return setup_t::Result::Drop;
         }
     }

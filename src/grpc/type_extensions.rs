@@ -3,12 +3,19 @@ use byteorder::{ByteOrder, LittleEndian};
 use rand::Rng;
 use std::convert::TryInto;
 use std::net::SocketAddr;
+use tonic::Status;
 
 use crate::crypto::cprng::thread_cprng;
-use crate::defs::{token_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
+use crate::crypto::x448;
+use crate::defs::{
+    token_from_bytes, CircuitId, RoundNo, Token, ONION_LEN, SETUP_AUTH_LEN, SETUP_NONCE_LEN,
+};
 use crate::epoch::EpochNo;
+use crate::grpc::macros::valid_request_check;
+use crate::mix::directory_client;
 use crate::mix::rss_pipeline::Scalable;
 use crate::tonic_mix::{Cell, SetupPacket, SubscriptionVector};
+use crate::unwrap_or_throw_invalid;
 
 impl SetupPacket {
     /// for a given setup packet, determine how much hops it needs to be sent
@@ -25,6 +32,27 @@ impl SetupPacket {
             return None;
         }
         Some((nom / denom) as u32)
+    }
+
+    pub fn validity_check(&self, dir_client: &directory_client::Client) -> Result<(), Status> {
+        unwrap_or_throw_invalid!(self.ttl(), "Your setup packet has a strange size");
+        valid_request_check(
+            dir_client.has_ephemeral_key(&self.epoch_no),
+            "Seems like we are not part of the given epoch",
+        )?;
+        valid_request_check(
+            self.public_dh.len() == x448::POINT_SIZE,
+            "Public key has not the expected size",
+        )?;
+        valid_request_check(
+            self.nonce.len() == SETUP_NONCE_LEN,
+            "Nonce has not the expected size",
+        )?;
+        valid_request_check(
+            self.auth_tag.len() == SETUP_AUTH_LEN,
+            "Authentication has not the expected size",
+        )?;
+        Ok(())
     }
 }
 
