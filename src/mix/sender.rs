@@ -130,22 +130,22 @@ async fn send_setup_packets(
     mut pkts: Vec<SetupPacket>,
 ) {
     shuffle(&mut pkts);
-    for pkt in pkts {
-        // setup packets need the src attached as metadata
-        let mut req = tonic::Request::new(pkt);
-        req.metadata_mut().insert(
-            "reply-to",
-            dir_client
-                .config()
-                .setup_reply_to()
-                .parse()
-                .expect("Why should this fail?"),
-        );
-        c.setup_circuit(req)
-            .await
-            .map(|_| ())
-            .unwrap_or_else(|e| warn!("Creating next circuit hop failed: {}", e));
-    }
+
+    let mut req = tonic::Request::new(stream::iter(pkts));
+    // attach reply address as metadata
+    req.metadata_mut().insert(
+        "reply-to",
+        dir_client
+            .config()
+            .setup_reply_to()
+            .parse()
+            .expect("Why should this fail?"),
+    );
+
+    c.stream_setup_circuit(req)
+        .await
+        .map(|_| ())
+        .unwrap_or_else(|e| warn!("Creating circuits failed: {}", e));
 }
 
 async fn send_subscriptions(
