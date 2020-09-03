@@ -3,15 +3,15 @@ use std::sync::{Arc, RwLock};
 use crate::grpc::type_extensions::CellCmd;
 use crate::mix::rss_pipeline::ProcessResult;
 use crate::net::PacketWithNextHop;
-use crate::tonic_mix::{Cell, SubscriptionVector};
+use crate::tonic_mix::{Cell, Subscription};
 
 use super::subscription_map::SubscriptionMap;
 
-crate::define_pipeline_types!(subscribe_t, SubscriptionVector, (), ());
+crate::define_pipeline_types!(subscribe_t, Subscription, (), ());
 crate::define_pipeline_types!(publish_t, Cell, PacketWithNextHop<Cell>, ());
 
 pub fn process_subscribe(
-    req: SubscriptionVector,
+    req: Subscription,
     map: Arc<RwLock<SubscriptionMap>>,
 ) -> subscribe_t::Result {
     let mut map = map.write().expect("Lock poisoned");
@@ -53,37 +53,36 @@ mod tests {
         let (sub_rx, mut sub_processor, _, _): subscribe_t::Pipeline = new_pipeline(2);
         let (pub_rx, mut pub_processor, inject_tx, _): publish_t::Pipeline = new_pipeline(2);
         let sub_1 = Subscription {
+            addr: vec![112, 13, 12, 1],
+            port: 9001,
             circuit_id: 1337,
             tokens: vec![1, 2, 3],
         };
         let sub_2 = Subscription {
+            addr: vec![112, 13, 12, 1],
+            port: 9001,
             circuit_id: 99,
             tokens: vec![4, 5, 6],
         };
         let sub_3 = Subscription {
+            addr: vec![112, 13, 13, 1],
+            port: 9001,
             circuit_id: 12,
             tokens: vec![1, 4, 7],
         };
-        let sub_vec_1 = SubscriptionVector {
-            epoch_no: 42,
-            addr: vec![112, 13, 12, 1],
-            port: 9001,
-            subs: vec![sub_1, sub_2],
-        };
-        let sub_vec_2 = SubscriptionVector {
-            epoch_no: 42,
-            addr: vec![112, 13, 13, 1],
-            port: 9001,
-            subs: vec![sub_3],
-        };
 
-        // sequentia processing for deterministic order of subscriptions
-        sub_rx.enqueue(sub_vec_1);
+        // sequential processing for deterministic order of subscriptions
+        sub_rx.enqueue(sub_1);
         sub_processor.process_till(
             |req| process_subscribe(req, map.clone()),
             current_time() + Duration::from_millis(50),
         );
-        sub_rx.enqueue(sub_vec_2);
+        sub_rx.enqueue(sub_2);
+        sub_processor.process_till(
+            |req| process_subscribe(req, map.clone()),
+            current_time() + Duration::from_millis(50),
+        );
+        sub_rx.enqueue(sub_3);
         sub_processor.process_till(
             |req| process_subscribe(req, map.clone()),
             current_time() + Duration::from_millis(50),

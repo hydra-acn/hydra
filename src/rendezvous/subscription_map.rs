@@ -2,7 +2,7 @@ use log::*;
 use std::net::SocketAddr;
 
 use crate::defs::{CircuitId, Token};
-use crate::tonic_mix::SubscriptionVector;
+use crate::tonic_mix::Subscription;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Endpoint {
@@ -39,7 +39,7 @@ impl SubscriptionMap {
         }
     }
 
-    pub fn subscribe(&mut self, to: &SubscriptionVector) {
+    pub fn subscribe(&mut self, to: &Subscription) {
         let addr = match to.socket_addr() {
             Some(a) => a,
             None => {
@@ -48,17 +48,15 @@ impl SubscriptionMap {
             }
         };
 
-        for sub in to.subs.iter() {
-            let endpoint = Endpoint {
-                addr,
-                circuit_id: sub.circuit_id,
-            };
-            for token in sub.tokens.iter() {
-                match self.map.get_mut(&token) {
-                    Some(vec) => vec.push(endpoint.clone()),
-                    None => {
-                        self.map.insert(*token, vec![endpoint.clone()]);
-                    }
+        let endpoint = Endpoint {
+            addr,
+            circuit_id: to.circuit_id,
+        };
+        for token in to.tokens.iter() {
+            match self.map.get_mut(&token) {
+                Some(vec) => vec.push(endpoint.clone()),
+                None => {
+                    self.map.insert(*token, vec![endpoint.clone()]);
                 }
             }
         }

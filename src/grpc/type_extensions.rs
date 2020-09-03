@@ -14,7 +14,7 @@ use crate::epoch::EpochNo;
 use crate::grpc::macros::valid_request_check;
 use crate::mix::directory_client;
 use crate::mix::rss_pipeline::Scalable;
-use crate::tonic_mix::{Cell, SetupPacket, SubscriptionVector};
+use crate::tonic_mix::{Cell, SetupPacket, Subscription};
 use crate::unwrap_or_throw_invalid;
 
 impl SetupPacket {
@@ -105,7 +105,7 @@ impl Scalable for SetupPacketWithPrev {
     }
 }
 
-impl SubscriptionVector {
+impl Subscription {
     /// Check if address and port for injection are valid.
     // TODO security: check for IP addr should be better (e.g. localhost); or use the real src
     // address instead
@@ -130,7 +130,11 @@ impl SubscriptionVector {
     }
 }
 
-impl Scalable for SubscriptionVector {}
+impl Scalable for Subscription {
+    fn thread_id(&self, size: usize) -> usize {
+        self.circuit_id as usize % size
+    }
+}
 
 pub enum CellCmd {
     Delay(u8),

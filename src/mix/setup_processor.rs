@@ -10,7 +10,7 @@ use crate::epoch::EpochNo;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
 use crate::net::{ip_addr_to_vec, PacketWithNextHop};
 use crate::tonic_directory::EpochInfo;
-use crate::tonic_mix::{SetupPacket, Subscription, SubscriptionVector};
+use crate::tonic_mix::{SetupPacket, Subscription};
 
 use super::circuit::{Circuit, NextSetupStep};
 use super::directory_client;
@@ -22,7 +22,7 @@ crate::define_pipeline_types!(
     setup_t,
     SetupPacketWithPrev,
     PacketWithNextHop<SetupPacket>,
-    PacketWithNextHop<SubscriptionVector>
+    PacketWithNextHop<Subscription>
 );
 
 // TODO code: refactor epoch state (only one struct, inside Arc and optionally RwLock) to make
@@ -155,11 +155,11 @@ fn create_subscriptions(
     }
     let mut sub_requests = Vec::new();
     for (rendezvous_addr, tokens) in map.into_iter() {
-        let req = SubscriptionVector {
-            epoch_no: 42, // deprecated
+        let req = Subscription {
             addr: ip_addr_to_vec(&dir_client.config().addr),
             port: dir_client.config().relay_port as u32,
-            subs: vec![Subscription { circuit_id, tokens }],
+            circuit_id,
+            tokens,
         };
         sub_requests.push(PacketWithNextHop::new(req, rendezvous_addr));
     }

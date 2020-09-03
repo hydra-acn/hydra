@@ -5,7 +5,7 @@ use tonic::{Request, Response, Status};
 
 use crate::grpc::macros::valid_request_check;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
-use crate::tonic_mix::{Cell, PublishAck, SubscribeAck, SubscriptionVector};
+use crate::tonic_mix::{Cell, PublishAck, SubscribeAck, Subscription};
 
 use super::processor::{publish_t, subscribe_t};
 
@@ -32,12 +32,21 @@ crate::define_grpc_service!(Service, State, RendezvousServer);
 impl Rendezvous for Service {
     async fn subscribe(
         &self,
-        req: Request<SubscriptionVector>,
+        req: Request<tonic::Streaming<Subscription>>,
     ) -> Result<Response<SubscribeAck>, Status> {
         {
-            let msg = req.into_inner();
-            valid_request_check(msg.is_valid(), "Address or port for injection invalid")?;
-            self.subscribe_rx_queue.enqueue(msg);
+            let mut stream = req.into_inner();
+            while let Some(s) = stream.next().await {
+                let sub = match s {
+                    Ok(ss) => ss,
+                    Err(e) => {
+                        warn!("Reading sub stream failed: {}", e);
+                        continue;
+                    }
+                };
+                valid_request_check(sub.is_valid(), "Address or port for injection invalid")?;
+                self.subscribe_rx_queue.enqueue(sub);
+            }
         }
         Ok(Response::new(SubscribeAck {}))
     }

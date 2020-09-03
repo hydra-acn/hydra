@@ -22,7 +22,7 @@ use super::setup_processor::setup_t;
 
 pub type Batch<T> = Vec<Vec<PacketWithNextHop<T>>>;
 pub type SetupBatch = Batch<SetupPacket>;
-pub type SubscribeBatch = Batch<SubscriptionVector>;
+pub type SubscribeBatch = Batch<Subscription>;
 pub type CellBatch = Batch<Cell>;
 pub type PublishBatch = Batch<Cell>;
 
@@ -152,16 +152,14 @@ async fn send_setup_packets(
 async fn send_subscriptions(
     _dir_client: Arc<directory_client::Client>,
     mut c: RendezvousConnection,
-    pkts: Vec<SubscriptionVector>,
+    pkts: Vec<Subscription>,
 ) {
     let shuffle_it = ShuffleIterator::new(pkts);
-    for pkt in shuffle_it {
-        let req = tonic::Request::new(pkt);
-        c.subscribe(req)
-            .await
-            .map(|_| ())
-            .unwrap_or_else(|e| warn!("Subscription failed: {}", e));
-    }
+    let req = tonic::Request::new(stream::iter(shuffle_it));
+    c.subscribe(req)
+        .await
+        .map(|_| ())
+        .unwrap_or_else(|e| warn!("Subscription failed: {}", e));
 }
 
 async fn relay_cells(
