@@ -8,23 +8,23 @@ use crate::crypto::x448;
 use crate::defs::{CircuitId, SETUP_AUTH_LEN, SETUP_NONCE_LEN};
 use crate::grpc::macros::valid_request_check;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
+use crate::net::PacketWithNextHop;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
 use crate::tonic_mix::*;
 use crate::{
-    define_grpc_service, rethrow_as_internal, rethrow_as_invalid, unwrap_or_throw_internal,
-    unwrap_or_throw_invalid,
+    define_grpc_service, rethrow_as_internal, rethrow_as_invalid, unwrap_or_throw_invalid,
 };
 
+use super::cell_processor::cell_rss_t;
 use super::directory_client;
 use super::setup_processor::setup_t;
 
-type CellRxQueue = tokio::sync::mpsc::UnboundedSender<Cell>;
 type CellStorage = BTreeMap<CircuitId, Vec<Cell>>;
 
 pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_rx_queue: setup_t::RxQueue,
-    cell_rx_queues: Vec<CellRxQueue>,
+    cell_rx_queue: cell_rss_t::RxQueue,
     // TODO cleanup once in a while (see garbage collector of simple relay)
     // TODO performance: avoid global lock on complete storage; "RSS" by circuit id instead
     storage: Mutex<CellStorage>,
@@ -34,24 +34,27 @@ impl State {
     pub fn new(
         dir_client: Arc<directory_client::Client>,
         setup_rx_queue: setup_t::RxQueue,
-        cell_rx_queues: Vec<CellRxQueue>,
+        cell_rx_queue: cell_rss_t::RxQueue,
     ) -> Self {
         State {
             dir_client,
             setup_rx_queue,
-            cell_rx_queues,
+            cell_rx_queue,
             storage: Mutex::new(CellStorage::new()),
         }
     }
 
-    pub fn deliver(&self, cells: Vec<Cell>) {
+    pub fn deliver(&self, cells: Vec<Vec<PacketWithNextHop<Cell>>>) {
         let mut storage = self.storage.lock().expect("Lock poisoned");
-        for cell in cells {
-            debug!("New cell ready for delivery on circuit {}", cell.circuit_id);
-            if let Some(cell_vec) = storage.get_mut(&cell.circuit_id) {
-                cell_vec.push(cell);
-            } else {
-                warn!("Cell ready for delivery, but circuit id unknown -> dropping");
+        for vec in cells.into_iter() {
+            for pkt in vec.into_iter() {
+                let cell = pkt.into_inner();
+                if let Some(cell_vec) = storage.get_mut(&cell.circuit_id) {
+                    debug!("New cell ready for delivery on circuit {}", cell.circuit_id);
+                    cell_vec.push(cell);
+                } else {
+                    warn!("Cell ready for delivery, but circuit id unknown -> dropping");
+                }
             }
         }
     }
@@ -69,10 +72,7 @@ impl State {
                     continue;
                 }
             };
-            let i = cell.circuit_id as usize % self.cell_rx_queues.len();
-            let queue =
-                unwrap_or_throw_internal!(self.cell_rx_queues.get(i), "Logical index error");
-            rethrow_as_internal!(queue.send(cell), "Sync error");
+            self.cell_rx_queue.enqueue(cell);
         }
         Ok(())
     }
@@ -148,12 +148,9 @@ impl Mix for Service {
         // deliver cells only once
         missed_cells.clear();
 
-        // forward new cell
-        let i = cell.circuit_id as usize % self.cell_rx_queues.len();
-        let queue = unwrap_or_throw_internal!(self.cell_rx_queues.get(i), "Logical index error");
-        rethrow_as_internal!(queue.send(cell), "Sync error");
+        // handle new cell
+        self.cell_rx_queue.enqueue(cell);
 
-        // send response
         Ok(Response::new(cell_vec))
     }
 

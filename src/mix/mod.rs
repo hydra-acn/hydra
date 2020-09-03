@@ -1,3 +1,4 @@
+pub mod cell_processor;
 pub mod channel_pool;
 pub mod circuit;
 pub mod directory_client;

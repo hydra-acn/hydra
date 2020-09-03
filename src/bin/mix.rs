@@ -2,9 +2,9 @@ use clap::{clap_app, value_t};
 use log::*;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use tokio::sync::mpsc::unbounded_channel;
 
 use hydra::defs::sigint_handler;
+use hydra::mix::cell_processor::cell_rss_t;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
 use hydra::mix::rss_pipeline::new_pipeline;
@@ -78,32 +78,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // TODO read from command line
         let no_of_worker_threads = 2usize;
 
-        // setup pipelines
-        let (setup_rx_queue, setup_processor, setup_tx_queue, subscribe_tx_queue): setup_t::Pipeline = new_pipeline(no_of_worker_threads);
+        // mix view pipelines
+        let (setup_rx_queue, setup_processor, setup_tx_queue, subscribe_tx_queue): setup_t::Pipeline =
+            new_pipeline(no_of_worker_threads);
+        let (cell_rx_queue, cell_processor, relay_tx_queue, publish_tx_queue): cell_rss_t::Pipeline =
+            new_pipeline(no_of_worker_threads);
 
-        // setup channels for communication between gRPC service and main worker
-        let mut cell_rx_queue_senders = Vec::new();
-        let mut cell_rx_queue_receivers = Vec::new();
-        for _ in 0..no_of_worker_threads {
-            let (sender, receiver) = unbounded_channel();
-            cell_rx_queue_senders.push(sender);
-            cell_rx_queue_receivers.push(receiver);
-        }
+        // rendezvous view pipelines
+        let (subscribe_rx_queue, subscribe_processor, _, _): subscribe_t::Pipeline =
+            new_pipeline(no_of_worker_threads);
+        let (publish_rx_queue, publish_processor, inject_tx_queue, _): publish_t::Pipeline =
+            new_pipeline(no_of_worker_threads);
 
         // setup mix gRPC
         let mix_grpc_state = Arc::new(mix::grpc::State::new(
             dir_client.clone(),
             setup_rx_queue,
-            cell_rx_queue_senders,
+            cell_rx_queue,
         ));
         let (mix_grpc_handle, _) =
             mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr, None).await?;
 
         // setup rendezvous gRPC
-        let (subscribe_rx_queue, subscribe_processor, _, _): subscribe_t::Pipeline =
-            new_pipeline(no_of_worker_threads);
-        let (publish_rx_queue, publish_processor, inject_tx_queue, _): publish_t::Pipeline =
-            new_pipeline(no_of_worker_threads);
         let rendezvous_grpc_state = Arc::new(rendezvous::grpc::State::new(
             subscribe_rx_queue,
             publish_rx_queue,
@@ -112,17 +108,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rendezvous::grpc::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr, None)
                 .await?;
 
-        // setup channels for communication between main worker and sender
-        let (relay_sender, relay_receiver) = spmc::channel();
-        let (publish_sender, publish_receiver) = spmc::channel();
-
         // setup sender
         let sender = Arc::new(sender::State::new(
             dir_client.clone(),
             setup_tx_queue,
             subscribe_tx_queue,
-            relay_receiver,
-            publish_receiver,
+            relay_tx_queue,
+            publish_tx_queue,
             inject_tx_queue,
         ));
         let sender_handle = tokio::spawn(sender::run(sender));
@@ -132,11 +124,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             running.clone(),
             dir_client.clone(),
             mix_grpc_state.clone(),
-            cell_rx_queue_receivers,
-            relay_sender,
-            publish_sender,
             setup_processor,
             subscribe_processor,
+            cell_processor,
             publish_processor,
         );
         let main_handle = tokio::task::spawn_blocking(move || worker.run());

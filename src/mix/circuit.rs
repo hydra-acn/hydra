@@ -34,6 +34,7 @@ pub enum NextCellStep {
     Rendezvous(PacketWithNextHop<Cell>),
     Deliver(Cell),
     Wait(Cell),
+    Drop,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -53,7 +54,7 @@ pub struct Circuit {
     upstream_hop: Option<SocketAddr>,
     threefish: Threefish2048,
     delayed_cells: RwLock<BTreeMap<RoundNo, Cell>>,
-    inject_cells: RwLock<VecDeque<Cell>>,
+    inject_queue: RwLock<VecDeque<Cell>>,
     max_round_no: RoundNo,
     last_upstream_round_no: RwLock<Option<RoundNo>>,
     last_downstream_round_no: RwLock<Option<RoundNo>>,
@@ -125,7 +126,7 @@ impl Circuit {
             upstream_hop: None,
             threefish,
             delayed_cells: RwLock::default(),
-            inject_cells: RwLock::default(),
+            inject_queue: RwLock::default(),
             max_round_no,
             last_upstream_round_no: RwLock::default(),
             last_downstream_round_no: RwLock::default(),
@@ -185,22 +186,28 @@ impl Circuit {
         self.layer
     }
 
-    /// Returns `None` for duplicates and out-of-sync (too late) cells.
+    pub fn is_exit(&self) -> bool {
+        match self.upstream_hop {
+            Some(_) => false,
+            None => true,
+        }
+    }
+
     pub fn process_cell(
         &self,
         mut cell: Cell,
         layer: u32,
         direction: CellDirection,
-    ) -> Option<NextCellStep> {
+    ) -> NextCellStep {
         // out-of-sync detection
         match layer.cmp(&self.layer) {
             Ordering::Equal => (), // in-sync -> continue processing
             Ordering::Less => {
                 match direction {
-                    CellDirection::Upstream => return Some(NextCellStep::Wait(cell)), // too early
+                    CellDirection::Upstream => return NextCellStep::Wait(cell), // too early
                     CellDirection::Downstream => {
                         warn!("Dropping cell that's too late");
-                        return None;
+                        return NextCellStep::Drop;
                     }
                 }
             }
@@ -208,9 +215,9 @@ impl Circuit {
                 match direction {
                     CellDirection::Upstream => {
                         warn!("Dropping cell that's too late");
-                        return None;
+                        return NextCellStep::Drop;
                     }
-                    CellDirection::Downstream => return Some(NextCellStep::Wait(cell)), // too early
+                    CellDirection::Downstream => return NextCellStep::Wait(cell), // too early
                 }
             }
         }
@@ -224,14 +231,38 @@ impl Circuit {
                 .expect("Lock poisoned"),
         };
 
-        if let Some(last_round_no) = *last_round_no_guard {
-            if cell.round_no <= last_round_no {
-                warn!("Dropping duplicate");
-                return None;
+        let is_duplicate = if let Some(last_round_no) = *last_round_no_guard {
+            cell.round_no <= last_round_no
+        } else {
+            false
+        };
+
+        if is_duplicate {
+            // looks like a duplicate; one exception: injection at exit mix -> need to queue
+            if let CellDirection::Downstream = direction {
+                if self.is_exit() {
+                    let mut inject_queue_guard = self.inject_queue.write().expect("Lock poisoned");
+                    inject_queue_guard.push_back(cell);
+                } else {
+                    warn!("Dropping duplicate")
+                }
+            } else {
+                warn!("Dropping duplicate")
             }
+            // in either case: nothing to forward
+            return NextCellStep::Drop;
         }
 
+        // no duplicate, update last received round no
         *last_round_no_guard = Some(cell.round_no);
+
+        // special treatment for downstream at exit mix in last round: replace cell with nack
+        if let CellDirection::Downstream = direction {
+            if self.is_exit() && cell.round_no == self.max_round_no {
+                let nack = self.create_nack(Some(cell.token()));
+                std::mem::replace(&mut cell, nack);
+            }
+        }
 
         // re-write circuit id
         let next_circuit_id = match direction {
@@ -271,27 +302,25 @@ impl Circuit {
                 }
 
                 match self.upstream_hop {
-                    Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
+                    Some(hop) => NextCellStep::Relay(PacketWithNextHop::new(cell, hop)),
                     None => {
                         let rendezvous_addr = self
                             .rendezvous_map
                             .rendezvous_address(&cell.token())
                             .expect("Checked this at circuit creation");
-                        Some(NextCellStep::Rendezvous(PacketWithNextHop::new(
-                            cell,
-                            rendezvous_addr,
-                        )))
+                        NextCellStep::Rendezvous(PacketWithNextHop::new(cell, rendezvous_addr))
                     }
                 }
             }
             CellDirection::Downstream => match self.downstream_hop {
-                Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
-                None => Some(NextCellStep::Deliver(cell)),
+                Some(hop) => NextCellStep::Relay(PacketWithNextHop::new(cell, hop)),
+                None => NextCellStep::Deliver(cell),
             },
         }
     }
 
     /// Use an injected cell or create a dummy cell to pad the circuit if necessary.
+    /// Returns `None` if no padding is necessary.
     pub fn pad(&self, round_no: RoundNo, direction: CellDirection) -> Option<NextCellStep> {
         let mut last_round_no_guard = match direction {
             CellDirection::Upstream => self.last_upstream_round_no.write().expect("Lock poisoned"),
@@ -318,38 +347,40 @@ impl Circuit {
         };
 
         // inject a waiting cell or create a dummy
-        let mut cell = match direction {
+        let (mut cell, need_enc) = match direction {
             CellDirection::Upstream => {
                 // no upstream injection -> always dummy
                 debug!(
                     "Creating dummy cell for circuit with upstream id {}",
                     self.upstream_id
                 );
-                Cell::dummy(circuit_id, round_no)
+                (Cell::dummy(circuit_id, round_no), false)
             }
             CellDirection::Downstream => match round_no == self.max_round_no {
-                true => self.create_nack(),
+                true => (self.create_nack(None), true),
                 false => match self
-                    .inject_cells
+                    .inject_queue
                     .write()
                     .expect("Lock poisoned")
                     .pop_front()
                 {
-                    Some(c) => c,
+                    Some(c) => (c, true),
                     None => {
                         debug!(
                             "Creating dummy cell for circuit with downstream id {}",
                             self.downstream_id
                         );
-                        Cell::dummy(circuit_id, round_no)
+                        (Cell::dummy(circuit_id, round_no), false)
                     }
                 },
             },
         };
 
-        // onion handling
-        cell.round_no = round_no;
-        self.handle_onion(&mut cell, direction);
+        // onion handling if it is no random dummy
+        if need_enc {
+            cell.round_no = round_no;
+            self.handle_onion(&mut cell, direction);
+        }
 
         // forwarding
         match direction {
@@ -399,32 +430,38 @@ impl Circuit {
         }
     }
 
-    pub fn inject(&self, mut cell: Cell) {
-        cell.circuit_id = self.downstream_id;
-        self.inject_cells
-            .write()
-            .expect("Lock poisoned")
-            .push_back(cell);
-    }
-
-    fn create_nack(&self) -> Cell {
+    /// Use `additional_token` if the NACK replaces a cell that is not inserted into the queue
+    /// before.
+    fn create_nack(&self, additional_token: Option<Token>) -> Cell {
         let mut cell = Cell {
             circuit_id: self.downstream_id,
             round_no: self.max_round_no,
             onion: vec![0u8; ONION_LEN],
         };
-        let inject_cells_guard = self.inject_cells.read().expect("Lock poisoned");
-        let n = cmp::min((ONION_LEN - 8) / 8, inject_cells_guard.len()) as u8;
+        let inject_queue_guard = self.inject_queue.read().expect("Lock poisoned");
+        let dropped = inject_queue_guard.len()
+            + match additional_token {
+                Some(_) => 1,
+                None => 0,
+            };
+        let n = cmp::min((ONION_LEN - 8) / 8, dropped) as u8;
         cell.onion[0] = n;
+        if (n as usize) < dropped {
+            warn!(
+                "Have to drop {} cells -> NACK not big enough",
+                dropped
+            );
+        }
+
+        let mut dropped_tokens: Vec<Token> = inject_queue_guard.iter().map(|c| c.token()).collect();
+        if let Some(t) = additional_token {
+            dropped_tokens.push(t);
+        }
         let mut i = 8;
-        for dropped_cell in inject_cells_guard.iter() {
+        for token in dropped_tokens {
             match cell.onion.get_mut(i..i + 8) {
-                Some(buf) => LittleEndian::write_u64(buf, dropped_cell.token()),
+                Some(buf) => LittleEndian::write_u64(buf, token),
                 None => {
-                    warn!(
-                        "Have to drop {} cells -> NACK not big enough",
-                        inject_cells_guard.len()
-                    );
                     break;
                 }
             }

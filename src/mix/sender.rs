@@ -6,24 +6,23 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::task;
 
-use super::directory_client;
 use crate::derive_grpc_client;
 use crate::error::Error;
-use crate::mix::setup_processor::setup_t;
 use crate::net::PacketWithNextHop;
 use crate::rendezvous::processor::publish_t;
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
 use crate::tonic_mix::*;
 
+use super::cell_processor::cell_rss_t;
+use super::directory_client;
+use super::setup_processor::setup_t;
+
 pub type Batch<T> = Vec<Vec<PacketWithNextHop<T>>>;
 pub type SetupBatch = Batch<SetupPacket>;
 pub type SubscribeBatch = Batch<SubscriptionVector>;
 pub type CellBatch = Batch<Cell>;
 pub type PublishBatch = Batch<Cell>;
-
-type RelayTxQueue = spmc::Receiver<CellBatch>;
-type PublishTxQueue = spmc::Receiver<CellBatch>;
 
 type MixConnection = MixClient<tonic::transport::Channel>;
 derive_grpc_client!(MixConnection);
@@ -84,8 +83,8 @@ pub struct State {
     dir_client: Arc<directory_client::Client>,
     setup_tx_queue: setup_t::TxQueue,
     subscribe_tx_queue: setup_t::AltTxQueue,
-    relay_tx_queue: RelayTxQueue,
-    publish_tx_queue: PublishTxQueue,
+    relay_tx_queue: cell_rss_t::TxQueue,
+    publish_tx_queue: cell_rss_t::AltTxQueue,
     inject_tx_queue: publish_t::TxQueue,
 }
 
@@ -94,8 +93,8 @@ impl State {
         dir_client: Arc<directory_client::Client>,
         setup_tx_queue: setup_t::TxQueue,
         subscribe_tx_queue: setup_t::AltTxQueue,
-        relay_tx_queue: RelayTxQueue,
-        publish_tx_queue: PublishTxQueue,
+        relay_tx_queue: cell_rss_t::TxQueue,
+        publish_tx_queue: cell_rss_t::AltTxQueue,
         inject_tx_queue: publish_t::TxQueue,
     ) -> Self {
         State {
