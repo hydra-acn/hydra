@@ -1,11 +1,13 @@
 //! Responsible for sending packets to the next mix/rendezvous
 use futures_util::stream;
 use log::*;
+use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::task;
 
+use crate::crypto::cprng::thread_cprng;
 use crate::derive_grpc_client;
 use crate::error::Error;
 use crate::net::PacketWithNextHop;
@@ -127,11 +129,10 @@ fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<
 async fn send_setup_packets(
     dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
-    mut pkts: Vec<SetupPacket>,
+    pkts: Vec<SetupPacket>,
 ) {
-    shuffle(&mut pkts);
-
-    let mut req = tonic::Request::new(stream::iter(pkts));
+    let shuffle_it = ShuffleIterator::new(pkts);
+    let mut req = tonic::Request::new(stream::iter(shuffle_it));
     // attach reply address as metadata
     req.metadata_mut().insert(
         "reply-to",
@@ -151,10 +152,10 @@ async fn send_setup_packets(
 async fn send_subscriptions(
     _dir_client: Arc<directory_client::Client>,
     mut c: RendezvousConnection,
-    mut pkts: Vec<SubscriptionVector>,
+    pkts: Vec<SubscriptionVector>,
 ) {
-    shuffle(&mut pkts);
-    for pkt in pkts {
+    let shuffle_it = ShuffleIterator::new(pkts);
+    for pkt in shuffle_it {
         let req = tonic::Request::new(pkt);
         c.subscribe(req)
             .await
@@ -166,10 +167,10 @@ async fn send_subscriptions(
 async fn relay_cells(
     _dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
-    mut cells: Vec<Cell>,
+    cells: Vec<Cell>,
 ) {
-    shuffle(&mut cells);
-    let req = tonic::Request::new(stream::iter(cells));
+    let shuffle_it = ShuffleIterator::new(cells);
+    let req = tonic::Request::new(stream::iter(shuffle_it));
     c.relay(req)
         .await
         .map(|_| ())
@@ -179,10 +180,10 @@ async fn relay_cells(
 async fn publish_cells(
     _dir_client: Arc<directory_client::Client>,
     mut c: RendezvousConnection,
-    mut cells: Vec<Cell>,
+    cells: Vec<Cell>,
 ) {
-    shuffle(&mut cells);
-    let req = tonic::Request::new(stream::iter(cells));
+    let shuffle_it = ShuffleIterator::new(cells);
+    let req = tonic::Request::new(stream::iter(shuffle_it));
     c.publish(req)
         .await
         .map(|_| ())
@@ -192,20 +193,14 @@ async fn publish_cells(
 async fn inject_cells(
     _dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
-    mut cells: Vec<Cell>,
+    cells: Vec<Cell>,
 ) {
-    shuffle(&mut cells);
-    let req = tonic::Request::new(stream::iter(cells));
+    let shuffle_it = ShuffleIterator::new(cells);
+    let req = tonic::Request::new(stream::iter(shuffle_it));
     c.inject(req)
         .await
         .map(|_| ())
         .unwrap_or_else(|e| warn!("Relaying cells failed: {}", e));
-}
-
-fn shuffle<T>(_pkts: &mut Vec<T>) {
-    // TODO security: shuffle for real!
-    // TODO perforamance: but not in place -> need a "shuffle iterator" instead -> use as input for
-    // the sending streams
 }
 
 define_send_task!(
@@ -264,5 +259,36 @@ pub async fn run(state: Arc<State>) {
     ) {
         Ok(_) => (),
         Err(e) => error!("Something panicked: {}", e),
+    }
+}
+
+struct ShuffleIterator<T> {
+    idx_vec: Vec<usize>,
+    pkt_vec: Vec<T>,
+    pos: usize,
+}
+
+impl<T> ShuffleIterator<T> {
+    fn new(pkt_vec: Vec<T>) -> Self {
+        let mut idx_vec: Vec<usize> = (0..pkt_vec.len()).collect();
+        idx_vec.shuffle(&mut thread_cprng());
+        ShuffleIterator {
+            idx_vec,
+            pkt_vec,
+            pos: 0,
+        }
+    }
+}
+
+impl<T: Clone> Iterator for ShuffleIterator<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        if self.pos < self.idx_vec.len() {
+            let pkt = self.pkt_vec[self.idx_vec[self.pos]].clone();
+            self.pos += 1;
+            Some(pkt)
+        } else {
+            None
+        }
     }
 }
