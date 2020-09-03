@@ -1,6 +1,7 @@
 use futures_util::StreamExt;
 use log::*;
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tonic::{Code, Request, Response, Status};
 
@@ -81,14 +82,7 @@ define_grpc_service!(Service, State, MixServer);
 #[tonic::async_trait]
 impl Mix for Service {
     async fn setup_circuit(&self, req: Request<SetupPacket>) -> Result<Response<SetupAck>, Status> {
-        let previous_hop = match req.metadata().get("reply-to") {
-            Some(val) => {
-                let as_str = rethrow_as_invalid!(val.to_str(), "reply-to is not valid");
-                let prev = rethrow_as_invalid!(as_str.to_string().parse(), "reply-to is not valid");
-                Some(prev)
-            }
-            None => None,
-        };
+        let previous_hop = get_previous_hop(&req)?;
         let pkt = req.into_inner();
         pkt.validity_check(&*self.dir_client)?;
         {
@@ -107,8 +101,29 @@ impl Mix for Service {
                 ));
             }
         }
-        let pkt_with_prev = SetupPacketWithPrev::new(pkt, previous_hop);
-        self.setup_rx_queue.enqueue(pkt_with_prev);
+        self.setup_rx_queue
+            .enqueue(SetupPacketWithPrev::new(pkt, previous_hop));
+        Ok(Response::new(SetupAck {}))
+    }
+
+    async fn stream_setup_circuit(
+        &self,
+        req: Request<tonic::Streaming<SetupPacket>>,
+    ) -> Result<Response<SetupAck>, Status> {
+        let previous_hop = get_previous_hop(&req)?;
+        let mut stream = req.into_inner();
+        while let Some(p) = stream.next().await {
+            let pkt = match p {
+                Ok(pp) => pp,
+                Err(e) => {
+                    warn!("Error during stream processing in setup: {}", e);
+                    continue;
+                }
+            };
+            pkt.validity_check(&*self.dir_client)?;
+            self.setup_rx_queue
+                .enqueue(SetupPacketWithPrev::new(pkt, previous_hop));
+        }
         Ok(Response::new(SetupAck {}))
     }
 
@@ -166,5 +181,16 @@ impl Mix for Service {
     ) -> Result<Response<InjectAck>, Status> {
         self.relay_impl(req).await?;
         Ok(Response::new(InjectAck {}))
+    }
+}
+
+fn get_previous_hop<T>(req: &Request<T>) -> Result<Option<SocketAddr>, Status> {
+    match req.metadata().get("reply-to") {
+        Some(val) => {
+            let as_str = rethrow_as_invalid!(val.to_str(), "reply-to is not valid");
+            let prev = rethrow_as_invalid!(as_str.to_string().parse(), "reply-to is not valid");
+            Ok(Some(prev))
+        }
+        None => Ok(None),
     }
 }
