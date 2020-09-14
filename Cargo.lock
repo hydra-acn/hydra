@@ -86,25 +86,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "block-cipher"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa136449e765dc7faa244561ccae839c394048667929af599b5d931ebe7b7f10"
-dependencies = [
- "generic-array",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e8c087f005730276d1096a652e92a8bacee2e2472bcc9715a74d2bec38b5820"
-
-[[package]]
-name = "byte-tools"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0919189ba800c7ffe8778278116b7e0de3905ab81c72abb69c85cbfef7991279"
 
 [[package]]
 name = "byteorder"
@@ -470,7 +455,6 @@ name = "hydra"
 version = "0.1.0"
 dependencies = [
  "async-stream",
- "block-cipher",
  "byteorder",
  "clap",
  "cmake",
@@ -478,7 +462,6 @@ dependencies = [
  "ctrlc",
  "futures-core",
  "futures-util",
- "generic-array",
  "hex",
  "hkdf",
  "hmac",
@@ -492,7 +475,6 @@ dependencies = [
  "sha2",
  "simplelog",
  "spmc",
- "threefish",
  "tokio",
  "tonic",
  "tonic-build",
@@ -1128,16 +1110,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d326610f408c7a4eb6f51c37c330e496b08506c9457c9d34287ecc38809fb060"
 dependencies = [
  "unicode-width",
-]
-
-[[package]]
-name = "threefish"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c34ee421879a1c2d56362485a1cd67032a45ad3361ca61b6ba193c47063ec93"
-dependencies = [
- "block-cipher",
- "byte-tools",
 ]
 
 [[package]]

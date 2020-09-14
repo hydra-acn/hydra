@@ -3,6 +3,7 @@ pub mod aes;
 pub mod cprng;
 pub mod key;
 pub mod threefish;
+pub mod threefish_bindings;
 pub mod tls;
 pub mod x448;
 pub mod x448_bindings;

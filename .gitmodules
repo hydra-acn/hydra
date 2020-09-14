@@ -4,3 +4,6 @@
 [submodule "include/x448"]
 	path = include/x448
 	url = ../x448.git
+[submodule "include/skein3fish"]
+	path = include/skein3fish
+	url = https://github.com/wyv3rn/Skein3Fish.git
