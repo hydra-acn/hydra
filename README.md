@@ -1,10 +1,9 @@
 # Submodules
 
-Do not forget to init (once after clone) and update (regularly) the submodules:
+Do not forget to update the submodules on a regular basis (after `clone` and after `pull` if necessary):
 
 ```
-git submodule init
-git submodule update --remote --merge
+git submodule update --init --recursive --remote --merge
 ```
 
 # Git conventions
