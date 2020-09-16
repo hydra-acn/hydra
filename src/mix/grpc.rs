@@ -43,6 +43,20 @@ impl State {
         }
     }
 
+    fn create_storage(&self, circuit_id: CircuitId) -> Result<(), Status> {
+        let mut storage = rethrow_as_internal!(self.storage.lock(), "Lock failure");
+        match storage.get_mut(&circuit_id) {
+            Some(_) => Err(Status::new(
+                Code::AlreadyExists,
+                format!("Circuit Id {} already in use", &circuit_id),
+            )),
+            None => {
+                storage.insert(circuit_id, Vec::new());
+                Ok(())
+            }
+        }
+    }
+
     pub fn deliver(&self, cells: Vec<Vec<PacketWithNextHop<Cell>>>) {
         let mut storage = self.storage.lock().expect("Lock poisoned");
         for vec in cells.into_iter() {
@@ -85,22 +99,7 @@ impl Mix for Service {
         let previous_hop = get_previous_hop(&req)?;
         let pkt = req.into_inner();
         pkt.validity_check(&*self.dir_client)?;
-        {
-            let mut storage = rethrow_as_internal!(self.storage.lock(), "Lock failure");
-            let already_in_use = match storage.get_mut(&pkt.circuit_id) {
-                Some(_) => true,
-                None => {
-                    storage.insert(pkt.circuit_id, Vec::new());
-                    false
-                }
-            };
-            if already_in_use == true {
-                return Err(Status::new(
-                    Code::AlreadyExists,
-                    format!("Circuit Id {} already in use", &pkt.circuit_id),
-                ));
-            }
-        }
+        self.create_storage(pkt.circuit_id)?;
         self.setup_rx_queue
             .enqueue(SetupPacketWithPrev::new(pkt, previous_hop));
         Ok(Response::new(SetupAck {}))
@@ -111,6 +110,7 @@ impl Mix for Service {
         req: Request<tonic::Streaming<SetupPacket>>,
     ) -> Result<Response<SetupAck>, Status> {
         let previous_hop = get_previous_hop(&req)?;
+        let is_client = previous_hop.is_none();
         let mut stream = req.into_inner();
         while let Some(p) = stream.next().await {
             let pkt = match p {
@@ -121,6 +121,9 @@ impl Mix for Service {
                 }
             };
             pkt.validity_check(&*self.dir_client)?;
+            if is_client {
+                self.create_storage(pkt.circuit_id)?;
+            }
             self.setup_rx_queue
                 .enqueue(SetupPacketWithPrev::new(pkt, previous_hop));
         }
