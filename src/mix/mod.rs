@@ -11,3 +11,4 @@ pub mod rss_pipeline;
 pub mod sender;
 pub mod setup_processor;
 pub mod simple_relay;
+pub mod stat_recorder;

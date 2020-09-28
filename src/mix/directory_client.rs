@@ -1,3 +1,4 @@
+use futures_util::stream;
 use hmac::{Hmac, Mac, NewMac};
 use log::*;
 use rand::Rng;
@@ -17,7 +18,9 @@ use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::error::Error;
 use crate::tonic_directory::directory_client::DirectoryClient;
-use crate::tonic_directory::{DhMessage, EpochInfo, MixInfo, RegisterRequest, UnregisterRequest};
+use crate::tonic_directory::{
+    DhMessage, EpochInfo, MixInfo, MixStatistics, RegisterRequest, UnregisterRequest,
+};
 use crate::tonic_mix::mix_client::MixClient;
 use crate::tonic_mix::rendezvous_client::RendezvousClient;
 
@@ -61,6 +64,7 @@ pub struct Client {
     mix_channels: ChannelPool<MixChannel>,
     /// channel pool for rendezvous connections
     rendezvous_channels: ChannelPool<RendezvousChannel>,
+    statistic_msg_queue: RwLock<Vec<MixStatistics>>,
 }
 
 macro_rules! delegate {
@@ -96,6 +100,7 @@ impl Client {
             key_count: AtomicU32::new(0),
             mix_channels: ChannelPool::new(),
             rendezvous_channels: ChannelPool::new(),
+            statistic_msg_queue: RwLock::new(vec![]),
         }
     }
 
@@ -171,17 +176,9 @@ impl Client {
     }
 
     pub async fn unregister(&self) -> Result<(), Error> {
-        let mut mac = Hmac::<Sha256>::new_varkey(
-            self.auth_key
-                .read()
-                .expect("Lock poisoned")
-                .as_ref()
-                .ok_or_else(|| {
-                    Error::NoneError("Don't have the auth key to unregister".to_string())
-                })?
-                .borrow_raw(),
-        )
-        .expect("Initialising mac failed");
+        let mut mac = self
+            .init_mac()
+            .expect("Creating mac for unregistration failed");
         mac.update(DIR_AUTH_UNREGISTER);
 
         let mut conn = self.base_client.connect().await?;
@@ -256,21 +253,23 @@ impl Client {
                 .prepare_channels(&rendezvous_endpoints)
                 .await;
         }
+        //send statistics
+        let msg_queue = std::mem::replace(
+            &mut *self.statistic_msg_queue.write().expect("Lock poisoned"),
+            Vec::new()
+        );
+        conn.send_statistics(tonic::Request::new(stream::iter(msg_queue)))
+            .await
+            .expect("Failed to send statistics");
     }
 
     /// create ephemeral key pair and send the public key to the directory service
     pub async fn create_ephemeral_dh(&self, conn: &mut DirectoryChannel) {
         let (pk, sk) = x448::generate_keypair();
         //generate mac
-        let mut mac = Hmac::<Sha256>::new_varkey(
-            self.auth_key
-                .read()
-                .expect("Lock poisoned")
-                .as_ref()
-                .expect("No auth_key")
-                .borrow_raw(),
-        )
-        .expect("Initialising mac failed");
+        let mut mac = self
+            .init_mac()
+            .expect("Creating mac for ephemeral_dh failed");
         let counter = self.key_count.fetch_add(1, Ordering::Relaxed);
         mac.update(&counter.to_le_bytes());
         mac.update(pk.borrow_raw());
@@ -327,6 +326,24 @@ impl Client {
     ) -> HashMap<SocketAddr, RendezvousChannel> {
         self.rendezvous_channels.get_channels(destinations).await
     }
+
+    pub fn init_mac(&self) -> Result<hmac::Hmac<Sha256>, Error> {
+        let mac = Hmac::<Sha256>::new_varkey(
+            self.auth_key
+                .read()
+                .expect("Lock poisoned")
+                .as_ref()
+                .ok_or_else(|| Error::NoneError("Don't have the auth key".to_string()))?
+                .borrow_raw(),
+        )
+        .expect("Initialising mac failed");
+        Ok(mac)
+    }
+
+    pub fn queue_statistic_msg(&self, msg: MixStatistics) {
+        let mut msg_queue = self.statistic_msg_queue.write().expect("Lock poisoned");
+        msg_queue.push(msg);
+    }
 }
 
 pub async fn run(client: Arc<Client>) {
@@ -355,7 +372,7 @@ pub mod mocks {
             directory_certificate: Some("".to_string()),
         };
         let mock_dir_client = Client::new(config);
-
+        *mock_dir_client.auth_key.write().expect("Lock failure") = Some(Key::new(x448::POINT_SIZE));
         let current_time = current_time_in_secs();
         let mock_epoch = EpochInfo {
             epoch_no: current_communication_epoch_no,
@@ -369,5 +386,10 @@ pub mod mocks {
         };
         mock_dir_client.base_client.insert_epoch(mock_epoch);
         mock_dir_client
+    }
+    pub fn get_msg_queue(mock_client: &Client) -> std::vec::Vec<MixStatistics> {
+        let msg_queue: Vec<MixStatistics> =
+            mock_client.statistic_msg_queue.read().unwrap().to_vec();
+        msg_queue
     }
 }

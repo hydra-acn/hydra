@@ -14,8 +14,10 @@ use crate::epoch::EpochNo;
 use crate::grpc::macros::valid_request_check;
 use crate::mix::directory_client;
 use crate::mix::rss_pipeline::Scalable;
+use crate::tonic_directory::MixStatistics;
 use crate::tonic_mix::{Cell, SetupPacket, Subscription};
 use crate::unwrap_or_throw_invalid;
+use hmac::Mac;
 
 impl SetupPacket {
     /// for a given setup packet, determine how much hops it needs to be sent
@@ -198,6 +200,38 @@ impl Cell {
 impl Scalable for Cell {
     fn thread_id(&self, size: usize) -> usize {
         self.circuit_id as usize % size
+    }
+}
+
+impl MixStatistics {
+    fn generate_mac(&self, mac: &mut hmac::Hmac<sha2::Sha256>) {
+        mac.update(&self.epoch_no.to_le_bytes());
+        mac.update(&self.fingerprint.as_bytes());
+        for val in self.no_circuits_per_layer.iter() {
+            mac.update(&val.to_le_bytes());
+        }
+        for val in self.setup_time_per_layer.iter() {
+            mac.update(&val.to_le_bytes());
+        }
+        for val in self.avg_processing_time_per_layer.iter() {
+            mac.update(&val.to_le_bytes());
+        }
+    }
+
+    pub fn set_auth_tag(&mut self, dir_client: &directory_client::Client) {
+        let mut mac = dir_client
+            .init_mac()
+            .expect("Mac creation failed at directory client.");
+        self.generate_mac(&mut mac);
+        self.auth_tag = mac.finalize().into_bytes().to_vec();
+    }
+
+    pub fn verify_auth_tag(
+        &self,
+        mut mac: hmac::Hmac<sha2::Sha256>,
+    ) -> std::result::Result<(), hmac::crypto_mac::MacError> {
+        self.generate_mac(&mut mac);
+        mac.verify(&self.auth_tag)
     }
 }
 

@@ -447,10 +447,7 @@ impl Circuit {
         let n = cmp::min((ONION_LEN - 8) / 8, dropped) as u8;
         cell.onion[0] = n;
         if (n as usize) < dropped {
-            warn!(
-                "Have to drop {} cells -> NACK not big enough",
-                dropped
-            );
+            warn!("Have to drop {} cells -> NACK not big enough", dropped);
         }
 
         let mut dropped_tokens: Vec<Token> = inject_queue_guard.iter().map(|c| c.token()).collect();

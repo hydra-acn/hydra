@@ -1,6 +1,8 @@
+use futures_util::StreamExt;
 use hmac::{Hmac, Mac, NewMac};
 use log::*;
 use sha2::Sha256;
+use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use tonic::{Request, Response, Status};
 
@@ -175,5 +177,50 @@ impl directory_server::Directory for Service {
             epochs: epoch_infos,
         };
         Ok(Response::new(reply))
+    }
+
+    async fn send_statistics(
+        &self,
+        req: Request<tonic::Streaming<MixStatistics>>,
+    ) -> Result<Response<StatisticAck>, Status> {
+        let mut stream = req.into_inner();
+
+        while let Some(m) = stream.next().await {
+            let msg = match m {
+                Ok(msg) => msg,
+                Err(e) => {
+                    warn!("Error during statistic sending: {}", e);
+                    continue;
+                }
+            };
+
+            let epoch_no = msg.epoch_no;
+            let fingerprint = msg.fingerprint.clone();
+            let mac;
+            {
+                //generate mac
+                let mut mix_map = rethrow_as_internal!(self.mix_map.lock(), "Lock failure");
+                let mix =
+                    unwrap_or_throw_invalid!(mix_map.get_mut(&fingerprint), "Not registered?");
+                mac = Hmac::<Sha256>::new_varkey(mix.auth_key.borrow_raw())
+                    .expect("Initialising mac failed");
+            }
+
+            //check mac
+            rethrow_as_invalid!(msg.verify_auth_tag(mac), "Wrong mac");
+
+            let mut stat_map = rethrow_as_internal!(self.stat_map.write(), "Lock failure");
+            match stat_map.get_mut(&fingerprint) {
+                Some(mix_stats) => {
+                    mix_stats.insert(epoch_no, msg);
+                }
+                None => {
+                    let mut mix_stats = HashMap::new();
+                    mix_stats.insert(epoch_no, msg);
+                    stat_map.insert(fingerprint, mix_stats);
+                }
+            }
+        }
+        Ok(Response::new(StatisticAck {}))
     }
 }

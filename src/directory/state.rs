@@ -2,7 +2,7 @@ use crate::crypto::key::Key;
 use crate::crypto::x448;
 use crate::epoch::{current_epoch_no, EpochNo, MAX_EPOCH_NO};
 use crate::error::Error;
-use crate::tonic_directory::{EpochInfo, MixInfo};
+use crate::tonic_directory::{EpochInfo, MixInfo, MixStatistics};
 
 use log::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -10,10 +10,13 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::time::{self, Duration};
 
+type StatisticMap = HashMap<String, HashMap<EpochNo, MixStatistics>>;
+
 pub struct State {
     pub mix_map: Mutex<HashMap<String, Mix>>,
     config: Config,
     pub epochs: RwLock<VecDeque<EpochInfo>>,
+    pub stat_map: RwLock<StatisticMap>,
 }
 
 impl State {
@@ -25,6 +28,7 @@ impl State {
             mix_map: Mutex::new(HashMap::new()),
             config: config,
             epochs: RwLock::new(VecDeque::new()),
+            stat_map: RwLock::new(StatisticMap::new()),
         }
     }
 
