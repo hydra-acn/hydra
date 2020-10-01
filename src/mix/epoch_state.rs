@@ -1,9 +1,11 @@
+use std::cmp::max;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use crate::defs::CircuitId;
+use crate::defs::{AuthTag, CircuitId};
 use crate::rendezvous::subscription_map::SubscriptionMap;
 use crate::tonic_directory::EpochInfo;
+use bloomfilter::Bloom;
 
 use super::circuit::Circuit;
 use super::dummy_circuit::DummyCircuit;
@@ -12,9 +14,9 @@ use super::rendezvous_map::RendezvousMap;
 pub type CircuitMap = BTreeMap<CircuitId, Circuit>;
 pub type DummyCircuitMap = BTreeMap<CircuitId, DummyCircuit>;
 pub type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
+pub type DupFilter = Bloom<AuthTag>;
 
 /// All the state a mix collects about an epoch during the setup phase, filled by multiple threads.
-#[derive(Default)]
 pub struct EpochSetupState {
     /// Map tokens to corresponding rendezvous nodes.
     rendezvous_map: Arc<RendezvousMap>,
@@ -26,9 +28,23 @@ pub struct EpochSetupState {
     dummy_circuits: Arc<RwLock<DummyCircuitMap>>,
     /// Map the upstream circuit id to the downstream id of an circuit.
     circuit_id_map: Arc<RwLock<CircuitIdMap>>,
+    bloom: Arc<RwLock<DupFilter>>,
 }
 
 impl EpochSetupState {
+    /// `last_circuit_count` is the number of circuits a mix handled the last epoch.
+    /// Needed to estimate the size of the bloom bitmap for the current epoch.
+    pub fn new(last_circuit_count: usize) -> EpochSetupState {
+        EpochSetupState {
+            rendezvous_map: Arc::new(RendezvousMap::default()),
+            sub_map: Arc::new(RwLock::new(SubscriptionMap::default())),
+            circuits: Arc::new(RwLock::new(CircuitMap::default())),
+            dummy_circuits: Arc::new(RwLock::new(DummyCircuitMap::default())),
+            circuit_id_map: Arc::new(RwLock::new(CircuitIdMap::default())),
+            bloom: Arc::new(RwLock::new(create_bloomfilter(last_circuit_count))),
+        }
+    }
+
     pub fn init_rendezvous_map(&mut self, epoch: &EpochInfo) {
         self.rendezvous_map = Arc::new(RendezvousMap::new(epoch));
     }
@@ -52,6 +68,10 @@ impl EpochSetupState {
     pub fn circuit_id_map(&self) -> &Arc<RwLock<CircuitIdMap>> {
         &self.circuit_id_map
     }
+
+    pub fn bloom_bitmap(&self) -> &Arc<RwLock<DupFilter>> {
+        &self.bloom
+    }
 }
 
 #[derive(Default)]
@@ -65,7 +85,9 @@ pub struct EpochState {
 }
 
 impl EpochState {
-    /// Create a "read only" view by moving the given setup view (which will be empty afterwards)
+    /// Create a "read only" view by moving the given setup view.
+    /// `state` will be prepared to handle the next setup by resetting
+    /// all fields and resizing the bloomfilter
     pub fn finalize_setup(state: &mut EpochSetupState) -> EpochState {
         let mut sub_guard = state.sub_map.write().expect("Lock poisoned");
         let sub_map = std::mem::replace(&mut *sub_guard, SubscriptionMap::default());
@@ -79,6 +101,9 @@ impl EpochState {
         let mut dummy_circuits_guard = state.dummy_circuits.write().expect("Lock poisoned");
         let dummy_circuits =
             std::mem::replace(&mut *dummy_circuits_guard, DummyCircuitMap::default());
+
+        let mut bloom_guard = state.bloom.write().expect("Lock poisoned");
+        *bloom_guard = create_bloomfilter(circuits.len());
 
         EpochState {
             rendezvous_map: std::mem::replace(&mut state.rendezvous_map, Arc::default()),
@@ -108,4 +133,11 @@ impl EpochState {
     pub fn circuit_id_map(&self) -> &Arc<CircuitIdMap> {
         &self.circuit_id_map
     }
+}
+
+fn create_bloomfilter(last_circuit_count: usize) -> DupFilter {
+    Bloom::new_for_fp_rate(
+        max(100_000, (last_circuit_count as f64 * 1.1) as usize),
+        1e-6,
+    )
 }

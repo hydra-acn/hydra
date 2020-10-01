@@ -256,7 +256,7 @@ impl Client {
         //send statistics
         let msg_queue = std::mem::replace(
             &mut *self.statistic_msg_queue.write().expect("Lock poisoned"),
-            Vec::new()
+            Vec::new(),
         );
         conn.send_statistics(tonic::Request::new(stream::iter(msg_queue)))
             .await

@@ -47,7 +47,7 @@ impl Worker {
             subscribe_processor,
             cell_processor,
             publish_processor,
-            setup_state: EpochSetupState::default(),
+            setup_state: EpochSetupState::new(0),
             state: EpochState::default(),
         }
     }
@@ -168,8 +168,9 @@ impl Worker {
                         let circuit_id_map = self.setup_state.circuit_id_map();
                         let circuit_map = self.setup_state.circuits();
                         let dummy_circuit_map = self.setup_state.dummy_circuits();
+                        let bloom_bitmap = self.setup_state.bloom_bitmap();
                         let f = |pkt| {
-                            process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone())
+                            process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone())
                         };
                         self.setup_processor.process_till(f, deadline);
                         if setup_layer < setup_epoch.path_length - 1 {

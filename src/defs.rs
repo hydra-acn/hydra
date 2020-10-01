@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::{delay_for, Duration};
 
+pub type AuthTag = Vec<u8>;
 pub type Token = u64;
 pub type CircuitId = u64;
 pub type CircuitIdSet = std::collections::BTreeSet<CircuitId>;

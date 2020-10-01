@@ -8,7 +8,8 @@ use tonic::Status;
 use crate::crypto::cprng::thread_cprng;
 use crate::crypto::x448;
 use crate::defs::{
-    token_from_bytes, CircuitId, RoundNo, Token, ONION_LEN, SETUP_AUTH_LEN, SETUP_NONCE_LEN,
+    token_from_bytes, AuthTag, CircuitId, RoundNo, Token, ONION_LEN, SETUP_AUTH_LEN,
+    SETUP_NONCE_LEN,
 };
 use crate::epoch::EpochNo;
 use crate::grpc::macros::valid_request_check;
@@ -98,6 +99,10 @@ impl SetupPacketWithPrev {
 
     pub fn into_inner(self) -> SetupPacket {
         self.inner
+    }
+
+    pub fn auth_tag(&self) -> &AuthTag {
+        &self.inner.auth_tag
     }
 }
 

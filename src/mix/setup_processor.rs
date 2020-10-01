@@ -15,7 +15,7 @@ use crate::tonic_mix::{SetupPacket, Subscription};
 use super::circuit::{Circuit, NextSetupStep};
 use super::directory_client;
 use super::dummy_circuit::DummyCircuit;
-use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap};
+use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap, DupFilter};
 use super::rendezvous_map::RendezvousMap;
 
 crate::define_pipeline_types!(
@@ -37,6 +37,7 @@ pub fn process_setup_pkt(
     circuit_id_map: Arc<RwLock<CircuitIdMap>>,
     circuit_map: Arc<RwLock<CircuitMap>>,
     dummy_circuit_map: Arc<RwLock<DummyCircuitMap>>,
+    bloom_bitmap: Arc<RwLock<DupFilter>>,
 ) -> setup_t::Result {
     let current_ttl = epoch.path_length - layer - 1;
     let pkt_ttl = pkt.ttl().expect("Expected to reject this in gRPC!?");
@@ -83,7 +84,12 @@ pub fn process_setup_pkt(
         }
     }
 
-    // TODO security: replay protection based on auth_tag of pkt
+    let mut dup_filter = bloom_bitmap.write().expect("Lock poisoned");
+    if dup_filter.check_and_set(pkt.auth_tag()) {
+        debug!("Dropping duplicate setup packet");
+        return setup_t::Result::Drop;
+    }
+
     match Circuit::new(
         pkt,
         sk,
