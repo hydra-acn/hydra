@@ -8,6 +8,8 @@ deploy_local() {
 
     n=$1
     localhost=$2
+    shift
+    shift
 
     echo -n "Killing last session first ..."
     tmux kill-session -t $session > /dev/null 2>&1
@@ -31,8 +33,46 @@ deploy_local() {
     tmux kill-window -t "=${session}:0"
 }
 
+deploy_testbed() {
+    if [ $# -lt 1 ]; then
+        echo "Usage: ./deploy.sh testbed <n> [options]"
+        exit -1
+    fi
+    n=$1
+    shift
+
+    # setup directory service on this host (kill old session before)
+    tmux kill-session -t $session > /dev/null 2>&1
+    tmux new-session -d -s $session
+    echo -n "Starting directory server on port $dirport ..."
+    tmux send-keys -t "=${session}:" "target/$mode/directory_service 0.0.0.0 $dirkey $dircrt -d $phasedur" Enter
+    sleep 1
+    echo " Done"
+
+    # setup mixes
+    port=9000
+    echo "Starting $n mixes .."
+    for i in `seq -w 01 $n`; do
+        mix=mix-$i
+        id=`echo $i | sed 's/^0*//'`
+        addr=10.0.0.$id
+        echo "Starting mix on host $mix, address $addr"
+        # kill last tmux session and prepare testbed directory
+        ssh $mix tmux kill-session -t $session > /dev/null 2>&1
+        ssh $mix mkdir -p .testbed
+        # copy binary and ca file
+        scp target/$mode/mix $mix:.testbed/ > /dev/null
+        scp $cacrt $mix:.testbed/ > /dev/null
+        # start tmux session
+        ssh $mix tmux new-session -d -s $session
+        # start the engine :)
+        # TODO avoid SPACE?
+        ssh $mix tmux send-keys -t "=${session}:" ".testbed/mix Space $addr:$port Space -d Space $dirdom Space -p Space $dirport Space -c Space $cacrt" Enter
+    done
+}
+
 if [ $# -lt 1 ]; then
-    echo "Missing subcommand (local)!"
+    echo "Missing subcommand (local|testbed)!"
     exit -1
 fi
 
@@ -51,34 +91,38 @@ dircrt=".testbed/directory.crt"
 cacrt=".testbed/ca.pem"
 phasedur=120
 mode="release"
+build=1
 
-shift
-shift
 while [ -n "$1" ]; do
     case "$1" in
         --debug) mode="debug" ;;
         -d|--dirdom) dirdom=$2; shift ;;
+        --cache) build=0; shift ;;
         *) echo "Unknown option $1"; exit -1 ;;
     esac
     shift
 done
 
-# compile necessary for all subcmds
-echo "Building in $mode mode ..."
-if [ $mode == "debug" ]; then
-    cargo build
-else
-    cargo build --$mode
-fi
+# compile for all subcmds (if not disabled)
+if [ $build -eq 1 ]; then
+    echo "Building in $mode mode ..."
+    if [ $mode == "debug" ]; then
+        cargo build
+    else
+        cargo build --$mode
+    fi
 
-if [ $? -ne 0 ]; then
-    echo "Build failed!"
-    exit -1
+    if [ $? -ne 0 ]; then
+        echo "Build failed!"
+        exit -1
+    fi
 fi
 
 # call subcmd
 if [ "$subcmd" == "local" ]; then
     deploy_local $args
+elif [ "$subcmd" == "testbed" ]; then
+    deploy_testbed $args
 else
     echo "Unknown subcommand: $subcmd"
 fi
