@@ -260,7 +260,7 @@ impl Circuit {
         if let CellDirection::Downstream = direction {
             if self.is_exit() && cell.round_no == self.max_round_no {
                 let nack = self.create_nack(Some(cell.token()));
-                std::mem::replace(&mut cell, nack);
+                let _ =std::mem::replace(&mut cell, nack);
             }
         }
 
