@@ -9,41 +9,9 @@ deploy_local() {
     n=$1
     localhost=$2
 
-    dirdom="hydra-swp.prakinf.tu-ilmenau.de"
-    dirport=9000
-    dirkey=".testbed/directory.key"
-    dircrt=".testbed/directory.crt"
-    cacrt=".testbed/ca.pem"
-    phasedur=120
-    mode="release"
-
-    shift
-    shift
-    while [ -n "$1" ]; do
-        case "$1" in
-            --debug) mode="debug" ;;
-            -d|--dirdom) dirdom=$2; shift ;;
-            *) echo "Unknown option $1"; exit -1 ;;
-        esac
-        shift
-    done
-
-    session="hydra-testbed"
     echo -n "Killing last session first ..."
     tmux kill-session -t $session > /dev/null 2>&1
     echo " Done"
-
-    echo "Building in $mode mode ..."
-    if [ $mode == "debug" ]; then
-        cargo build
-    else
-        cargo build --$mode
-    fi
-
-    if [ $? -ne 0 ]; then
-        echo "Build failed!"
-        exit -1
-    fi
 
     tmux new-session -d -s $session
     echo -n "Starting directory server on port $dirport ..."
@@ -71,8 +39,46 @@ fi
 subcmd=$1
 shift;
 
+# copy arguments
+args=$@
+
+# global argument parsing (independent of subcmd)
+session="hydra-testbed"
+dirdom="hydra-swp.prakinf.tu-ilmenau.de"
+dirport=9000
+dirkey=".testbed/directory.key"
+dircrt=".testbed/directory.crt"
+cacrt=".testbed/ca.pem"
+phasedur=120
+mode="release"
+
+shift
+shift
+while [ -n "$1" ]; do
+    case "$1" in
+        --debug) mode="debug" ;;
+        -d|--dirdom) dirdom=$2; shift ;;
+        *) echo "Unknown option $1"; exit -1 ;;
+    esac
+    shift
+done
+
+# compile necessary for all subcmds
+echo "Building in $mode mode ..."
+if [ $mode == "debug" ]; then
+    cargo build
+else
+    cargo build --$mode
+fi
+
+if [ $? -ne 0 ]; then
+    echo "Build failed!"
+    exit -1
+fi
+
+# call subcmd
 if [ "$subcmd" == "local" ]; then
-    deploy_local $@
+    deploy_local $args
 else
     echo "Unknown subcommand: $subcmd"
 fi
