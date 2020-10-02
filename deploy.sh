@@ -7,11 +7,6 @@ deploy_local() {
     fi
 
     n=$1
-    if [ $n -eq 1 ]; then
-        simple_flag="--simple"
-    else
-        simple_flag=""
-    fi
     localhost=$2
 
     dirdom="hydra-swp.prakinf.tu-ilmenau.de"
@@ -61,7 +56,7 @@ deploy_local() {
         port=`echo $dirport + $i | bc`
         echo -n "-> Starting mix on port $port ..."
         tmux new-window -d -t "=${session}" -n mix-$i
-        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -d $dirdom -p $dirport -c $cacrt $simple_flag" Enter
+        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port -d $dirdom -p $dirport -c $cacrt" Enter
         echo " Done"
     done
     # Kill the "default" tmux window
