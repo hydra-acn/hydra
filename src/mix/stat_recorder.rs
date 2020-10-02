@@ -34,7 +34,7 @@ impl Statistics {
                         "Not able to convert setup_time into u32: {}. Use maximum value instead.",
                         e
                     );
-                    self.setup_time[layer as usize] = u32::MAX;
+                    self.setup_time[layer as usize] = std::u32::MAX;
                 }
             };
         } else {
@@ -49,7 +49,7 @@ impl Statistics {
                 Ok(val) => self.total_processing_time[layer as usize] += val as u64,
                 Err(e) => {
                     warn!("Not able to convert processing_time into u32: {}. Use maximum value instead.", e);
-                    self.total_processing_time[layer as usize] += u32::MAX as u64;
+                    self.total_processing_time[layer as usize] += std::u32::MAX as u64;
                 }
             };
         } else {
@@ -102,7 +102,7 @@ mod tests {
         //insert per layer setup time
         test_stat.record_setup_time(Duration::from_micros(100), Duration::from_micros(120), 0);
         test_stat.record_setup_time(Duration::from_micros(200), Duration::from_micros(180), 1);
-        test_stat.record_setup_time(Duration::from_micros(1), Duration::from_micros(u64::MAX), 2);
+        test_stat.record_setup_time(Duration::from_micros(1), Duration::from_micros(std::u64::MAX), 2);
         //insert processing time for one layer
         test_stat.record_processing_time(
             Duration::from_micros(2000),
@@ -116,7 +116,7 @@ mod tests {
         );
         test_stat.record_processing_time(
             Duration::from_micros(55),
-            Duration::from_micros(u64::MAX),
+            Duration::from_micros(std::u64::MAX),
             1,
         );
         //insert circuit count
@@ -125,9 +125,9 @@ mod tests {
         test_stat.record_circuit_count(5, 7, 2);
         //expected vectors
         let no_circuits_per_layer: Vec<u32> = vec![3486, 113180, 12];
-        let setup_time_per_layer: Vec<u32> = vec![20, 0, u32::MAX];
+        let setup_time_per_layer: Vec<u32> = vec![20, 0, std::u32::MAX];
         let avg_processing_time_per_layer: Vec<u32> =
-            vec![0, ((500 + 0 + u32::MAX as u64) / 3) as u32, 0];
+            vec![0, ((500 + 0 + std::u32::MAX as u64) / 3) as u32, 0];
         //generate mac and update it accordingly
         let mut mac = mock_dir_client.init_mac().unwrap();
         mac.update(&epoch_no.to_le_bytes());
