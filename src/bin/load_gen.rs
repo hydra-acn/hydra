@@ -146,7 +146,8 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
     let wait_for =
         Duration::from_secs(next_epoch.communication_start_time - current_time_in_secs() + 1);
     delay_for(wait_for).await;
-    info!("All communication should be done now, feel free to exit with Ctrl-C :)");
+    // TODO code graceful shutdown?
+    panic!("Panic intented :)");
 }
 
 async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, n: u64, r: u32) {
@@ -196,17 +197,10 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
         t.await.expect("Task failed");
     }
 
+    info!("Communication for epoch {} done", epoch_no);
+
     // collect stats
     let mut avg_loss_rate = 0f64;
-    for circ in circuits.iter() {
-        let loss_rate = circ.lost_cells() as f64 / epoch.number_of_rounds as f64;
-        avg_loss_rate += loss_rate / circuits.len() as f64;
-    }
-    let mut result = format!("{}, {}, {}, {}", n, circuits.len(), avg_loss_rate, r);
-
-    info!("Communication for epoch {} done", epoch_no);
-    info!("Results: {}", result);
-
     let result_path = "load-gen-results.dat";
     let (file, is_new) = match Path::new(result_path).exists() {
         false => (File::create(result_path), true),
@@ -216,15 +210,27 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
     match file {
         Ok(mut f) => {
             if is_new {
-                f.write_all(b"n, n_dash, avg_loss, run\n")
+                f.write_all(b"n, n_dash, loss, run, epoch\n")
                     .unwrap_or_else(|e| warn!("Writing header failed: {}", e));
             };
-            result += "\n";
-            f.write_all(result.as_bytes())
-                .unwrap_or_else(|e| warn!("Writing results failed: {}", e));
+            for circ in circuits.iter() {
+                let loss_rate = circ.lost_cells() as f64 / epoch.number_of_rounds as f64;
+                avg_loss_rate += loss_rate / circuits.len() as f64;
+                let result_line = format!(
+                    "{}, {}, {}, {}, {}\n",
+                    n,
+                    circuits.len(),
+                    loss_rate,
+                    r,
+                    epoch_no
+                );
+                f.write_all(result_line.as_bytes())
+                    .unwrap_or_else(|e| warn!("Writing results failed: {}", e));
+            }
         }
         Err(e) => warn!("Opening result file failed: {}", e),
     }
+    info!(".. average loss rate: {}", avg_loss_rate);
 }
 
 async fn run_send_and_receive(
