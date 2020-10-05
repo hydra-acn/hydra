@@ -153,7 +153,11 @@ impl Worker {
 
             // round done, time for some setup handling
             // TODO code: move inside separate function
-            let setup_layer = round_no;
+            let l = setup_epoch.path_length;
+            let k = setup_epoch.number_of_rounds;
+            let setup_layer = (l + 1) * round_no / k;
+            // only send when it's the last time we process this layer
+            let do_send = ((l + 1) * (round_no + 1)) % k == 0;
             let deadline = next_round_start - subround_interval - Duration::from_secs(1);
             if setup_layer < setup_epoch.path_length {
                 // acting as mix: create new circuits
@@ -173,14 +177,13 @@ impl Worker {
                             process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone())
                         };
                         self.setup_processor.process_till(f, deadline);
-                        if setup_layer < setup_epoch.path_length - 1 {
+                        if do_send && setup_layer < setup_epoch.path_length - 1 {
                             // one additional dummy circuit for all but the last layer
                             let dummy_extend = create_dummy_circuit(self.setup_state.dummy_circuits().clone(), &self.dir_client, setup_epoch.epoch_no, setup_layer, setup_epoch.path_length - setup_layer - 1);
                             self.setup_processor.pad(vec![dummy_extend]);
-
                             // send setup packets
                             self.setup_processor.send();
-                        } else {
+                        } else if do_send {
                             // send subscriptions
                             self.setup_processor.alt_send();
                         }
