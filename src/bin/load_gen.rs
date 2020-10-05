@@ -216,7 +216,7 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
     match file {
         Ok(mut f) => {
             if is_new {
-                f.write_all(b"n, n_dash, avg_loss, run")
+                f.write_all(b"n, n_dash, avg_loss, run\n")
                     .unwrap_or_else(|e| warn!("Writing header failed: {}", e));
             };
             result += "\n";
