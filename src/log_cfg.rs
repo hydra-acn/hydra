@@ -14,7 +14,8 @@ pub fn init(log_external: bool) {
         builder
             .add_filter_allow_str("hydra")
             .add_filter_allow_str("mix")
-            .add_filter_allow_str("directory_service");
+            .add_filter_allow_str("directory_service")
+            .add_filter_allow_str("load_gen");
     }
     let cfg = builder.build();
 
