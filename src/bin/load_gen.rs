@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Load generator (simulating clients) for the Hydra system")
         (@arg n: +required "How many circuits to build each epoch")
-        (@arg runs: -r --runs +takes_value default_value("32") "How many epochs to run")
+        (@arg runs: -r --runs +takes_value default_value("3") "How many epochs to run")
         (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
         (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
@@ -65,15 +65,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
+    let mut maybe_epoch = dir_client.next_epoch_info();
+    while let None = maybe_epoch {
+        warn!("Don't know the next epoch for setup, retrying in 5 seconds");
+        sleep(Duration::from_secs(5));
+        maybe_epoch = dir_client.next_epoch_info();
+    }
+
+    // first wait till the next epoch started to get consistent results independent of start time
+    let next_epoch = maybe_epoch.expect("Checked before");
+    info!(
+        "Waiting till epoch {} starts (won't use this one yet)",
+        next_epoch.epoch_no
+    );
+    delay_for(Duration::from_secs(
+        next_epoch.setup_start_time - current_time_in_secs() + 1,
+    ))
+    .await;
+
+    let mut epoch_no = next_epoch.epoch_no + 1;
     for r in 0..runs {
-        let mut maybe_epoch = dir_client.next_epoch_info();
-        while let None = maybe_epoch {
-            warn!("Don't know the next epoch for setup, retrying in 5 seconds");
-            sleep(Duration::from_secs(5));
-            maybe_epoch = dir_client.next_epoch_info();
-        }
-        let epoch = maybe_epoch.expect("Checked before");
-        let epoch_no = epoch.epoch_no;
+        let epoch = dir_client
+            .get_epoch_info(epoch_no)
+            .expect("Not enough epochs in advance?");
 
         let channels = prepare_entry_channels(&epoch).await;
         let circuits: RwLock<Vec<Arc<Circuit>>> = RwLock::default();
@@ -135,19 +149,21 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
             );
         }
 
-        // spawn a task to handle the communication phase and wait till next epoch
-        let wait_for = Duration::from_secs(epoch.setup_start_time - current_time_in_secs() + 1);
+        // spawn a task to handle the communication phase
         tokio::spawn(run_epoch_communication(epoch, final_circuits, n, r));
-        delay_for(wait_for).await;
+        epoch_no += 1;
     }
+
     // wait for the communication phase of the last epoch to end (ends when communication of next
     // epoch start)
-    let next_epoch = dir_client.next_epoch_info().unwrap();
+    let not_our_epoch = dir_client
+        .get_epoch_info(epoch_no)
+        .expect("Not enough epochs in advance?");
     let wait_for =
-        Duration::from_secs(next_epoch.communication_start_time - current_time_in_secs() + 1);
+        Duration::from_secs(not_our_epoch.communication_start_time - current_time_in_secs() + 1);
     delay_for(wait_for).await;
     // TODO code graceful shutdown?
-    panic!("Panic intented :)");
+    panic!("Panic intended :)");
 }
 
 async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, n: u64, r: u32) {
