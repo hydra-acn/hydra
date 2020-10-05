@@ -190,7 +190,9 @@ impl Worker {
                     },
                     None => warn!("We could setup layer {} of epoch {} now, but we don't have the matching ephemeral key", setup_layer, setup_epoch.epoch_no)
                 }
-            } else if setup_layer == setup_epoch.path_length {
+            } else if setup_layer == setup_epoch.path_length && round_no != k - 1 {
+                // TODO robustness: skipping this in the last round is just a hotfix for poor
+                // performance of "finalize"
                 // acting as rendezvous node: process subscriptions
                 info!("Processing subscriptions of epoch {}", setup_epoch.epoch_no);
                 let sub_map = self.setup_state.subscription_map();
