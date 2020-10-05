@@ -154,7 +154,7 @@ impl Worker {
             // round done, time for some setup handling
             // TODO code: move inside separate function
             let l = setup_epoch.path_length;
-            let k = setup_epoch.number_of_rounds;
+            let k = communication_epoch.number_of_rounds;
             let setup_layer = (l + 1) * round_no / k;
             // only send when it's the last time we process this layer
             let do_send = ((l + 1) * (round_no + 1)) % k == 0;
