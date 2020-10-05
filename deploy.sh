@@ -97,9 +97,11 @@ while [ -n "$1" ]; do
     case "$1" in
         --debug) mode="debug" ;;
         -d|--dirdom) dirdom=$2; shift ;;
-        --cache) build=0; shift ;;
-        *) echo "Unknown option $1"; exit -1 ;;
+        --cache) build=0 ;;
+        --duration) phasedur=$2; shift ;;
+        -*) echo "Unknown option $1"; exit -1;;
     esac
+    # shift once in any case
     shift
 done
 
