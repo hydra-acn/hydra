@@ -72,18 +72,18 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
         maybe_epoch = dir_client.next_epoch_info();
     }
 
-    // first wait till the next epoch started to get consistent results independent of start time
     let next_epoch = maybe_epoch.expect("Checked before");
-    info!(
-        "Waiting till epoch {} starts (won't use this one yet)",
-        next_epoch.epoch_no
-    );
-    delay_for(Duration::from_secs(
-        next_epoch.setup_start_time - current_time_in_secs() + 1,
-    ))
-    .await;
+    let mut epoch_no = next_epoch.epoch_no;
+    let epoch_duration =
+        Duration::from_secs(next_epoch.communication_start_time - next_epoch.setup_start_time);
 
-    let mut epoch_no = next_epoch.epoch_no + 1;
+    // if we don't have plenty of time left (setup duration - 10s), skip this epoch
+    let wait_for = Duration::from_secs(next_epoch.setup_start_time - current_time_in_secs() + 1);
+    if wait_for < epoch_duration - Duration::from_secs(10) {
+        delay_for(wait_for).await;
+        epoch_no += 1;
+    }
+
     for r in 0..runs {
         let epoch = dir_client
             .get_epoch_info(epoch_no)
