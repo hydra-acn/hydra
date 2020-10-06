@@ -158,7 +158,7 @@ impl Worker {
             let setup_layer = (l + 1) * round_no / k;
             // only send when it's the last time we process this layer
             let do_send = ((l + 1) * (round_no + 1)) % k == 0;
-            let deadline = next_round_start - subround_interval - Duration::from_secs(1);
+            let deadline = next_round_start - subround_interval - Duration::from_secs(2);
             if setup_layer < setup_epoch.path_length {
                 // acting as mix: create new circuits
                 match &maybe_sk {
@@ -220,10 +220,10 @@ impl Worker {
 
         // wait till the round starts: processing begins one slot before the first send time
         let process_start = send_time - subround_interval;
-        let wait_for = process_start
-            .checked_sub(current_time())
-            .expect("Did not finish last setup processing in time?");
-        sleep(wait_for);
+        match process_start.checked_sub(current_time()) {
+            Some(wait_for) => sleep(wait_for),
+            None => warn!("Did not finish last setup processing in time?")
+        }
         info!("Processing round {} of epoch {}", round_no, epoch.epoch_no);
 
         // mix view: upstream
