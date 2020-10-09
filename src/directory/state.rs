@@ -114,22 +114,58 @@ impl State {
 
 /// TODO builder pattern?
 pub struct Config {
-    pub phase_duration: u64,
-    pub epochs_in_advance: u8,
-    pub path_length: u8,
-    pub round_duration: u8,
-    pub round_waiting: u8,
+    phase_duration: u64,
+    epochs_in_advance: u8,
+    path_length: u8,
+    round_duration: u8,
+    round_waiting: u8,
 }
 
 impl Config {
     pub fn default() -> Self {
-        Config {
-            phase_duration: 10 * 60,
+        let mut cfg = Config {
+            phase_duration: 0,
             epochs_in_advance: 10,
             path_length: 3,
             round_duration: 7,
             round_waiting: 13,
-        }
+        };
+        cfg.set_phase_duration(2 * cfg.min_phase_duration());
+        cfg
+    }
+
+    pub fn phase_duration(&self) -> u64 {
+        self.phase_duration
+    }
+
+    pub fn set_phase_duration(&mut self, d: u64) {
+        self.phase_duration = d;
+        assert!(self.is_valid(), "Awkward phase duration");
+    }
+
+    /// TODO code: getter macro?
+    pub fn epochs_in_advance(&self) -> u8 {
+        self.epochs_in_advance
+    }
+
+    pub fn path_length(&self) -> u8 {
+        self.path_length
+    }
+
+    pub fn round_duration(&self) -> u8 {
+        self.round_duration
+    }
+
+    pub fn round_waiting(&self) -> u8 {
+        self.round_waiting
+    }
+
+    fn min_phase_duration(&self) -> u64 {
+        (self.path_length as u64 + 1) * (self.round_duration as u64 + self.round_waiting as u64)
+    }
+
+    fn is_valid(&self) -> bool {
+        self.phase_duration % self.min_phase_duration() == 0
     }
 }
 

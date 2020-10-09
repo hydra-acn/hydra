@@ -124,7 +124,7 @@ impl directory_server::Directory for Service {
             let epoch_queue = rethrow_as_internal!(self.epochs.read(), "Lock failure");
             next_free_epoch_no = match epoch_queue.back() {
                 Some(e) => e.epoch_no + 1,
-                None => current_epoch_no(self.config().phase_duration) + 1,
+                None => current_epoch_no(self.config().phase_duration()) + 1,
             }
         }
         let mut use_epoch_no;

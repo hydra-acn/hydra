@@ -95,7 +95,7 @@ async fn client_task(state: Arc<State>, port: u16) {
 
     // test some successful sends of public DH keys
     for i in 1..=m {
-        for ctr in 0..config.epochs_in_advance - 1 {
+        for ctr in 0..config.epochs_in_advance() - 1 {
             send_pk(
                 &mut client,
                 i,
@@ -174,7 +174,7 @@ async fn client_task(state: Arc<State>, port: u16) {
 
     assert_eq!(
         epochs.len(),
-        config.epochs_in_advance as usize,
+        config.epochs_in_advance() as usize,
         "Number of epochs unexpected"
     );
     let first_epoch = epochs.first().unwrap();
@@ -182,7 +182,7 @@ async fn client_task(state: Arc<State>, port: u16) {
     let mut last_setup_start = first_epoch.setup_start_time;
     let mut last_comm_start = first_epoch.communication_start_time;
     for (i, epoch) in epochs.iter().enumerate() {
-        if i < config.epochs_in_advance as usize - 1 {
+        if i < config.epochs_in_advance() as usize - 1 {
             assert_eq!(epoch.mixes.len(), m as usize, "Mismatch in number of mixes");
         } else {
             assert_eq!(
@@ -192,11 +192,11 @@ async fn client_task(state: Arc<State>, port: u16) {
             );
         }
 
-        assert_eq!(epoch.round_duration, config.round_duration as u32);
-        assert_eq!(epoch.round_waiting, config.round_waiting as u32);
+        assert_eq!(epoch.round_duration, config.round_duration() as u32);
+        assert_eq!(epoch.round_waiting, config.round_waiting() as u32);
         assert_eq!(
             epoch.number_of_rounds,
-            config.phase_duration as u32 / (epoch.round_duration + epoch.round_waiting)
+            config.phase_duration() as u32 / (epoch.round_duration + epoch.round_waiting)
         );
 
         for mix in epoch.mixes.iter() {
@@ -220,7 +220,7 @@ async fn client_task(state: Arc<State>, port: u16) {
                 "Epoch numbers not ascending"
             );
             assert_eq!(
-                epoch.setup_start_time + config.phase_duration,
+                epoch.setup_start_time + config.phase_duration(),
                 epoch.communication_start_time,
                 "Duration mismatch"
             );
@@ -230,12 +230,12 @@ async fn client_task(state: Arc<State>, port: u16) {
             );
             assert_eq!(
                 epoch.setup_start_time,
-                last_setup_start + config.phase_duration,
+                last_setup_start + config.phase_duration(),
                 "Duration mismatch"
             );
             assert_eq!(
                 epoch.communication_start_time,
-                last_comm_start + config.phase_duration,
+                last_comm_start + config.phase_duration(),
                 "Duration mismatch"
             );
         }
