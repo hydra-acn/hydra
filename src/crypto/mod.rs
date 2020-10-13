@@ -7,6 +7,8 @@ pub mod threefish_bindings;
 pub mod tls;
 pub mod x448;
 pub mod x448_bindings;
+pub mod x25519;
+pub mod x25519_bindings;
 
 use std::os::raw::c_uint;
 
