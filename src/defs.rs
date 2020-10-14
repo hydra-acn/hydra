@@ -21,7 +21,7 @@ pub const DIR_AUTH_UNREGISTER: &[u8; 10] = b"unregister";
 pub const SETUP_TOKENS: usize = 256;
 pub const ONION_LEN: usize = 256;
 
-// TODO code: use these more often instead of magic numbers :)
+pub const SETUP_ADDR_LEN: usize = 18; // v6 addr and port
 pub const SETUP_NONCE_LEN: usize = 12;
 pub const SETUP_AUTH_LEN: usize = 16;
 

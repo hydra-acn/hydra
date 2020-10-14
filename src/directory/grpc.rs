@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tonic::{Request, Response, Status};
 
 use crate::crypto::key::{hkdf_sha256, Key};
-use crate::crypto::x448;
+use crate::crypto::{x25519, x448};
 use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_epoch_no, EpochNo};
 use crate::grpc::macros::valid_request_check;
@@ -118,7 +118,10 @@ impl directory_server::Directory for Service {
         let counter = msg.counter;
         let next_free_epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
-        valid_request_check(pk.len() == x448::POINT_SIZE, "x448 pk has wrong size")?;
+        valid_request_check(
+            pk.len() == x25519::POINT_SIZE || pk.len() == x448::POINT_SIZE,
+            "pk has wrong size",
+        )?;
 
         {
             let epoch_queue = rethrow_as_internal!(self.epochs.read(), "Lock failure");

@@ -6,10 +6,10 @@ use std::net::SocketAddr;
 use tonic::Status;
 
 use crate::crypto::cprng::thread_cprng;
-use crate::crypto::x448;
+use crate::crypto::{x25519, x448};
 use crate::defs::{
-    token_from_bytes, AuthTag, CircuitId, RoundNo, Token, ONION_LEN, SETUP_AUTH_LEN,
-    SETUP_NONCE_LEN,
+    token_from_bytes, AuthTag, CircuitId, RoundNo, Token, ONION_LEN, SETUP_ADDR_LEN,
+    SETUP_AUTH_LEN, SETUP_NONCE_LEN,
 };
 use crate::epoch::EpochNo;
 use crate::grpc::macros::valid_request_check;
@@ -30,7 +30,7 @@ impl SetupPacket {
             return None;
         }
         let nom = self.onion.len() - token_len;
-        let denom = 102;
+        let denom = self.public_dh.len() + SETUP_ADDR_LEN + SETUP_NONCE_LEN + SETUP_AUTH_LEN;
         if nom % denom != 0 {
             return None;
         }
@@ -44,7 +44,7 @@ impl SetupPacket {
             "Seems like we are not part of the given epoch",
         )?;
         valid_request_check(
-            self.public_dh.len() == x448::POINT_SIZE,
+            self.public_dh.len() == x25519::POINT_SIZE || self.public_dh.len() == x448::POINT_SIZE,
             "Public key has not the expected size",
         )?;
         valid_request_check(

@@ -9,8 +9,10 @@ use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::cprng::thread_cprng;
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::threefish::Threefish2048;
-use crate::crypto::x448;
-use crate::defs::{tokens_to_byte_vec, CircuitId, Token, SETUP_TOKENS};
+use crate::crypto::{x25519, x448};
+use crate::defs::{
+    tokens_to_byte_vec, CircuitId, Token, SETUP_AUTH_LEN, SETUP_NONCE_LEN, SETUP_TOKENS,
+};
 use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::PacketWithNextHop;
@@ -75,9 +77,22 @@ impl Circuit {
 
         for mix in path {
             let mix_pk = Key::clone_from_slice(&mix.public_dh);
-            let (pk, sk) = x448::generate_keypair();
-            let shared_key = x448::generate_shared_secret(&mix_pk, &sk)?;
-            let mut nonce = vec![0u8; 12];
+            let (pk, shared_key) = match mix_pk.len() {
+                x25519::POINT_SIZE => {
+                    let (pk, sk) = x25519::generate_keypair();
+                    (pk, x25519::generate_shared_secret(&mix_pk, &sk)?)
+                }
+                x448::POINT_SIZE => {
+                    let (pk, sk) = x448::generate_keypair();
+                    (pk, x448::generate_shared_secret(&mix_pk, &sk)?)
+                }
+                _ => {
+                    return Err(Error::InputError(
+                        "Mix does not have public key with valid length".to_string(),
+                    ))
+                }
+            };
+            let mut nonce = vec![0u8; SETUP_NONCE_LEN];
             let mut rng = thread_cprng();
             rng.fill(nonce.as_mut_slice());
             let (aes_key, onion_key) = derive_keys(&shared_key, &nonce)?;
@@ -121,7 +136,7 @@ impl Circuit {
         let (first_hop_info, tail_hops) = hops.split_first().expect("Already checked");
         for hop in tail_hops.iter().rev() {
             let mut ciphertext = plaintext.clone();
-            let mut auth_tag = vec![0u8; 16];
+            let mut auth_tag = vec![0u8; SETUP_AUTH_LEN];
             hop.aes
                 .encrypt(&hop.nonce, &plaintext, &mut ciphertext, None, &mut auth_tag)?;
             let layer_combined = vec![
@@ -134,10 +149,6 @@ impl Circuit {
             ];
             plaintext = layer_combined.into_iter().flatten().collect();
         }
-
-        let tokens_size = SETUP_TOKENS * std::mem::size_of::<Token>();
-        let onion_size = 102 * (path.len() - 1) + tokens_size;
-        assert_eq!(plaintext.len(), onion_size);
 
         // last encryption (first hop) can be done in place
         let mut setup_pkt = SetupPacket {

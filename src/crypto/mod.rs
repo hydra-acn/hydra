@@ -5,12 +5,17 @@ pub mod key;
 pub mod threefish;
 pub mod threefish_bindings;
 pub mod tls;
-pub mod x448;
-pub mod x448_bindings;
 pub mod x25519;
 pub mod x25519_bindings;
+pub mod x448;
+pub mod x448_bindings;
 
 use std::os::raw::c_uint;
+
+pub enum KeyExchangeAlgorithm {
+    X25519,
+    X448,
+}
 
 extern "C" {
     fn activate_fakerand(seed: c_uint);

@@ -4,8 +4,11 @@ use crate::crypto::aes::Aes256Gcm;
 use crate::crypto::cprng::thread_cprng;
 use crate::crypto::key::Key;
 use crate::crypto::threefish::Threefish2048;
-use crate::crypto::x448;
-use crate::defs::{tokens_from_bytes, CircuitId, RoundNo, Token, ONION_LEN};
+use crate::crypto::{x25519, x448};
+use crate::defs::{
+    tokens_from_bytes, CircuitId, RoundNo, Token, ONION_LEN, SETUP_ADDR_LEN, SETUP_AUTH_LEN,
+    SETUP_NONCE_LEN,
+};
 use crate::error::Error;
 use crate::grpc::type_extensions::CellCmd;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
@@ -83,7 +86,15 @@ impl Circuit {
         }
         let setup_pkt = pkt.into_inner();
         let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
-        let master_key = x448::generate_shared_secret(&client_pk, ephemeral_sk)?;
+        let master_key = match ephemeral_sk.len() {
+            x25519::POINT_SIZE => x25519::generate_shared_secret(&client_pk, ephemeral_sk)?,
+            x448::POINT_SIZE => x448::generate_shared_secret(&client_pk, ephemeral_sk)?,
+            _ => {
+                return Err(Error::InputError(
+                    "Our ephemeral sk has a strange size".to_string(),
+                ))
+            }
+        };
         let nonce = &setup_pkt.nonce;
         let (aes_key, onion_key) = derive_keys(&master_key, &nonce)?;
         let threefish = Threefish2048::new(onion_key)?;
@@ -103,7 +114,7 @@ impl Circuit {
                 warn!("Decryption of setup packet failed: {}", e);
                 warn!(".. client_pk = 0x{}", hex::encode(client_pk.borrow_raw()));
                 warn!(
-                    ".. x448_shared_secret = 0x{}",
+                    ".. shared_dh_secret = 0x{}",
                     hex::encode(master_key.borrow_raw())
                 );
                 warn!(".. aes_key = 0x{}", hex::encode(aes.key().borrow_raw()));
@@ -153,13 +164,21 @@ impl Circuit {
                 None => SocketAddr::new(IpAddr::V6(v6), port),
             };
             circuit.upstream_hop = Some(upstream_hop);
+            let mut offset = SETUP_ADDR_LEN;
+            let next_pk = &decrypted[offset..offset + ephemeral_sk.len()];
+            offset += ephemeral_sk.len();
+            let next_nonce = &decrypted[offset..offset + SETUP_NONCE_LEN];
+            offset += SETUP_NONCE_LEN;
+            let next_tag = &decrypted[offset..offset + SETUP_AUTH_LEN];
+            offset += SETUP_AUTH_LEN;
+            let next_onion = &decrypted[offset..];
             let next_setup_pkt = SetupPacket {
                 epoch_no: setup_pkt.epoch_no,
                 circuit_id: circuit.upstream_id,
-                public_dh: decrypted[18..74].to_vec(),
-                nonce: decrypted[74..86].to_vec(),
-                auth_tag: decrypted[86..102].to_vec(),
-                onion: decrypted[102..].to_vec(),
+                public_dh: next_pk.to_vec(),
+                nonce: next_nonce.to_vec(),
+                auth_tag: next_tag.to_vec(),
+                onion: next_onion.to_vec(),
             };
             let extend_info = ExtendInfo::new(next_setup_pkt, upstream_hop);
 
@@ -260,7 +279,7 @@ impl Circuit {
         if let CellDirection::Downstream = direction {
             if self.is_exit() && cell.round_no == self.max_round_no {
                 let nack = self.create_nack(Some(cell.token()));
-                let _ =std::mem::replace(&mut cell, nack);
+                let _ = std::mem::replace(&mut cell, nack);
             }
         }
 

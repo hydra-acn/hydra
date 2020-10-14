@@ -3,6 +3,7 @@ use log::*;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 
+use hydra::crypto::KeyExchangeAlgorithm;
 use hydra::defs::sigint_handler;
 use hydra::mix::cell_processor::cell_rss_t;
 use hydra::mix::directory_client::{self, Client};
@@ -22,6 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
         (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
+        (@arg x25519: --x25519 "Use x25519 for circuit key exchange instead of the default x448")
         (@arg simple: --simple "Start a simple relay instead of a real mix")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
@@ -43,6 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => None,
     };
 
+    let x_alg = match args.is_present("x25519") {
+        true => KeyExchangeAlgorithm::X25519,
+        false => KeyExchangeAlgorithm::X448,
+    };
+
     let dir_cfg = directory_client::Config {
         addr: mix_addr.ip(),
         entry_port: mix_addr.port(),
@@ -51,6 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory_certificate,
         directory_domain,
         directory_port,
+        setup_exchange_alg: x_alg,
     };
     let rendezvous_addr: std::net::SocketAddr =
         format!("{}:{}", dir_cfg.addr, dir_cfg.rendezvous_port).parse()?;

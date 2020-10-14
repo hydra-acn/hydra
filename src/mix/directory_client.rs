@@ -13,7 +13,7 @@ use tonic::transport::Channel;
 
 use super::channel_pool::ChannelPool;
 use crate::crypto::key::{hkdf_sha256, Key};
-use crate::crypto::x448;
+use crate::crypto::{x25519, x448, KeyExchangeAlgorithm};
 use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::error::Error;
@@ -38,6 +38,7 @@ pub struct Config {
     pub directory_certificate: Option<String>,
     pub directory_domain: String,
     pub directory_port: u16,
+    pub setup_exchange_alg: KeyExchangeAlgorithm,
 }
 
 impl Config {
@@ -265,8 +266,11 @@ impl Client {
 
     /// create ephemeral key pair and send the public key to the directory service
     pub async fn create_ephemeral_dh(&self, conn: &mut DirectoryChannel) {
-        let (pk, sk) = x448::generate_keypair();
-        //generate mac
+        let (pk, sk) = match &self.config.setup_exchange_alg {
+            KeyExchangeAlgorithm::X25519 => x25519::generate_keypair(),
+            KeyExchangeAlgorithm::X448 => x448::generate_keypair(),
+        };
+        // generate mac
         let mut mac = self
             .init_mac()
             .expect("Creating mac for ephemeral_dh failed");
@@ -370,6 +374,7 @@ pub mod mocks {
             directory_domain: "127.0.0.1".to_string(),
             directory_port: 9000,
             directory_certificate: Some("".to_string()),
+            setup_exchange_alg: KeyExchangeAlgorithm::X25519,
         };
         let mock_dir_client = Client::new(config);
         *mock_dir_client.auth_key.write().expect("Lock failure") = Some(Key::new(x448::POINT_SIZE));
