@@ -119,7 +119,7 @@ impl directory_server::Directory for Service {
         let next_free_epoch_no;
         let pk = Key::move_from_vec(msg.public_dh);
         valid_request_check(
-            pk.len() == x25519::POINT_SIZE || pk.len() == x448::POINT_SIZE,
+            pk.len() == x25519::KEY_LEN || pk.len() == x448::KEY_LEN,
             "pk has wrong size",
         )?;
 

@@ -44,7 +44,7 @@ impl SetupPacket {
             "Seems like we are not part of the given epoch",
         )?;
         valid_request_check(
-            self.public_dh.len() == x25519::POINT_SIZE || self.public_dh.len() == x448::POINT_SIZE,
+            self.public_dh.len() == x25519::KEY_LEN || self.public_dh.len() == x448::KEY_LEN,
             "Public key has not the expected size",
         )?;
         valid_request_check(

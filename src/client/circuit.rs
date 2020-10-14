@@ -78,11 +78,11 @@ impl Circuit {
         for mix in path {
             let mix_pk = Key::clone_from_slice(&mix.public_dh);
             let (pk, shared_key) = match mix_pk.len() {
-                x25519::POINT_SIZE => {
+                x25519::KEY_LEN => {
                     let (pk, sk) = x25519::generate_keypair();
                     (pk, x25519::generate_shared_secret(&mix_pk, &sk)?)
                 }
-                x448::POINT_SIZE => {
+                x448::KEY_LEN => {
                     let (pk, sk) = x448::generate_keypair();
                     (pk, x448::generate_shared_secret(&mix_pk, &sk)?)
                 }

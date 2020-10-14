@@ -1,5 +1,4 @@
-pub const POINT_SIZE: usize = 32;
-pub const SCALAR_SIZE: usize = 32;
+pub const KEY_LEN: usize = 32;
 
 extern "C" {
     pub fn X25519(out: *mut u8, sk: *const u8, pk: *const u8) -> i32;
@@ -33,10 +32,10 @@ mod tests {
                 .unwrap();
 
         // alloc memory for generated keys
-        let mut gen_pk_alice = vec![0u8; POINT_SIZE];
-        let mut gen_pk_bob = vec![0u8; POINT_SIZE];
-        let mut gen_shared_alice = vec![0u8; POINT_SIZE];
-        let mut gen_shared_bob = vec![0u8; POINT_SIZE];
+        let mut gen_pk_alice = vec![0u8; KEY_LEN];
+        let mut gen_pk_bob = vec![0u8; KEY_LEN];
+        let mut gen_shared_alice = vec![0u8; KEY_LEN];
+        let mut gen_shared_bob = vec![0u8; KEY_LEN];
 
         // sanity size checks
         assert_eq!(pk_alice.len(), gen_pk_alice.len());

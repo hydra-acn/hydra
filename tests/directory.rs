@@ -72,7 +72,7 @@ async fn client_task(state: Arc<State>, port: u16) {
 
     let mut client = DirectoryClient::new(channel);
 
-    let dummy_key = Key::new(x448::POINT_SIZE);
+    let dummy_key = Key::new(x448::KEY_LEN);
 
     // test some successful registers
     let m = 4;
@@ -127,7 +127,7 @@ async fn client_task(state: Arc<State>, port: u16) {
     expect_fail(&client.register(Request::new(bad_info)).await);
 
     // test bad key len during registration
-    let bad_key = Key::new(x448::POINT_SIZE - 1);
+    let bad_key = Key::new(x448::KEY_LEN - 1);
     let bad_info = create_register_request(m + 1, &bad_key);
     expect_fail(&client.register(Request::new(bad_info)).await);
 
@@ -290,7 +290,7 @@ async fn send_pk(
     map: &mut BTreeMap<(u8, u32), Key>,
     auth_key: Key,
 ) {
-    let pk = Key::new(x448::POINT_SIZE);
+    let pk = Key::new(x448::KEY_LEN);
     //generate mac
     let mut mac =
         Hmac::<Sha256>::new_varkey(auth_key.borrow_raw()).expect("Initialising mac failed");

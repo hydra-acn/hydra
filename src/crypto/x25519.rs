@@ -1,14 +1,14 @@
 //! x25519 key exchange (Diffie Hellman with Curve25519)
 
 use super::key::Key;
-pub use super::x25519_bindings::POINT_SIZE;
-use super::x25519_bindings::{X25519_public_from_private, SCALAR_SIZE, X25519};
+pub use super::x25519_bindings::KEY_LEN;
+use super::x25519_bindings::{X25519_public_from_private, X25519};
 use crate::error::Error;
 
 /// return (pk, sk)
 pub fn generate_keypair() -> (Key, Key) {
-    let sk = Key::new(SCALAR_SIZE);
-    let mut pk_vec = vec![0u8; POINT_SIZE];
+    let sk = Key::new(KEY_LEN);
+    let mut pk_vec = vec![0u8; KEY_LEN];
     unsafe {
         X25519_public_from_private(&mut (pk_vec[0]) as *mut u8, sk.head_ptr());
     }
@@ -18,19 +18,19 @@ pub fn generate_keypair() -> (Key, Key) {
 
 /// generate shared secret
 pub fn generate_shared_secret(pk: &Key, sk: &Key) -> Result<Key, Error> {
-    if pk.len() != POINT_SIZE {
+    if pk.len() != KEY_LEN {
         return Err(Error::SizeMismatch(format!(
             "Public key has wrong size: {}",
             pk.len()
         )));
     }
-    if sk.len() != POINT_SIZE {
+    if sk.len() != KEY_LEN {
         return Err(Error::SizeMismatch(format!(
             "Secret key has wrong size: {}",
             sk.len()
         )));
     }
-    let mut s_vec = vec![0u8; POINT_SIZE];
+    let mut s_vec = vec![0u8; KEY_LEN];
     unsafe {
         let res = X25519(&mut (s_vec[0]) as *mut u8, sk.head_ptr(), pk.head_ptr());
         if res == 0 {

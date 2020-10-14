@@ -87,8 +87,8 @@ impl Circuit {
         let setup_pkt = pkt.into_inner();
         let client_pk = Key::clone_from_slice(&setup_pkt.public_dh);
         let master_key = match ephemeral_sk.len() {
-            x25519::POINT_SIZE => x25519::generate_shared_secret(&client_pk, ephemeral_sk)?,
-            x448::POINT_SIZE => x448::generate_shared_secret(&client_pk, ephemeral_sk)?,
+            x25519::KEY_LEN => x25519::generate_shared_secret(&client_pk, ephemeral_sk)?,
+            x448::KEY_LEN => x448::generate_shared_secret(&client_pk, ephemeral_sk)?,
             _ => {
                 return Err(Error::InputError(
                     "Our ephemeral sk has a strange size".to_string(),

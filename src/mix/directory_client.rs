@@ -377,7 +377,7 @@ pub mod mocks {
             setup_exchange_alg: KeyExchangeAlgorithm::X25519,
         };
         let mock_dir_client = Client::new(config);
-        *mock_dir_client.auth_key.write().expect("Lock failure") = Some(Key::new(x448::POINT_SIZE));
+        *mock_dir_client.auth_key.write().expect("Lock failure") = Some(Key::new(x448::KEY_LEN));
         let current_time = current_time_in_secs();
         let mock_epoch = EpochInfo {
             epoch_no: current_communication_epoch_no,
