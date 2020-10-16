@@ -1,4 +1,5 @@
 //! Main loop for processing epochs
+use crossbeam_channel as xbeam;
 use log::*;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{self, AtomicBool};
@@ -7,7 +8,7 @@ use std::thread::sleep;
 use tokio::time::Duration;
 
 use crate::defs::RoundNo;
-use crate::epoch::{current_time, EpochInfo};
+use crate::epoch::{current_time, EpochInfo, EpochNo};
 use crate::net::PacketWithNextHop;
 use crate::rendezvous::processor::{process_publish, process_subscribe, publish_t, subscribe_t};
 
@@ -16,6 +17,10 @@ use super::circuit::{CellDirection, NextCellStep};
 use super::directory_client;
 use super::epoch_state::{EpochSetupState, EpochState};
 use super::setup_processor::{create_dummy_circuit, process_setup_pkt, setup_t};
+
+pub enum SyncBeat {
+    Deliver(EpochNo, RoundNo),
+}
 
 pub struct Worker {
     running: Arc<AtomicBool>,
@@ -27,6 +32,7 @@ pub struct Worker {
     publish_processor: publish_t::Processor,
     setup_state: EpochSetupState,
     state: EpochState,
+    sync_tx: xbeam::Sender<SyncBeat>,
 }
 
 impl Worker {
@@ -38,6 +44,7 @@ impl Worker {
         subscribe_processor: subscribe_t::Processor,
         cell_processor: cell_rss_t::Processor,
         publish_processor: publish_t::Processor,
+        sync_tx: xbeam::Sender<SyncBeat>,
     ) -> Self {
         Worker {
             running: running.clone(),
@@ -49,6 +56,7 @@ impl Worker {
             publish_processor,
             setup_state: EpochSetupState::new(0),
             state: EpochState::default(),
+            sync_tx,
         }
     }
 
@@ -222,7 +230,7 @@ impl Worker {
         let process_start = send_time - subround_interval;
         match process_start.checked_sub(current_time()) {
             Some(wait_for) => sleep(wait_for),
-            None => warn!("Did not finish last setup processing in time?")
+            None => warn!("Did not finish last setup processing in time?"),
         }
         info!("Processing round {} of epoch {}", round_no, epoch.epoch_no);
 
@@ -258,6 +266,9 @@ impl Worker {
             );
             send_time += subround_interval;
         }
+        self.sync_tx
+            .send(SyncBeat::Deliver(epoch.epoch_no, round_no))
+            .expect("Sync channel broken");
         info!(
             "Finished processing round {} of epoch {}",
             round_no, epoch.epoch_no

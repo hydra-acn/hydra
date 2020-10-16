@@ -1,4 +1,5 @@
 use clap::{clap_app, value_t};
+use crossbeam_channel as xbeam;
 use log::*;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
@@ -127,6 +128,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
         let sender_handle = tokio::spawn(sender::run(sender));
 
+        // sync channel
+        let (sync_tx, _sync_rx) = xbeam::unbounded();
+
         // setup main worker
         let mut worker = Worker::new(
             running.clone(),
@@ -136,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             subscribe_processor,
             cell_processor,
             publish_processor,
+            sync_tx,
         );
         let main_handle = tokio::task::spawn_blocking(move || worker.run());
 
