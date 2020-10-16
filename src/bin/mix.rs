@@ -11,6 +11,7 @@ use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
 use hydra::mix::rss_pipeline::new_pipeline;
 use hydra::mix::setup_processor::setup_t;
+use hydra::mix::storage::Storage;
 use hydra::mix::{self, sender, simple_relay};
 use hydra::rendezvous;
 use hydra::rendezvous::processor::{publish_t, subscribe_t};
@@ -100,10 +101,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             new_pipeline(no_of_worker_threads);
 
         // setup mix gRPC
+        let storage = Arc::new(Storage::default());
         let mix_grpc_state = Arc::new(mix::grpc::State::new(
             dir_client.clone(),
             setup_rx_queue,
             cell_rx_queue,
+            storage,
         ));
         let (mix_grpc_handle, _) =
             mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr, None).await?;
