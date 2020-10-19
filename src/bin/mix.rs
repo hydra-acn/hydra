@@ -11,7 +11,7 @@ use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
 use hydra::mix::rss_pipeline::new_pipeline;
 use hydra::mix::setup_processor::setup_t;
-use hydra::mix::storage::Storage;
+use hydra::mix::storage::{self, Storage};
 use hydra::mix::{self, sender, simple_relay};
 use hydra::rendezvous;
 use hydra::rendezvous::processor::{publish_t, subscribe_t};
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         // real mix
-        // TODO read from command line
+        // XXX read from command line
         let no_of_worker_threads = 2usize;
 
         // mix view pipelines
@@ -100,8 +100,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (publish_rx_queue, publish_processor, inject_tx_queue, _): publish_t::Pipeline =
             new_pipeline(no_of_worker_threads);
 
+        // sync channel
+        let (sync_tx, sync_rx) = xbeam::unbounded();
+
+        // setup entry mix storage
+        let storage = Arc::new(Storage::new(sync_rx));
+        let storage_handle = tokio::spawn(storage::run(storage.clone()));
+
         // setup mix gRPC
-        let storage = Arc::new(Storage::default());
         let mix_grpc_state = Arc::new(mix::grpc::State::new(
             dir_client.clone(),
             setup_rx_queue,
@@ -131,9 +137,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
         let sender_handle = tokio::spawn(sender::run(sender));
 
-        // sync channel
-        let (sync_tx, _sync_rx) = xbeam::unbounded();
-
         // setup main worker
         let mut worker = Worker::new(
             running.clone(),
@@ -150,6 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match tokio::try_join!(
             sigint_handle,
             dir_client_handle,
+            storage_handle,
             mix_grpc_handle,
             rendezvous_grpc_handle,
             sender_handle,

@@ -28,6 +28,7 @@ spmc = "^0.3"
 rayon = "^1"
 crossbeam-channel = "^0.4"
 bloomfilter = "1.0.3"
+fcm = "^0.7"
 
 [build-dependencies]
 cmake = "^0.1"

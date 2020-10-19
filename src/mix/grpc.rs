@@ -71,10 +71,14 @@ define_grpc_service!(Service, State, MixServer);
 impl Mix for Service {
     async fn setup_circuit(&self, req: Request<SetupPacket>) -> Result<Response<SetupAck>, Status> {
         let previous_hop = get_previous_hop(&req)?;
+        let firebase_token = get_firebase_token(&req);
         let pkt = req.into_inner();
         pkt.validity_check(&*self.dir_client)?;
-        // XXX read firebase token
-        if self.storage.create_circuit(pkt.circuit_id, None) == false {
+        if self
+            .storage
+            .create_circuit(pkt.circuit_id, pkt.epoch_no, firebase_token)
+            == false
+        {
             return Err(Status::new(
                 Code::AlreadyExists,
                 "Circuit id exists already",
@@ -90,6 +94,7 @@ impl Mix for Service {
         req: Request<tonic::Streaming<SetupPacket>>,
     ) -> Result<Response<SetupAck>, Status> {
         let previous_hop = get_previous_hop(&req)?;
+        let firebase_token = get_firebase_token(&req);
         let is_client = previous_hop.is_none();
         let mut stream = req.into_inner();
         while let Some(p) = stream.next().await {
@@ -102,8 +107,11 @@ impl Mix for Service {
             };
             pkt.validity_check(&*self.dir_client)?;
             if is_client {
-                // XXX read firebase token
-                if self.storage.create_circuit(pkt.circuit_id, None) == false {
+                if self
+                    .storage
+                    .create_circuit(pkt.circuit_id, pkt.epoch_no, firebase_token.clone())
+                    == false
+                {
                     return Err(Status::new(
                         Code::AlreadyExists,
                         "Circuit id exists already",
@@ -174,5 +182,18 @@ fn get_previous_hop<T>(req: &Request<T>) -> Result<Option<SocketAddr>, Status> {
             Ok(Some(prev))
         }
         None => Ok(None),
+    }
+}
+
+fn get_firebase_token<T>(req: &Request<T>) -> Option<String> {
+    match req.metadata().get("firebase") {
+        Some(val) => match val.to_str() {
+            Ok(token) => Some(token.to_string()),
+            Err(_) => {
+                warn!("Firebase token is not valid");
+                None
+            }
+        },
+        None => None,
     }
 }
