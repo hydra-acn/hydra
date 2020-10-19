@@ -22,6 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Mix for the Hydra system")
         (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
+        (@arg threads: +required "Number of worker threads to use")
         (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
         (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
@@ -85,8 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         // real mix
-        // XXX read from command line
-        let no_of_worker_threads = 2usize;
+        let no_of_worker_threads = value_t!(args, "threads", usize).unwrap();
 
         // mix view pipelines
         let (setup_rx_queue, setup_processor, setup_tx_queue, subscribe_tx_queue): setup_t::Pipeline =
