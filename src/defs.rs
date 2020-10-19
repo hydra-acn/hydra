@@ -107,20 +107,18 @@ mod tests {
 
     #[test]
     fn test_bytes_to_token() {
-        //initialise test: perfect sized vector to tokens
+        // initialize test: perfect sized vector to tokens
         let bytes: Vec<u8> = vec![
             1, 2, 3, 4, 5, 6, 7, 8, 255, 255, 255, 255, 255, 255, 255, 255, 11, 11, 11, 11, 11, 11,
             11,
         ];
-        let expected_vec_bytes: Vec<_> = vec![578437695752307201, 18446744073709551615];
-        //initialise test: wrong sized Vector to tokens
+        let expected_tokens: Vec<_> = vec![578437695752307201, 18446744073709551615];
+        // initialize test: wrong sized Vector to tokens
         let too_short: Vec<u8> = vec![255, 255, 255, 255, 255, 255, 255];
-        let expected_vec_too_short: Vec<_> = Vec::new();
-        //Call function and evaluate result for the perfect sized vector
+        let expected_tokens_too_short: Vec<Token> = Vec::new();
         let tokens1 = tokens_from_bytes(&bytes);
-        assert_eq!(tokens1, expected_vec_bytes);
-        //Call function and evaluate result for the wrong sized vector
+        assert_eq!(tokens1, expected_tokens);
         let tokens2 = tokens_from_bytes(&too_short);
-        assert_eq!(tokens2, expected_vec_too_short);
+        assert_eq!(tokens2, expected_tokens_too_short);
     }
 }
