@@ -95,6 +95,7 @@ async fn create_channel<T: Client>(addr: SocketAddr) -> Result<T, Error> {
     let endpoint = format!("http://{}:{}", addr.ip(), addr.port());
     // TODO maybe we want to decrease timeouts here (depending on tonic's defaults)?
     debug!("Connecting to {}", endpoint);
-    let channel = T::connect(endpoint).await?;
-    Ok(channel)
+    let builder = tonic::transport::Channel::from_shared(endpoint)?;
+    let channel = builder.tcp_nodelay(false).connect().await?;
+    Ok(T::from_channel(channel))
 }

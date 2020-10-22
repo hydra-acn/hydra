@@ -110,6 +110,12 @@ impl std::convert::From<tokio::io::Error> for Error {
     }
 }
 
+impl std::convert::From<http::uri::InvalidUri> for Error {
+    fn from(e: http::uri::InvalidUri) -> Self {
+        Error::InputError(e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

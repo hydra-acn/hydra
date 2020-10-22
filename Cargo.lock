@@ -564,6 +564,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "http",
  "log",
  "openssl",
  "openssl-sys",
