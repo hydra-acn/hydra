@@ -260,14 +260,14 @@ pub async fn run(state: Arc<State>) {
     }
 }
 
-struct ShuffleIterator<T> {
+pub struct ShuffleIterator<T> {
     idx_vec: Vec<usize>,
     pkt_vec: Vec<T>,
     pos: usize,
 }
 
 impl<T> ShuffleIterator<T> {
-    fn new(pkt_vec: Vec<T>) -> Self {
+    pub fn new(pkt_vec: Vec<T>) -> Self {
         let mut idx_vec: Vec<usize> = (0..pkt_vec.len()).collect();
         idx_vec.shuffle(&mut thread_cprng());
         ShuffleIterator {
