@@ -190,10 +190,10 @@ impl Worker {
                             let dummy_extend = create_dummy_circuit(self.setup_state.dummy_circuits().clone(), &self.dir_client, setup_epoch.epoch_no, setup_layer, setup_epoch.path_length - setup_layer - 1);
                             self.setup_processor.pad(vec![dummy_extend]);
                             // send setup packets
-                            self.setup_processor.send();
+                            self.setup_processor.send(None);
                         } else if do_send {
                             // send subscriptions
-                            self.setup_processor.alt_send();
+                            self.setup_processor.alt_send(None);
                         }
                     },
                     None => warn!("We could setup layer {} of epoch {} now, but we don't have the matching ephemeral key", setup_layer, setup_epoch.epoch_no)
@@ -242,6 +242,7 @@ impl Worker {
                 epoch.path_length - 1,
                 CellDirection::Upstream,
                 &send_time,
+                &subround_interval,
             );
             send_time += subround_interval;
         }
@@ -251,9 +252,9 @@ impl Worker {
         info!(".. process publish of round {}", round_no);
         let f = |cell| process_publish(cell, sub_map.clone());
         self.publish_processor.process_till(f, send_time);
-        info!(".. send injections of round {}", round_no);
-        self.publish_processor.send(); // injection
         send_time += subround_interval;
+        info!(".. send injections of round {}", round_no);
+        self.publish_processor.send(Some(send_time)); // injection
 
         // mix view: downstream
         for layer in (0..epoch.path_length).rev() {
@@ -263,6 +264,7 @@ impl Worker {
                 epoch.path_length - 1,
                 CellDirection::Downstream,
                 &send_time,
+                &subround_interval,
             );
             send_time += subround_interval;
         }
@@ -282,6 +284,7 @@ impl Worker {
         max_layer: u32,
         direction: CellDirection,
         send_time: &Duration,
+        subround_interval: &Duration,
     ) {
         info!(
             ".. processing sub-round of round {}, layer {}, direction {:?}",
@@ -344,10 +347,11 @@ impl Worker {
             ".. sending sub-round of round {}, layer {}, direction {:?}",
             round_no, layer, direction,
         );
+        let send_deadline = Some(*send_time + *subround_interval);
         match direction {
             CellDirection::Upstream if layer == max_layer => {
                 // publish
-                self.cell_processor.alt_send();
+                self.cell_processor.alt_send(send_deadline);
             }
             CellDirection::Downstream if layer == 0 => {
                 // deliver
@@ -355,7 +359,7 @@ impl Worker {
                 self.grpc_state.deliver(out);
             }
             // default: relay
-            _ => self.cell_processor.send(),
+            _ => self.cell_processor.send(send_deadline),
         }
     }
 }

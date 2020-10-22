@@ -5,10 +5,12 @@ use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::task;
 
 use crate::crypto::cprng::thread_cprng;
 use crate::derive_grpc_client;
+use crate::epoch::current_time;
 use crate::error::Error;
 use crate::net::PacketWithNextHop;
 use crate::rendezvous::processor::publish_t;
@@ -20,7 +22,7 @@ use super::cell_processor::cell_rss_t;
 use super::directory_client;
 use super::setup_processor::setup_t;
 
-pub type Batch<T> = Vec<Vec<PacketWithNextHop<T>>>;
+pub type Batch<T> = (Vec<Vec<PacketWithNextHop<T>>>, Option<Duration>);
 pub type SetupBatch = Batch<SetupPacket>;
 pub type SubscribeBatch = Batch<Subscription>;
 pub type CellBatch = Batch<Cell>;
@@ -48,6 +50,8 @@ macro_rules! send_next_batch {
             }
         };
 
+        let deadline = batch.1;
+
         // sort by destination and get corresponding channels
         let (batch_map, destinations) = sort_by_destination(batch);
         let channel_map = $state.dir_client.$channel_getter(&destinations).await;
@@ -56,7 +60,12 @@ macro_rules! send_next_batch {
             match channel_map.get(&dst) {
                 Some(c) => {
                     // fire and forget concurrently for each destination
-                    tokio::spawn($send_fun($state.dir_client.clone(), c.clone(), pkts));
+                    tokio::spawn($send_fun(
+                        $state.dir_client.clone(),
+                        c.clone(),
+                        pkts,
+                        deadline,
+                    ));
                 }
                 None => {
                     warn!(
@@ -112,7 +121,7 @@ impl State {
 
 fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<SocketAddr>) {
     let mut batch_map: HashMap<SocketAddr, Vec<T>> = HashMap::new();
-    for vec in batch.into_iter() {
+    for vec in batch.0.into_iter() {
         for pkt in vec.into_iter() {
             match batch_map.get_mut(pkt.next_hop()) {
                 Some(vec) => vec.push(pkt.into_inner()),
@@ -130,8 +139,9 @@ async fn send_setup_packets(
     dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
     pkts: Vec<SetupPacket>,
+    deadline: Option<Duration>,
 ) {
-    let shuffle_it = ShuffleIterator::new(pkts);
+    let shuffle_it = ShuffleIterator::new(pkts, deadline);
     let mut req = tonic::Request::new(stream::iter(shuffle_it));
     // attach reply address as metadata
     req.metadata_mut().insert(
@@ -153,8 +163,9 @@ async fn send_subscriptions(
     _dir_client: Arc<directory_client::Client>,
     mut c: RendezvousConnection,
     pkts: Vec<Subscription>,
+    deadline: Option<Duration>,
 ) {
-    let shuffle_it = ShuffleIterator::new(pkts);
+    let shuffle_it = ShuffleIterator::new(pkts, deadline);
     let req = tonic::Request::new(stream::iter(shuffle_it));
     c.subscribe(req)
         .await
@@ -166,8 +177,9 @@ async fn relay_cells(
     _dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
     cells: Vec<Cell>,
+    deadline: Option<Duration>,
 ) {
-    let shuffle_it = ShuffleIterator::new(cells);
+    let shuffle_it = ShuffleIterator::new(cells, deadline);
     let req = tonic::Request::new(stream::iter(shuffle_it));
     c.relay(req)
         .await
@@ -179,8 +191,9 @@ async fn publish_cells(
     _dir_client: Arc<directory_client::Client>,
     mut c: RendezvousConnection,
     cells: Vec<Cell>,
+    deadline: Option<Duration>,
 ) {
-    let shuffle_it = ShuffleIterator::new(cells);
+    let shuffle_it = ShuffleIterator::new(cells, deadline);
     let req = tonic::Request::new(stream::iter(shuffle_it));
     c.publish(req)
         .await
@@ -192,8 +205,9 @@ async fn inject_cells(
     _dir_client: Arc<directory_client::Client>,
     mut c: MixConnection,
     cells: Vec<Cell>,
+    deadline: Option<Duration>,
 ) {
-    let shuffle_it = ShuffleIterator::new(cells);
+    let shuffle_it = ShuffleIterator::new(cells, deadline);
     let req = tonic::Request::new(stream::iter(shuffle_it));
     c.inject(req)
         .await
@@ -264,16 +278,19 @@ pub struct ShuffleIterator<T> {
     idx_vec: Vec<usize>,
     pkt_vec: Vec<T>,
     pos: usize,
+    deadline: Option<Duration>,
 }
 
 impl<T> ShuffleIterator<T> {
-    pub fn new(pkt_vec: Vec<T>) -> Self {
+    /// The iterator will return `None` when the deadline has passed.
+    pub fn new(pkt_vec: Vec<T>, deadline: Option<Duration>) -> Self {
         let mut idx_vec: Vec<usize> = (0..pkt_vec.len()).collect();
         idx_vec.shuffle(&mut thread_cprng());
         ShuffleIterator {
             idx_vec,
             pkt_vec,
             pos: 0,
+            deadline,
         }
     }
 }
@@ -281,6 +298,11 @@ impl<T> ShuffleIterator<T> {
 impl<T: Default> Iterator for ShuffleIterator<T> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
+        if let Some(deadline) = self.deadline {
+            if let None = deadline.checked_sub(current_time()) {
+                return None;
+            }
+        }
         if self.pos < self.idx_vec.len() {
             let pkt = std::mem::replace(&mut self.pkt_vec[self.idx_vec[self.pos]], T::default());
             self.pos += 1;

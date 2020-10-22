@@ -71,7 +71,7 @@ impl<I: Scalable + std::fmt::Debug> RxQueue<I> {
 }
 
 /// Receiver end of the tx channel.
-pub type TxQueue<T> = crossbeam_channel::Receiver<Vec<Vec<T>>>;
+pub type TxQueue<T> = crossbeam_channel::Receiver<(Vec<Vec<T>>, Option<Duration>)>;
 
 /// Enum to decide what should happen after processing a request.
 pub enum ProcessResult<I, O, A> {
@@ -100,8 +100,8 @@ struct ThreadState<I, O, A> {
 /// type `A`.
 pub struct Processor<I: Send, O: Send, A: Send> {
     threads: Vec<ThreadState<I, O, A>>,
-    tx_queue: crossbeam_channel::Sender<Vec<Vec<O>>>,
-    alt_tx_queue: crossbeam_channel::Sender<Vec<Vec<A>>>,
+    tx_queue: crossbeam_channel::Sender<(Vec<Vec<O>>, Option<Duration>)>,
+    alt_tx_queue: crossbeam_channel::Sender<(Vec<Vec<A>>, Option<Duration>)>,
 }
 
 impl<I: Send, O: Send, A: Send> Processor<I, O, A> {
@@ -158,17 +158,19 @@ impl<I: Send, O: Send, A: Send> Processor<I, O, A> {
 
     /// Send the output to the tx queue by moving.
     /// Panics if the matching tx queue is gone.
-    pub fn send(&mut self) {
+    pub fn send(&mut self, deadline: Option<Duration>) {
         let out = self.output();
-        self.tx_queue.send(out).expect("Pipeline consumer gone?");
+        self.tx_queue
+            .send((out, deadline))
+            .expect("Pipeline consumer gone?");
     }
 
     /// Send the alternative output to the tx queue by moving.
     /// Panics if the matching tx queue is gone.
-    pub fn alt_send(&mut self) {
+    pub fn alt_send(&mut self, deadline: Option<Duration>) {
         let out = self.alt_output();
         self.alt_tx_queue
-            .send(out)
+            .send((out, deadline))
             .expect("Pipeline consumer gone?");
     }
 
@@ -333,10 +335,10 @@ mod tests {
         proc.process_till(f, till);
         proc.pad(vec![1, 3, 3, 7]);
         proc.alt_pad(vec![false, false]);
-        proc.send();
-        proc.alt_send();
+        proc.send(None);
+        proc.alt_send(None);
 
-        let out = tx.try_recv().unwrap();
+        let out = tx.try_recv().unwrap().0;
         let expected_out: Vec<Vec<u32>> = vec![vec![0, 0, 10, 1, 3, 3, 7], vec![], vec![3]];
         let requeued = proc.requeued();
         let mut pending = VecDeque::new();
@@ -347,7 +349,7 @@ mod tests {
         assert_eq!(requeued, requeued_expected);
         assert_eq!(*sum.lock().unwrap(), 13);
 
-        let alt_out = alt_tx.try_recv().unwrap();
+        let alt_out = alt_tx.try_recv().unwrap().0;
         let expected_alt_out = vec![vec![false, false], vec![true], vec![true, true]];
         assert_eq!(alt_out, expected_alt_out);
     }

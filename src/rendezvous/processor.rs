@@ -106,9 +106,9 @@ mod tests {
             |cell| process_publish(cell, map.clone()),
             current_time() + Duration::from_millis(50),
         );
-        pub_processor.send();
+        pub_processor.send(None);
 
-        let mut out = inject_tx.try_recv().unwrap();
+        let mut out = inject_tx.try_recv().unwrap().0;
         assert_eq!(out.len(), 2);
         let out_0 = &out[0];
         let out_1 = &out[1];

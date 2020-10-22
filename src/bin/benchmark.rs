@@ -119,7 +119,7 @@ fn shuffle(n: u32) {
     }
     info!("Starting shuffle benchmark");
     let start = current_time();
-    let shuffle_it = hydra::mix::sender::ShuffleIterator::new(cells);
+    let shuffle_it = hydra::mix::sender::ShuffleIterator::new(cells, None);
     info!("Shuffle only benchmark: {:.2} pps", pps(n, &start));
     let shuffled_cells: Vec<Cell> = shuffle_it.collect();
     info!("Shuffle and collect benchmark: {:.2} pps", pps(n, &start));
