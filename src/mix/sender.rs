@@ -278,11 +278,11 @@ impl<T> ShuffleIterator<T> {
     }
 }
 
-impl<T: Clone> Iterator for ShuffleIterator<T> {
+impl<T: Default> Iterator for ShuffleIterator<T> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
         if self.pos < self.idx_vec.len() {
-            let pkt = self.pkt_vec[self.idx_vec[self.pos]].clone();
+            let pkt = std::mem::replace(&mut self.pkt_vec[self.idx_vec[self.pos]], T::default());
             self.pos += 1;
             Some(pkt)
         } else {
