@@ -5,7 +5,7 @@ use std::sync::Arc;
 use hydra::crypto::key::Key;
 use hydra::crypto::tls::ServerCredentials;
 use hydra::directory::grpc;
-use hydra::directory::state::{self, Config, State};
+use hydra::directory::state::{self, ConfigBuilder, State};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg key_path: +required "Path to key file")
         (@arg cert_path: +required "Path to certificate file")
         (@arg phaseDuration: -d --duration +takes_value default_value("160") "Duration of one phase (setup/communication have the same duration")
+        (@arg roundWait: -w --("round-wait") +takes_value default_value("13") "Duration between communication rounds")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
     .get_matches();
@@ -25,9 +26,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting directory service");
 
     let phase_duration = value_t!(args, "phaseDuration", u64).unwrap();
-    let mut config = Config::default();
-    config.set_phase_duration(phase_duration);
-    let state = Arc::new(State::new(config));
+    let round_wait = value_t!(args, "roundWait", u8).unwrap();
+    let cfg = ConfigBuilder::default()
+        .round_waiting(round_wait)
+        .phase_duration(phase_duration)
+        .build_valid()?;
+    let state = Arc::new(State::new(cfg));
 
     let key = Key::read_from_file(args.value_of("key_path").unwrap()).expect("Failed to read File");
     let cert = std::fs::read_to_string(args.value_of("cert_path").unwrap())?;

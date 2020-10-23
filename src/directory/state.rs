@@ -3,6 +3,7 @@ use crate::crypto::x448;
 use crate::epoch::{current_epoch_no, EpochNo, MAX_EPOCH_NO};
 use crate::error::Error;
 use crate::tonic_directory::{EpochInfo, MixInfo, MixStatistics};
+use derive_builder::*;
 
 use log::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -26,7 +27,7 @@ impl State {
 
         State {
             mix_map: Mutex::new(HashMap::new()),
-            config: config,
+            config,
             epochs: RwLock::new(VecDeque::new()),
             stat_map: RwLock::new(StatisticMap::new()),
         }
@@ -112,7 +113,8 @@ impl State {
     }
 }
 
-/// TODO builder pattern?
+#[derive(Builder)]
+#[builder(default)]
 pub struct Config {
     phase_duration: u64,
     epochs_in_advance: u8,
@@ -121,8 +123,8 @@ pub struct Config {
     round_waiting: u8,
 }
 
-impl Config {
-    pub fn default() -> Self {
+impl Default for Config {
+    fn default() -> Self {
         let mut cfg = Config {
             phase_duration: 0,
             epochs_in_advance: 10,
@@ -130,20 +132,17 @@ impl Config {
             round_duration: 7,
             round_waiting: 13,
         };
-        cfg.set_phase_duration(2 * cfg.min_phase_duration());
+        cfg.phase_duration = 2 * cfg.min_phase_duration();
         cfg
     }
+}
 
+impl Config {
+    /// TODO code: getter macro?
     pub fn phase_duration(&self) -> u64 {
         self.phase_duration
     }
 
-    pub fn set_phase_duration(&mut self, d: u64) {
-        self.phase_duration = d;
-        assert!(self.is_valid(), "Awkward phase duration");
-    }
-
-    /// TODO code: getter macro?
     pub fn epochs_in_advance(&self) -> u8 {
         self.epochs_in_advance
     }
@@ -166,6 +165,18 @@ impl Config {
 
     fn is_valid(&self) -> bool {
         self.phase_duration % self.min_phase_duration() == 0
+    }
+}
+
+impl ConfigBuilder {
+    pub fn build_valid(&self) -> Result<Config, Error> {
+        let cfg = self
+            .build()
+            .expect("This should not happen, defaults provided");
+        match cfg.is_valid() {
+            true => Ok(cfg),
+            false => Err(Error::InputError("Invalid config".to_string())),
+        }
     }
 }
 

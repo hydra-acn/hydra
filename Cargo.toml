@@ -30,6 +30,7 @@ rayon = "^1"
 crossbeam-channel = "^0.4"
 bloomfilter = "1.0.3"
 fcm = "^0.7"
+derive_builder = "^0.9"
 
 [build-dependencies]
 cmake = "^0.1"
