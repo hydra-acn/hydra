@@ -300,6 +300,7 @@ impl<T: Default> Iterator for ShuffleIterator<T> {
     fn next(&mut self) -> Option<T> {
         if let Some(deadline) = self.deadline {
             if let None = deadline.checked_sub(current_time()) {
+                warn!("Sending did not finish in time");
                 return None;
             }
         }
