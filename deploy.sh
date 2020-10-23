@@ -18,7 +18,7 @@ deploy_local() {
     tmux new-session -d -s $session
     echo -n "Starting directory server on port $dirport ..."
     tmux new-window -d -t "=${session}" -n directory
-    tmux send-keys -t "=${session}:=directory" "target/$mode/directory_service 0.0.0.0 $dirkey $dircrt -d $phasedur" Enter
+    tmux send-keys -t "=${session}:=directory" "target/$mode/directory_service 0.0.0.0 $dirkey $dircrt -d $phasedur -w $roundwait" Enter
     sleep 1
     echo " Done"
     echo "Starting $n mixes .."
@@ -45,7 +45,7 @@ deploy_testbed() {
     tmux kill-session -t $session > /dev/null 2>&1
     tmux new-session -d -s $session
     echo -n "Starting directory server on port $dirport ..."
-    tmux send-keys -t "=${session}:" "target/$mode/directory_service 0.0.0.0 $dirkey $dircrt -d $phasedur" Enter
+    tmux send-keys -t "=${session}:" "target/$mode/directory_service 0.0.0.0 $dirkey $dircrt -d $phasedur -w $roundwait" Enter
     sleep 1
     echo " Done"
 
@@ -90,6 +90,7 @@ dirkey=".testbed/directory.key"
 dircrt=".testbed/directory.crt"
 cacrt=".testbed/ca.pem"
 phasedur=120
+roundwait=13
 x25519=""
 threads=4
 mode="release"
@@ -101,6 +102,7 @@ while [ -n "$1" ]; do
         -d|--dirdom) dirdom=$2; shift ;;
         --cache) build=0 ;;
         --duration) phasedur=$2; shift ;;
+        -w|--round-wait) roundwait=$2; shift ;;
         --x25519) x25519="--x25519" ;;
         -t|--threads) threads=$2; shift ;;
         -*) echo "Unknown option $1"; exit -1;;
