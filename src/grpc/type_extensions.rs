@@ -1,5 +1,6 @@
 //! `impl` some helper methods for gRPC message types.
 use byteorder::{ByteOrder, LittleEndian};
+use hmac::Mac;
 use rand::Rng;
 use std::convert::TryInto;
 use std::net::SocketAddr;
@@ -15,10 +16,11 @@ use crate::epoch::EpochNo;
 use crate::grpc::macros::valid_request_check;
 use crate::mix::directory_client;
 use crate::mix::rss_pipeline::Scalable;
+use crate::net::cell::Cell as FlatCell;
+use crate::net::cell::{read_command, set_command, CellCmd};
 use crate::tonic_directory::MixStatistics;
 use crate::tonic_mix::{Cell, SetupPacket, Subscription};
 use crate::unwrap_or_throw_invalid;
-use hmac::Mac;
 
 impl SetupPacket {
     /// for a given setup packet, determine how much hops it needs to be sent
@@ -143,11 +145,6 @@ impl Scalable for Subscription {
     }
 }
 
-pub enum CellCmd {
-    Delay(u8),
-    Broadcast,
-}
-
 impl Cell {
     /// creates new dummy cell
     pub fn dummy(cid: CircuitId, r: RoundNo) -> Self {
@@ -169,31 +166,11 @@ impl Cell {
     }
 
     pub fn command(&self) -> Option<CellCmd> {
-        let cmd_slice = &self.onion[1..8];
-        if cmd_slice.iter().all(|b| *b == 0) {
-            Some(CellCmd::Delay(self.onion[0]))
-        } else if self.onion[0] == 255 && cmd_slice.iter().all(|b| *b == 255) {
-            Some(CellCmd::Broadcast)
-        } else {
-            None
-        }
+        read_command(&self.onion[0..8])
     }
 
     pub fn set_command(&mut self, cmd: CellCmd) {
-        let args_cmd_slice = &mut self.onion[0..8];
-        match cmd {
-            CellCmd::Delay(rounds) => {
-                for b in args_cmd_slice.iter_mut() {
-                    *b = 0;
-                }
-                args_cmd_slice[0] = rounds;
-            }
-            CellCmd::Broadcast => {
-                for b in args_cmd_slice.iter_mut() {
-                    *b = 255;
-                }
-            }
-        }
+        set_command(cmd, &mut self.onion[0..8]);
     }
 
     /// Turn existing cell into dummy by randomizing the onion encrypted part.
@@ -205,6 +182,18 @@ impl Cell {
 impl Scalable for Cell {
     fn thread_id(&self, size: usize) -> usize {
         self.circuit_id as usize % size
+    }
+}
+
+impl From<FlatCell> for Cell {
+    fn from(flat: FlatCell) -> Self {
+        let circuit_id = flat.circuit_id();
+        let round_no = flat.round_no();
+        Cell {
+            circuit_id,
+            round_no,
+            onion: flat.into_onion(),
+        }
     }
 }
 

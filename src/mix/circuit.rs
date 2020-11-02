@@ -6,14 +6,14 @@ use crate::crypto::key::Key;
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::{x25519, x448};
 use crate::defs::{
-    tokens_from_bytes, CircuitId, RoundNo, Token, ONION_LEN, SETUP_ADDR_LEN, SETUP_AUTH_LEN,
-    SETUP_NONCE_LEN,
+    tokens_from_bytes, CircuitId, RoundNo, Token, CELL_LEN, INJECT_ROUND_NO, ONION_LEN,
+    PUBLISH_ROUND_NO, SETUP_ADDR_LEN, SETUP_AUTH_LEN, SETUP_NONCE_LEN,
 };
 use crate::error::Error;
-use crate::grpc::type_extensions::CellCmd;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
+use crate::net::cell::{Cell, CellCmd};
 use crate::net::{ip_addr_from_slice, PacketWithNextHop};
-use crate::tonic_mix::{Cell, SetupPacket};
+use crate::tonic_mix::SetupPacket;
 
 use super::rendezvous_map::RendezvousMap;
 
@@ -22,6 +22,7 @@ use log::*;
 use rand::Rng;
 use std::cmp::{self, Ordering};
 use std::collections::{BTreeMap, VecDeque};
+use std::convert::TryInto;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
@@ -159,10 +160,13 @@ impl Circuit {
                 _ => panic!("Why should this not be an v6 address?"),
             };
             let port = decrypted[16] as u16 + 256 * decrypted[17] as u16;
-            let upstream_hop = match v6.to_ipv4() {
+            let next_setup_hop = match v6.to_ipv4() {
                 Some(v4) => SocketAddr::new(IpAddr::V4(v4), port),
                 None => SocketAddr::new(IpAddr::V6(v6), port),
             };
+            let mut upstream_hop = next_setup_hop.clone();
+            // TODO code don't hardcode +200
+            upstream_hop.set_port(port + 200);
             circuit.upstream_hop = Some(upstream_hop);
             let mut offset = SETUP_ADDR_LEN;
             let next_pk = &decrypted[offset..offset + ephemeral_sk.len()];
@@ -180,7 +184,7 @@ impl Circuit {
                 auth_tag: next_tag.to_vec(),
                 onion: next_onion.to_vec(),
             };
-            let extend_info = ExtendInfo::new(next_setup_pkt, upstream_hop);
+            let extend_info = ExtendInfo::new(next_setup_pkt, next_setup_hop);
 
             // TODO security: this should not be logged in production ...
             debug!(
@@ -215,6 +219,7 @@ impl Circuit {
     pub fn process_cell(
         &self,
         mut cell: Cell,
+        round_no: RoundNo,
         layer: u32,
         direction: CellDirection,
     ) -> NextCellStep {
@@ -241,6 +246,13 @@ impl Circuit {
             }
         }
 
+        // re-write circuit id
+        let next_circuit_id = match direction {
+            CellDirection::Upstream => self.upstream_id,
+            CellDirection::Downstream => self.downstream_id,
+        };
+        cell.set_circuit_id(next_circuit_id);
+
         // duplicate detection
         let mut last_round_no_guard = match direction {
             CellDirection::Upstream => self.last_upstream_round_no.write().expect("Lock poisoned"),
@@ -251,44 +263,49 @@ impl Circuit {
         };
 
         let is_duplicate = if let Some(last_round_no) = *last_round_no_guard {
-            cell.round_no <= last_round_no
+            round_no <= last_round_no
         } else {
             false
         };
 
-        if is_duplicate {
-            // looks like a duplicate; one exception: injection at exit mix -> need to queue
-            if let CellDirection::Downstream = direction {
-                if self.is_exit() {
-                    let mut inject_queue_guard = self.inject_queue.write().expect("Lock poisoned");
-                    inject_queue_guard.push_back(cell);
-                } else {
-                    warn!("Dropping duplicate")
-                }
-            } else {
-                warn!("Dropping duplicate")
-            }
-            // in either case: nothing to forward
+        if is_duplicate && cell.round_no() != INJECT_ROUND_NO {
+            warn!("Dropping duplicate");
             return NextCellStep::Drop;
         }
 
-        // no duplicate, update last received round no
-        *last_round_no_guard = Some(cell.round_no);
-
-        // special treatment for downstream at exit mix in last round: replace cell with nack
-        if let CellDirection::Downstream = direction {
-            if self.is_exit() && cell.round_no == self.max_round_no {
-                let nack = self.create_nack(Some(cell.token()));
-                let _ = std::mem::replace(&mut cell, nack);
+        // inject handling
+        if cell.round_no() == INJECT_ROUND_NO {
+            if let CellDirection::Downstream = direction {
+                if self.is_exit() {
+                    let queue_len = self.inject_queue.read().expect("Lock poisoned").len();
+                    if is_duplicate || queue_len > 0 {
+                        // nothing to forward yet -> solved via padding later
+                        let mut inject_queue_guard =
+                            self.inject_queue.write().expect("Lock poisoned");
+                        inject_queue_guard.push_back(cell);
+                        return NextCellStep::Drop;
+                    } else {
+                        // inject right now -> set correct round number and fall through after the
+                        // "inject handling"
+                        cell.set_round_no(round_no);
+                        // special case: nack in last round
+                        if round_no == self.max_round_no {
+                            let token = cell.token();
+                            let _ = std::mem::replace(&mut cell, self.create_nack(Some(token)));
+                        }
+                    }
+                } else {
+                    warn!("Dropping cell that has the injection round no, but we are not exit mix");
+                    return NextCellStep::Drop;
+                }
+            } else {
+                warn!("Dropping cell that has the injection round no, but we didn't expect it yet");
+                return NextCellStep::Drop;
             }
         }
 
-        // re-write circuit id
-        let next_circuit_id = match direction {
-            CellDirection::Upstream => self.upstream_id,
-            CellDirection::Downstream => self.downstream_id,
-        };
-        cell.circuit_id = next_circuit_id;
+        // we are sending a cell now, so update last round no
+        *last_round_no_guard = Some(cell.round_no());
 
         // onion!
         self.handle_onion(&mut cell, direction);
@@ -301,7 +318,7 @@ impl Circuit {
                     .delayed_cells
                     .write()
                     .expect("Lock poisoned")
-                    .remove(&cell.round_no)
+                    .remove(&cell.round_no())
                 {
                     cell = delayed_cell;
                 }
@@ -310,22 +327,23 @@ impl Circuit {
                 // read command
                 if let Some(CellCmd::Delay(rounds)) = cell.command() {
                     // we shall delay the cell -> forward dummy instead
-                    let dummy = Cell::dummy(cell.circuit_id, cell.round_no);
+                    let dummy = Cell::dummy(cell.circuit_id(), cell.round_no());
                     // randomize cmd of original cell
-                    thread_cprng().fill(&mut cell.onion[0..8]);
+                    thread_cprng().fill(&mut cell.onion_mut()[0..8]);
                     self.delayed_cells
                         .write()
                         .expect("Lock poisoned")
-                        .insert(cell.round_no + rounds as u32, cell);
+                        .insert(cell.round_no() + rounds as u32, cell);
                     cell = dummy;
                 }
 
                 match self.upstream_hop {
                     Some(hop) => NextCellStep::Relay(PacketWithNextHop::new(cell, hop)),
                     None => {
+                        cell.set_round_no(PUBLISH_ROUND_NO);
                         let rendezvous_addr = self
                             .rendezvous_map
-                            .rendezvous_address(&cell.token())
+                            .rendezvous_address(&cell.token(), false)
                             .expect("Checked this at circuit creation");
                         NextCellStep::Rendezvous(PacketWithNextHop::new(cell, rendezvous_addr))
                     }
@@ -373,7 +391,11 @@ impl Circuit {
                     "Creating dummy cell for circuit with upstream id {}",
                     self.upstream_id
                 );
-                (Cell::dummy(circuit_id, round_no), false)
+                let mut dummy = Cell::dummy(circuit_id, round_no);
+                if self.is_exit() {
+                    dummy.set_round_no(PUBLISH_ROUND_NO);
+                }
+                (dummy, false)
             }
             CellDirection::Downstream => match round_no == self.max_round_no {
                 true => (self.create_nack(None), true),
@@ -397,7 +419,7 @@ impl Circuit {
 
         // onion handling if it is no random dummy
         if need_enc {
-            cell.round_no = round_no;
+            cell.set_round_no(round_no);
             self.handle_onion(&mut cell, direction);
         }
 
@@ -406,9 +428,10 @@ impl Circuit {
             CellDirection::Upstream => match self.upstream_hop {
                 Some(hop) => Some(NextCellStep::Relay(PacketWithNextHop::new(cell, hop))),
                 None => {
+                    cell.set_round_no(PUBLISH_ROUND_NO);
                     let rendezvous_addr = self
                         .rendezvous_map
-                        .rendezvous_address(&cell.token())
+                        .rendezvous_address(&cell.token(), false)
                         .expect("Checked at circuit setup");
                     Some(NextCellStep::Rendezvous(PacketWithNextHop::new(
                         cell,
@@ -427,8 +450,8 @@ impl Circuit {
     fn handle_onion(&self, cell: &mut Cell, direction: CellDirection) {
         match direction {
             CellDirection::Upstream => {
-                let tweak_src = 24 * cell.round_no as u64;
-                match self.threefish.decrypt(tweak_src, &mut cell.onion) {
+                let tweak_src = 24 * cell.round_no() as u64;
+                match self.threefish.decrypt(tweak_src, cell.onion_mut()) {
                     Ok(()) => (),
                     Err(e) => {
                         warn!("Onion decryption failed, randomizing instead: {}", e);
@@ -437,8 +460,8 @@ impl Circuit {
                 }
             }
             CellDirection::Downstream => {
-                let tweak_src = 24 * cell.round_no as u64 + 12;
-                match self.threefish.encrypt(tweak_src, &mut cell.onion) {
+                let tweak_src = 24 * cell.round_no() as u64 + 12;
+                match self.threefish.encrypt(tweak_src, cell.onion_mut()) {
                     Ok(()) => (),
                     Err(e) => {
                         warn!("Onion encryption failed, randomizing instead: {}", e);
@@ -452,11 +475,9 @@ impl Circuit {
     /// Use `additional_token` if the NACK replaces a cell that is not inserted into the queue
     /// before.
     fn create_nack(&self, additional_token: Option<Token>) -> Cell {
-        let mut cell = Cell {
-            circuit_id: self.downstream_id,
-            round_no: self.max_round_no,
-            onion: vec![0u8; ONION_LEN],
-        };
+        let mut cell: Cell = vec![0u8; CELL_LEN].try_into().unwrap();
+        cell.set_circuit_id(self.downstream_id);
+        cell.set_round_no(self.max_round_no);
         let inject_queue_guard = self.inject_queue.read().expect("Lock poisoned");
         let dropped = inject_queue_guard.len()
             + match additional_token {
@@ -464,7 +485,7 @@ impl Circuit {
                 None => 0,
             };
         let n = cmp::min((ONION_LEN - 8) / 8, dropped) as u8;
-        cell.onion[0] = n;
+        cell.onion_mut()[0] = n;
         if (n as usize) < dropped {
             warn!("Have to drop {} cells -> NACK not big enough", dropped);
         }
@@ -475,7 +496,7 @@ impl Circuit {
         }
         let mut i = 8;
         for token in dropped_tokens {
-            match cell.onion.get_mut(i..i + 8) {
+            match cell.onion_mut().get_mut(i..i + 8) {
                 Some(buf) => LittleEndian::write_u64(buf, token),
                 None => {
                     break;

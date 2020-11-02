@@ -11,13 +11,13 @@ use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::threefish::Threefish2048;
 use crate::crypto::{x25519, x448};
 use crate::defs::{
-    tokens_to_byte_vec, CircuitId, Token, SETUP_AUTH_LEN, SETUP_NONCE_LEN, SETUP_TOKENS,
+    tokens_to_byte_vec, CircuitId, RoundNo, Token, SETUP_AUTH_LEN, SETUP_NONCE_LEN, SETUP_TOKENS,
 };
 use crate::epoch::EpochNo;
 use crate::error::Error;
 use crate::net::PacketWithNextHop;
 use crate::tonic_directory::MixInfo;
-use crate::tonic_mix::{Cell, SetupPacket};
+use crate::tonic_mix::SetupPacket;
 
 /// Derive AES and Threefish key from shared secret.
 pub fn derive_keys(master_key: &Key, nonce: &[u8]) -> Result<(Key, Key), Error> {
@@ -201,19 +201,18 @@ impl Circuit {
         &self.dummy_tokens
     }
 
-    /// `circuit_id` and `round_no` of `cell` are expected to be set beforehand!
-    pub fn onion_encrypt(&self, cell: &mut Cell) -> Result<(), Error> {
-        let tweak_src = 24 * cell.round_no as u64;
+    pub fn onion_encrypt(&self, round_no: RoundNo, onion: &mut [u8]) -> Result<(), Error> {
+        let tweak_src = 24 * round_no as u64;
         for tf in self.threefishies.iter().rev() {
-            tf.encrypt(tweak_src, &mut cell.onion)?;
+            tf.encrypt(tweak_src, onion)?;
         }
         Ok(())
     }
 
-    pub fn onion_decrypt(&self, cell: &mut Cell) -> Result<(), Error> {
-        let tweak_src = 24 * cell.round_no as u64 + 12;
+    pub fn onion_decrypt(&self, round_no: RoundNo, onion: &mut [u8]) -> Result<(), Error> {
+        let tweak_src = 24 * round_no as u64 + 12;
         for tf in self.threefishies.iter() {
-            tf.decrypt(tweak_src, &mut cell.onion)?;
+            tf.decrypt(tweak_src, onion)?;
         }
         Ok(())
     }

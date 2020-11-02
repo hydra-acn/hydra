@@ -6,6 +6,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::{delay_for, Duration};
 
+pub fn hydra_version() -> &'static str {
+    option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
+}
+
 pub type AuthTag = Vec<u8>;
 pub type Token = u64;
 pub type CircuitId = u64;
@@ -20,14 +24,15 @@ pub const DIR_AUTH_UNREGISTER: &[u8; 10] = b"unregister";
 /// Number of tokens in a setup packet
 pub const SETUP_TOKENS: usize = 256;
 pub const ONION_LEN: usize = 256;
+pub const CELL_LEN: usize =
+    ONION_LEN + std::mem::size_of::<CircuitId>() + std::mem::size_of::<RoundNo>();
 
 pub const SETUP_ADDR_LEN: usize = 18; // v6 addr and port
 pub const SETUP_NONCE_LEN: usize = 12;
 pub const SETUP_AUTH_LEN: usize = 16;
 
-pub fn hydra_version() -> &'static str {
-    option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
-}
+pub const PUBLISH_ROUND_NO: RoundNo = std::u32::MAX;
+pub const INJECT_ROUND_NO: RoundNo = std::u32::MAX - 1;
 
 /// Usage: create an `AtomicBool` with value `true` and spawn the handler on a separate thread. As
 /// soon as `SIGINT` is catched, two things will happen (both may be helpful for cleanup):

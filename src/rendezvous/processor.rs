@@ -1,14 +1,16 @@
+use log::*;
 use std::sync::{Arc, RwLock};
 
-use crate::grpc::type_extensions::CellCmd;
+use crate::defs::{INJECT_ROUND_NO, PUBLISH_ROUND_NO};
+use crate::mix::cell_processor::cell_rss_t;
 use crate::mix::rss_pipeline::ProcessResult;
+use crate::net::cell::{Cell, CellCmd};
 use crate::net::PacketWithNextHop;
-use crate::tonic_mix::{Cell, Subscription};
+use crate::tonic_mix::Subscription;
 
 use super::subscription_map::SubscriptionMap;
 
 crate::define_pipeline_types!(subscribe_t, Subscription, (), ());
-crate::define_pipeline_types!(publish_t, Cell, PacketWithNextHop<Cell>, ());
 
 pub fn process_subscribe(
     req: Subscription,
@@ -19,11 +21,26 @@ pub fn process_subscribe(
     ProcessResult::Drop
 }
 
-pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> publish_t::Result {
+pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> cell_rss_t::Result {
+    if cell.round_no() != PUBLISH_ROUND_NO {
+        if cell.round_no() == INJECT_ROUND_NO {
+            // seems like we are behind in time -> requeue for inject
+            return cell_rss_t::Result::Requeue(cell);
+        } else {
+            warn!(
+                "Dropping cell with wrong round number. Expected {}, got {}.",
+                PUBLISH_ROUND_NO,
+                cell.round_no()
+            );
+
+            return cell_rss_t::Result::Drop;
+        }
+    }
+
     let subscribers = map.get_subscribers(&cell.token());
     let mut out = Vec::new();
     for sub in subscribers {
-        if cell.circuit_id == sub.circuit_id() {
+        if cell.circuit_id() == sub.circuit_id() {
             // don't send cells back on the same circuit, except when asked to
             if let Some(CellCmd::Broadcast) = cell.command() {
             } else {
@@ -31,7 +48,8 @@ pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> publish_t::Resu
             }
         }
         let mut inject_cell = cell.clone();
-        inject_cell.circuit_id = sub.circuit_id();
+        inject_cell.set_circuit_id(sub.circuit_id());
+        inject_cell.set_round_no(INJECT_ROUND_NO);
         out.push(PacketWithNextHop::new(inject_cell, *sub.addr()));
     }
     ProcessResult::Multiple(out)
@@ -51,7 +69,7 @@ mod tests {
     fn test_pubsub() {
         let map = Arc::new(RwLock::new(SubscriptionMap::default()));
         let (sub_rx, mut sub_processor, _, _): subscribe_t::Pipeline = new_pipeline(2);
-        let (pub_rx, mut pub_processor, inject_tx, _): publish_t::Pipeline = new_pipeline(2);
+        let (pub_rx, mut pub_processor, inject_tx, _): cell_rss_t::Pipeline = new_pipeline(2);
         let sub_1 = Subscription {
             addr: vec![112, 13, 12, 1],
             port: 9001,
@@ -94,14 +112,17 @@ mod tests {
             SubscriptionMap::default(),
         ));
 
-        let mut cell_1 = Cell::dummy(1337, 0);
+        let mut cell_1 = Cell::dummy(1337, PUBLISH_ROUND_NO);
         cell_1.set_token(1);
-        let mut cell_2 = Cell::dummy(12, 0);
+        let mut cell_2 = Cell::dummy(12, PUBLISH_ROUND_NO);
         cell_2.set_token(4);
         cell_2.set_command(CellCmd::Broadcast);
+        // last cell should be dropped because of wrong round number
+        let cell_3 = Cell::dummy(1337, 0);
 
         pub_rx.enqueue(cell_1.clone());
         pub_rx.enqueue(cell_2.clone());
+        pub_rx.enqueue(cell_3.clone());
         pub_processor.process_till(
             |cell| process_publish(cell, map.clone()),
             current_time() + Duration::from_millis(50),
@@ -124,11 +145,12 @@ mod tests {
         let out_cell_1 = out[0].pop().unwrap().into_inner();
         let out_cell_2 = out[0].pop().unwrap().into_inner();
         let out_cell_3 = out[1].pop().unwrap().into_inner();
-        assert_eq!(out_cell_1.circuit_id, 12);
-        assert_eq!(out_cell_1.onion, cell_2.onion);
-        assert_eq!(out_cell_2.circuit_id, 99);
-        assert_eq!(out_cell_2.onion, cell_2.onion);
-        assert_eq!(out_cell_3.circuit_id, 12);
-        assert_eq!(out_cell_3.onion, cell_1.onion);
+        assert_eq!(out_cell_1.circuit_id(), 12);
+        assert_eq!(out_cell_1.round_no(), INJECT_ROUND_NO);
+        assert_eq!(out_cell_1.onion(), cell_2.onion());
+        assert_eq!(out_cell_2.circuit_id(), 99);
+        assert_eq!(out_cell_2.onion(), cell_2.onion());
+        assert_eq!(out_cell_3.circuit_id(), 12);
+        assert_eq!(out_cell_3.onion(), cell_1.onion());
     }
 }

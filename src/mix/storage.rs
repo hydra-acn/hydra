@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::defs::{CircuitId, RoundNo};
 use crate::epoch::EpochNo;
-use crate::tonic_mix::Cell;
+use crate::net::cell::Cell;
 
 use super::epoch_worker::SyncBeat;
 
@@ -71,7 +71,7 @@ impl Storage {
 
     pub fn insert_cell(&self, cell: Cell) {
         let mut map = self.circuit_map.write().expect("Lock poisoned");
-        if let Some(circuit) = map.get_mut(&cell.circuit_id) {
+        if let Some(circuit) = map.get_mut(&cell.circuit_id()) {
             circuit.cells.push(cell);
         } else {
             warn!("Cell ready for delivery, but circuit id unknown -> dropping");
@@ -98,9 +98,7 @@ impl Storage {
         let fcm_client = fcm::Client::new();
         for token in tokens {
             let mut builder = fcm::MessageBuilder::new(FCM_AUTH_KEY, &token);
-            builder
-                .priority(fcm::Priority::High)
-                .time_to_live(60);
+            builder.priority(fcm::Priority::High).time_to_live(60);
 
             let mut body = BTreeMap::new();
             body.insert("epoch_no", epoch_no);

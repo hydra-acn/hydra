@@ -8,13 +8,14 @@ use crate::crypto::cprng::thread_cprng;
 use crate::defs::{CircuitId, RoundNo};
 use crate::epoch::EpochNo;
 use crate::error::Error;
-use crate::grpc::type_extensions::CellCmd;
+use crate::net::cell::{Cell, CellCmd};
 use crate::net::PacketWithNextHop;
 use crate::tonic_directory::MixInfo;
-use crate::tonic_mix::{Cell, SetupPacket};
+use crate::tonic_mix::SetupPacket;
 
 pub struct DummyCircuit {
     circuit: Circuit,
+    first_hop: SocketAddr,
     layer: u32,
     sent_cell: RwLock<Option<Cell>>,
 }
@@ -26,8 +27,12 @@ impl DummyCircuit {
         path: &[MixInfo],
     ) -> Result<(Self, PacketWithNextHop<SetupPacket>), Error> {
         let (circuit, setup_pkt) = Circuit::new(epoch_no, path, Vec::new())?;
+        let mut first_hop = circuit.first_hop().clone();
+        // TODO code: don't hardcode +200
+        first_hop.set_port(first_hop.port() + 200);
         let dummy = DummyCircuit {
             circuit,
+            first_hop,
             layer,
             sent_cell: RwLock::default(),
         };
@@ -39,7 +44,7 @@ impl DummyCircuit {
     }
 
     pub fn first_hop(&self) -> &SocketAddr {
-        self.circuit.first_hop()
+        &self.first_hop
     }
 
     pub fn layer(&self) -> u32 {
@@ -73,8 +78,10 @@ impl DummyCircuit {
         }
         *sent_cell_guard = Some(cell.clone());
         // as we started with a dummy, we can ignore encryption errors
-        self.circuit.onion_encrypt(&mut cell).unwrap_or(());
-        Some(PacketWithNextHop::new(cell, *self.circuit.first_hop()))
+        self.circuit
+            .onion_encrypt(cell.round_no(), cell.onion_mut())
+            .unwrap_or(());
+        Some(PacketWithNextHop::new(cell, self.first_hop))
     }
 
     pub fn receive_cell(&self, mut cell: Cell) {
@@ -82,12 +89,14 @@ impl DummyCircuit {
             "Dummy circuit {} received a cell",
             self.circuit.circuit_id()
         );
-        self.circuit.onion_decrypt(&mut cell).unwrap_or(());
+        self.circuit
+            .onion_decrypt(cell.round_no(), cell.onion_mut())
+            .unwrap_or(());
         let mut sent_cell_guard = self.sent_cell.write().expect("Lock poisoned");
         match &*sent_cell_guard {
             Some(c) if *c != cell => {
                 // in last round: bytes 1 to 7 (cmd) should be zero
-                if cell.onion[1..8].iter().any(|b| *b != 0) {
+                if cell.onion()[1..8].iter().any(|b| *b != 0) {
                     warn!("Received cell is not as expected")
                 }
             }

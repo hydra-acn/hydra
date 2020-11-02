@@ -53,6 +53,7 @@ pub trait Scalable {
 }
 
 /// Sender end of the rx channel.
+#[derive(Clone)]
 pub struct RxQueue<I: Scalable + std::fmt::Debug> {
     queues: Vec<crossbeam_channel::Sender<I>>,
 }

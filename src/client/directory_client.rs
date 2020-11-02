@@ -267,4 +267,11 @@ impl MixInfo {
     define_addr_getter!(entry_address, entry_port);
     define_addr_getter!(relay_address, relay_port);
     define_addr_getter!(rendezvous_address, rendezvous_port);
+
+    // TODO code: don't hardcode fast port (relay_port + 200) -> make it a field of the mix info
+    pub fn fast_relay_address(&self) -> Option<SocketAddr> {
+        ip_addr_from_slice(&self.address)
+            .ok()
+            .map(|ip| SocketAddr::new(ip, (self.relay_port + 200) as u16))
+    }
 }

@@ -11,7 +11,7 @@ use std::sync::{Arc, RwLock};
 use tokio::time::{delay_for, Duration};
 use tonic::transport::Channel;
 
-use super::channel_pool::ChannelPool;
+use super::channel_pool::{ChannelPool, MixChannel, RendezvousChannel, TcpChannel};
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::{x25519, x448, KeyExchangeAlgorithm};
 use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
@@ -21,19 +21,16 @@ use crate::tonic_directory::directory_client::DirectoryClient;
 use crate::tonic_directory::{
     DhMessage, EpochInfo, MixInfo, MixStatistics, RegisterRequest, UnregisterRequest,
 };
-use crate::tonic_mix::mix_client::MixClient;
-use crate::tonic_mix::rendezvous_client::RendezvousClient;
 
 type BaseClient = crate::client::directory_client::Client;
 
 type DirectoryChannel = DirectoryClient<Channel>;
-type MixChannel = MixClient<Channel>;
-type RendezvousChannel = RendezvousClient<Channel>;
 
 pub struct Config {
     pub addr: IpAddr,
     pub entry_port: u16,
     pub relay_port: u16,
+    pub fast_port: u16,
     pub rendezvous_port: u16,
     pub directory_certificate: Option<String>,
     pub directory_domain: String,
@@ -43,7 +40,7 @@ pub struct Config {
 
 impl Config {
     pub fn setup_reply_to(&self) -> String {
-        format!("{}:{}", self.addr, self.relay_port)
+        format!("{}:{}", self.addr, self.fast_port)
     }
 }
 
@@ -65,6 +62,8 @@ pub struct Client {
     mix_channels: ChannelPool<MixChannel>,
     /// channel pool for rendezvous connections
     rendezvous_channels: ChannelPool<RendezvousChannel>,
+    /// channels for fast relay with pure TCP
+    relay_channels: ChannelPool<TcpChannel>,
     statistic_msg_queue: RwLock<Vec<MixStatistics>>,
 }
 
@@ -93,7 +92,7 @@ impl Client {
                 config.directory_certificate.clone(),
             ),
             fingerprint: format!("{}:{}", config.addr, config.entry_port),
-            sk: sk,
+            sk,
             pk,
             config,
             auth_key: RwLock::new(None),
@@ -101,6 +100,7 @@ impl Client {
             key_count: AtomicU32::new(0),
             mix_channels: ChannelPool::new(),
             rendezvous_channels: ChannelPool::new(),
+            relay_channels: ChannelPool::new(),
             statistic_msg_queue: RwLock::new(vec![]),
         }
     }
@@ -241,6 +241,7 @@ impl Client {
         if let Some(next_epoch) = self.base_client.next_epoch_info() {
             let mut mix_endpoints = Vec::new();
             let mut rendezvous_endpoints = Vec::new();
+            let mut fast_endpoints = Vec::new();
             for mix in next_epoch.mixes {
                 if let Some(addr) = mix.relay_address() {
                     mix_endpoints.push(addr);
@@ -248,12 +249,17 @@ impl Client {
                 if let Some(addr) = mix.rendezvous_address() {
                     rendezvous_endpoints.push(addr);
                 }
+                if let Some(addr) = mix.fast_relay_address() {
+                    fast_endpoints.push(addr);
+                }
             }
             self.mix_channels.prepare_channels(&mix_endpoints).await;
             self.rendezvous_channels
                 .prepare_channels(&rendezvous_endpoints)
                 .await;
+            self.relay_channels.prepare_channels(&fast_endpoints).await;
         }
+
         //send statistics
         let msg_queue = std::mem::replace(
             &mut *self.statistic_msg_queue.write().expect("Lock poisoned"),
@@ -331,6 +337,13 @@ impl Client {
         self.rendezvous_channels.get_channels(destinations).await
     }
 
+    pub async fn get_relay_channels(
+        &self,
+        destinations: &[SocketAddr],
+    ) -> HashMap<SocketAddr, TcpChannel> {
+        self.relay_channels.get_channels(destinations).await
+    }
+
     pub fn init_mac(&self) -> Result<hmac::Hmac<Sha256>, Error> {
         let mac = Hmac::<Sha256>::new_varkey(
             self.auth_key
@@ -370,6 +383,7 @@ pub mod mocks {
             addr,
             entry_port: 9001,
             relay_port: 9001,
+            fast_port: 9201,
             rendezvous_port: 9101,
             directory_domain: "127.0.0.1".to_string(),
             directory_port: 9000,

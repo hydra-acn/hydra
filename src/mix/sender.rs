@@ -3,22 +3,21 @@ use futures_util::stream;
 use log::*;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;
 
 use crate::crypto::cprng::thread_cprng;
-use crate::derive_grpc_client;
 use crate::epoch::current_time;
 use crate::error::Error;
+use crate::net::cell::Cell;
 use crate::net::PacketWithNextHop;
-use crate::rendezvous::processor::publish_t;
-use crate::tonic_mix::mix_client::MixClient;
-use crate::tonic_mix::rendezvous_client::RendezvousClient;
-use crate::tonic_mix::*;
+use crate::tonic_mix::{SetupPacket, Subscription};
 
 use super::cell_processor::cell_rss_t;
+use super::channel_pool::{MixChannel, RendezvousChannel, TcpChannel};
 use super::directory_client;
 use super::setup_processor::setup_t;
 
@@ -26,13 +25,6 @@ pub type Batch<T> = (Vec<Vec<PacketWithNextHop<T>>>, Option<Duration>);
 pub type SetupBatch = Batch<SetupPacket>;
 pub type SubscribeBatch = Batch<Subscription>;
 pub type CellBatch = Batch<Cell>;
-pub type PublishBatch = Batch<Cell>;
-
-type MixConnection = MixClient<tonic::transport::Channel>;
-derive_grpc_client!(MixConnection);
-
-type RendezvousConnection = RendezvousClient<tonic::transport::Channel>;
-derive_grpc_client!(RendezvousConnection);
 
 macro_rules! send_next_batch {
     ($state:expr, $queue:ident, $batch_type:ident, $channel_getter:ident, $send_fun:ident) => {
@@ -95,8 +87,6 @@ pub struct State {
     setup_tx_queue: setup_t::TxQueue,
     subscribe_tx_queue: setup_t::AltTxQueue,
     relay_tx_queue: cell_rss_t::TxQueue,
-    publish_tx_queue: cell_rss_t::AltTxQueue,
-    inject_tx_queue: publish_t::TxQueue,
 }
 
 impl State {
@@ -105,16 +95,12 @@ impl State {
         setup_tx_queue: setup_t::TxQueue,
         subscribe_tx_queue: setup_t::AltTxQueue,
         relay_tx_queue: cell_rss_t::TxQueue,
-        publish_tx_queue: cell_rss_t::AltTxQueue,
-        inject_tx_queue: publish_t::TxQueue,
     ) -> Self {
         State {
             dir_client,
             setup_tx_queue,
             subscribe_tx_queue,
             relay_tx_queue,
-            publish_tx_queue,
-            inject_tx_queue,
         }
     }
 }
@@ -137,7 +123,7 @@ fn sort_by_destination<T>(batch: Batch<T>) -> (HashMap<SocketAddr, Vec<T>>, Vec<
 
 async fn send_setup_packets(
     dir_client: Arc<directory_client::Client>,
-    mut c: MixConnection,
+    mut c: MixChannel,
     pkts: Vec<SetupPacket>,
     deadline: Option<Duration>,
 ) {
@@ -161,7 +147,7 @@ async fn send_setup_packets(
 
 async fn send_subscriptions(
     _dir_client: Arc<directory_client::Client>,
-    mut c: RendezvousConnection,
+    mut c: RendezvousChannel,
     pkts: Vec<Subscription>,
     deadline: Option<Duration>,
 ) {
@@ -175,44 +161,22 @@ async fn send_subscriptions(
 
 async fn relay_cells(
     _dir_client: Arc<directory_client::Client>,
-    mut c: MixConnection,
+    c: TcpChannel,
     cells: Vec<Cell>,
     deadline: Option<Duration>,
 ) {
-    let shuffle_it = ShuffleIterator::new(cells, deadline);
-    let req = tonic::Request::new(stream::iter(shuffle_it));
-    c.relay(req)
-        .await
-        .map(|_| ())
-        .unwrap_or_else(|e| warn!("Relaying cells failed: {}", e));
-}
-
-async fn publish_cells(
-    _dir_client: Arc<directory_client::Client>,
-    mut c: RendezvousConnection,
-    cells: Vec<Cell>,
-    deadline: Option<Duration>,
-) {
-    let shuffle_it = ShuffleIterator::new(cells, deadline);
-    let req = tonic::Request::new(stream::iter(shuffle_it));
-    c.publish(req)
-        .await
-        .map(|_| ())
-        .unwrap_or_else(|e| warn!("Publishing cells failed: {}", e));
-}
-
-async fn inject_cells(
-    _dir_client: Arc<directory_client::Client>,
-    mut c: MixConnection,
-    cells: Vec<Cell>,
-    deadline: Option<Duration>,
-) {
-    let shuffle_it = ShuffleIterator::new(cells, deadline);
-    let req = tonic::Request::new(stream::iter(shuffle_it));
-    c.inject(req)
-        .await
-        .map(|_| ())
-        .unwrap_or_else(|e| warn!("Relaying cells failed: {}", e));
+    tokio::task::spawn_blocking(move || {
+        let shuffle_it = ShuffleIterator::new(cells, deadline);
+        let mut stream = c.write().expect("Lock poisoned");
+        for cell in shuffle_it {
+            stream.write_all(cell.buf()).unwrap_or_else(|e| {
+                warn!("Writing to TCP stream failed: {}", e);
+                ()
+            });
+        }
+    })
+    .await
+    .expect("Spawn failed");
 }
 
 define_send_task!(
@@ -235,40 +199,16 @@ define_send_task!(
     relay_task,
     relay_tx_queue,
     CellBatch,
-    get_mix_channels,
+    get_relay_channels,
     relay_cells
-);
-
-define_send_task!(
-    publish_task,
-    publish_tx_queue,
-    CellBatch,
-    get_rendezvous_channels,
-    publish_cells
-);
-
-define_send_task!(
-    inject_task,
-    inject_tx_queue,
-    CellBatch,
-    get_mix_channels,
-    inject_cells
 );
 
 pub async fn run(state: Arc<State>) {
     let setup_handle = tokio::spawn(setup_task(state.clone()));
     let subscribe_handle = tokio::spawn(subscribe_task(state.clone()));
     let relay_handle = tokio::spawn(relay_task(state.clone()));
-    let publish_handle = tokio::spawn(publish_task(state.clone()));
-    let inject_handle = tokio::spawn(inject_task(state.clone()));
 
-    match tokio::try_join!(
-        setup_handle,
-        subscribe_handle,
-        relay_handle,
-        publish_handle,
-        inject_handle
-    ) {
+    match tokio::try_join!(setup_handle, subscribe_handle, relay_handle,) {
         Ok(_) => (),
         Err(e) => error!("Something panicked: {}", e),
     }

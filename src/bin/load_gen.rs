@@ -16,14 +16,14 @@ use tokio::time::{delay_for, Duration};
 use hydra::client::directory_client;
 use hydra::defs::{CircuitId, RoundNo};
 use hydra::epoch::{current_time, current_time_in_secs, EpochNo};
-use hydra::grpc::type_extensions::CellCmd;
+use hydra::mix::channel_pool::{ChannelPool, MixChannel};
+use hydra::net::cell::CellCmd;
 use hydra::net::PacketWithNextHop;
 use hydra::tonic_directory::{EpochInfo, MixInfo};
 use hydra::tonic_mix::{Cell, LatePollRequest, SetupPacket};
 
 type DirClient = hydra::client::directory_client::Client;
-type MixChannel = hydra::tonic_mix::mix_client::MixClient<tonic::transport::Channel>;
-type MixChannelPool = hydra::mix::channel_pool::ChannelPool<MixChannel>;
+type MixChannelPool = ChannelPool<MixChannel>;
 type ClientCircuit = hydra::client::circuit::Circuit;
 
 #[tokio::main]
@@ -195,7 +195,12 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
         for t in tasks.iter_mut() {
             t.await.expect("Task failed");
         }
+        let mut cum_lost_cells = 0;
+        for circ in circuits.iter() {
+            cum_lost_cells += circ.lost_cells();
+        }
         info!(".. Send/receiving done");
+        info!(".. Cumulative total cell loss counter: {}", cum_lost_cells);
         round_start += round_interval;
     }
 
@@ -337,7 +342,7 @@ impl Circuit {
         let plain_cell = self.create_plaintext_cell(round_no);
         let mut cell = plain_cell.clone();
         self.circuit
-            .onion_encrypt(&mut cell)
+            .onion_encrypt(cell.round_no, &mut cell.onion)
             .expect("Onion encryption failed");
         let mut channel = channels
             .get_channel(&self.entry_addr)
@@ -356,23 +361,23 @@ impl Circuit {
     pub fn check_received(&self, cells: &mut [Cell]) {
         if let Some(expected) = &*self.expected_cell.read().unwrap() {
             if cells.len() > 1 {
-                warn!("{:?} Received {} cells instead of 1", self, cells.len());
+                debug!("{:?} Received {} cells instead of 1", self, cells.len());
             }
             if let Some(cell) = cells.last_mut() {
                 self.circuit
-                    .onion_decrypt(cell)
+                    .onion_decrypt(cell.round_no, &mut cell.onion)
                     .expect("Onion decryption failed");
                 if expected.onion != cell.onion {
-                    warn!("{:?} Received cell is not as expected", self);
+                    debug!("{:?} Received cell is not as expected", self);
                     self.lost_cells.fetch_add(1, Ordering::Relaxed);
                 }
             } else {
-                warn!("{:?} Did not receive a cell back", self);
+                debug!("{:?} Did not receive a cell back", self);
                 self.lost_cells.fetch_add(1, Ordering::Relaxed);
             }
         } else {
             if !cells.is_empty() {
-                warn!("{:?} Received {} cells instead of 0", self, cells.len());
+                debug!("{:?} Received {} cells instead of 0", self, cells.len());
             }
         }
     }
@@ -393,20 +398,20 @@ impl Circuit {
             .cells;
 
         if cells.is_empty() {
-            warn!("{:?} Late polled nothing", self);
+            debug!("{:?} Late polled nothing", self);
             self.lost_cells.fetch_add(1, Ordering::Relaxed);
             return;
         }
         if cells.len() > 1 {
-            warn!("{:?} Late polled {} cells instead of 1", self, cells.len());
+            debug!("{:?} Late polled {} cells instead of 1", self, cells.len());
         }
         let nack = cells.last_mut().expect("Checked before");
         self.circuit
-            .onion_decrypt(nack)
+            .onion_decrypt(nack.round_no, &mut nack.onion)
             .expect("Onion decryption failed");
         for b in &nack.onion[1..8] {
             if *b != 0 {
-                warn!("{:?} Nack is broken", self);
+                debug!("{:?} Nack is broken", self);
                 self.lost_cells.fetch_add(1, Ordering::Relaxed);
                 return;
             }

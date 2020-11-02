@@ -1,33 +1,5 @@
 //! Macros (and some other helpers) to facilitate using `tonic` gRPC
-use tonic::{async_trait, Code, Status};
-
-/// The missing (?) trait for all tonic clients
-#[async_trait]
-pub trait Client: Sized {
-    /// Create a new (default) channel and use it for the client straight away.
-    // TODO make dst a generic type, see tonics connect
-    async fn connect(dst: String) -> Result<Self, tonic::transport::Error>;
-
-    /// Use an existing channel for the client.
-    fn from_channel(c: tonic::transport::Channel) -> Self;
-}
-
-#[macro_export]
-/// derive implementations of the `Client` trait
-macro_rules! derive_grpc_client {
-    ($type:ident) => {
-        #[tonic::async_trait]
-        impl crate::grpc::macros::Client for $type {
-            async fn connect(dst: String) -> Result<Self, tonic::transport::Error> {
-                $type::connect(dst).await
-            }
-
-            fn from_channel(c: tonic::transport::Channel) -> Self {
-                $type::new(c)
-            }
-        }
-    };
-}
+use tonic::{Code, Status};
 
 #[macro_export]
 /// given the identifiers of the service type, its state type and the server type (from tonic),

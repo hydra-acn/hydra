@@ -1,16 +1,14 @@
 //! Main loop for processing epochs
 use crossbeam_channel as xbeam;
 use log::*;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::thread::sleep;
 use tokio::time::Duration;
 
-use crate::defs::RoundNo;
+use crate::defs::{RoundNo, INJECT_ROUND_NO};
 use crate::epoch::{current_time, EpochInfo, EpochNo};
-use crate::net::PacketWithNextHop;
-use crate::rendezvous::processor::{process_publish, process_subscribe, publish_t, subscribe_t};
+use crate::rendezvous::processor::{process_publish, process_subscribe, subscribe_t};
 
 use super::cell_processor::{cell_rss_t, process_cell};
 use super::circuit::{CellDirection, NextCellStep};
@@ -29,7 +27,6 @@ pub struct Worker {
     setup_processor: setup_t::Processor,
     subscribe_processor: subscribe_t::Processor,
     cell_processor: cell_rss_t::Processor,
-    publish_processor: publish_t::Processor,
     setup_state: EpochSetupState,
     state: EpochState,
     sync_tx: xbeam::Sender<SyncBeat>,
@@ -43,7 +40,6 @@ impl Worker {
         setup_processor: setup_t::Processor,
         subscribe_processor: subscribe_t::Processor,
         cell_processor: cell_rss_t::Processor,
-        publish_processor: publish_t::Processor,
         sync_tx: xbeam::Sender<SyncBeat>,
     ) -> Self {
         Worker {
@@ -53,7 +49,6 @@ impl Worker {
             setup_processor,
             subscribe_processor,
             cell_processor,
-            publish_processor,
             setup_state: EpochSetupState::new(0),
             state: EpochState::default(),
             sync_tx,
@@ -165,6 +160,7 @@ impl Worker {
             let k = communication_epoch.number_of_rounds;
             let setup_layer = (l + 1) * round_no / k;
             // only send when it's the last time we process this layer
+            // and only process before
             let do_send = ((l + 1) * (round_no + 1)) % k == 0;
             let deadline = next_round_start - subround_interval - Duration::from_secs(2);
             if setup_layer < setup_epoch.path_length {
@@ -184,16 +180,17 @@ impl Worker {
                         let f = |pkt| {
                             process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone())
                         };
-                        self.setup_processor.process_till(f, deadline);
-                        if do_send && setup_layer < setup_epoch.path_length - 1 {
+                        if do_send == false {
+                            self.setup_processor.process_till(f, deadline);
+                        } else if setup_layer < setup_epoch.path_length - 1 {
                             // one additional dummy circuit for all but the last layer
                             let dummy_extend = create_dummy_circuit(self.setup_state.dummy_circuits().clone(), &self.dir_client, setup_epoch.epoch_no, setup_layer, setup_epoch.path_length - setup_layer - 1);
                             self.setup_processor.pad(vec![dummy_extend]);
                             // send setup packets
-                            self.setup_processor.send(None);
-                        } else if do_send {
+                            self.setup_processor.send(Some(deadline));
+                        } else {
                             // send subscriptions
-                            self.setup_processor.alt_send(None);
+                            self.setup_processor.alt_send(Some(deadline));
                         }
                     },
                     None => warn!("We could setup layer {} of epoch {} now, but we don't have the matching ephemeral key", setup_layer, setup_epoch.epoch_no)
@@ -235,11 +232,13 @@ impl Worker {
         info!("Processing round {} of epoch {}", round_no, epoch.epoch_no);
 
         // mix view: upstream
-        for layer in 0..epoch.path_length {
+        let max_layer = epoch.path_length - 1;
+        for layer in 0..=max_layer {
             self.process_subround(
                 round_no,
+                round_no,
                 layer,
-                epoch.path_length - 1,
+                max_layer,
                 CellDirection::Upstream,
                 &send_time,
                 &subround_interval,
@@ -251,17 +250,22 @@ impl Worker {
         let sub_map = self.state.subscription_map();
         info!(".. process publish of round {}", round_no);
         let f = |cell| process_publish(cell, sub_map.clone());
-        self.publish_processor.process_till(f, send_time);
+        self.cell_processor.process_till(f, send_time);
         send_time += subround_interval;
         info!(".. send injections of round {}", round_no);
-        self.publish_processor.send(Some(send_time)); // injection
+        self.cell_processor.send(Some(send_time)); // injection
 
         // mix view: downstream
-        for layer in (0..epoch.path_length).rev() {
+        for layer in (0..=max_layer).rev() {
+            let incomming_round_no = match layer == max_layer {
+                true => INJECT_ROUND_NO,
+                false => round_no,
+            };
             self.process_subround(
                 round_no,
+                incomming_round_no,
                 layer,
-                epoch.path_length - 1,
+                max_layer,
                 CellDirection::Downstream,
                 &send_time,
                 &subround_interval,
@@ -280,6 +284,7 @@ impl Worker {
     fn process_subround(
         &mut self,
         round_no: RoundNo,
+        incomming_round_no: RoundNo,
         layer: u32,
         max_layer: u32,
         direction: CellDirection,
@@ -297,7 +302,9 @@ impl Worker {
             process_cell(
                 cell,
                 round_no,
+                incomming_round_no,
                 layer,
+                max_layer,
                 direction,
                 circuit_id_map,
                 circuit_map,
@@ -308,7 +315,6 @@ impl Worker {
         self.cell_processor.process_till(f, *send_time);
 
         // insert dummy cells if necessary
-        let dummy_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1337);
         for (_, circuit) in self.state.circuits().iter() {
             if layer != circuit.layer() {
                 // no out-of-sync dummies
@@ -317,10 +323,8 @@ impl Worker {
             match circuit.pad(round_no, direction) {
                 Some(step) => match step {
                     NextCellStep::Relay(c) => self.cell_processor.pad(vec![c]),
-                    NextCellStep::Rendezvous(c) => self.cell_processor.alt_pad(vec![c]),
-                    NextCellStep::Deliver(c) => self
-                        .cell_processor
-                        .pad(vec![PacketWithNextHop::new(c, dummy_addr)]),
+                    NextCellStep::Rendezvous(c) => self.cell_processor.pad(vec![c]),
+                    NextCellStep::Deliver(c) => self.cell_processor.alt_pad(vec![c]),
                     NextCellStep::Wait(_) => error!("Why should a dummy be out of sync?"),
                     NextCellStep::Drop => error!("Why should a dummy be dropped right away?"),
                 },
@@ -342,20 +346,16 @@ impl Worker {
             }
         }
 
-        // relay, publish or deliver
+        // relay or deliver
         info!(
             ".. sending sub-round of round {}, layer {}, direction {:?}",
             round_no, layer, direction,
         );
         let send_deadline = Some(*send_time + *subround_interval);
         match direction {
-            CellDirection::Upstream if layer == max_layer => {
-                // publish
-                self.cell_processor.alt_send(send_deadline);
-            }
             CellDirection::Downstream if layer == 0 => {
                 // deliver
-                let out = self.cell_processor.output();
+                let out = self.cell_processor.alt_output();
                 self.grpc_state.deliver(out);
             }
             // default: relay

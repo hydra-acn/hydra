@@ -144,7 +144,7 @@ fn create_subscriptions(
 ) -> setup_t::Result {
     let mut map: HashMap<SocketAddr, Vec<Token>> = HashMap::new();
     for token in tokens.into_iter() {
-        let rendezvous_addr = match rendezvous_map.rendezvous_address(&token) {
+        let rendezvous_addr = match rendezvous_map.rendezvous_address(&token, true) {
             Some(addr) => addr,
             None => {
                 warn!("Don't know rendezvous node for token {}", token);
@@ -163,7 +163,7 @@ fn create_subscriptions(
     for (rendezvous_addr, tokens) in map.into_iter() {
         let req = Subscription {
             addr: ip_addr_to_vec(&dir_client.config().addr),
-            port: dir_client.config().relay_port as u32,
+            port: dir_client.config().fast_port as u32,
             circuit_id,
             tokens,
         };

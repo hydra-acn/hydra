@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
 
 use crate::grpc::type_extensions::SetupPacketWithPrev;
-use crate::net::PacketWithNextHop;
+use crate::net::cell::Cell as FlatCell;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
 use crate::tonic_mix::*;
 use crate::{define_grpc_service, rethrow_as_invalid, unwrap_or_throw_invalid};
@@ -37,10 +37,9 @@ impl State {
         }
     }
 
-    pub fn deliver(&self, cells: Vec<Vec<PacketWithNextHop<Cell>>>) {
+    pub fn deliver(&self, cells: Vec<Vec<FlatCell>>) {
         for vec in cells.into_iter() {
-            for pkt in vec.into_iter() {
-                let cell = pkt.into_inner();
+            for cell in vec.into_iter() {
                 self.storage.insert_cell(cell);
             }
         }
@@ -59,7 +58,7 @@ impl State {
                     continue;
                 }
             };
-            self.cell_rx_queue.enqueue(cell);
+            self.cell_rx_queue.enqueue(cell.into());
         }
         Ok(())
     }
@@ -127,19 +126,23 @@ impl Mix for Service {
     async fn send_and_receive(&self, req: Request<Cell>) -> Result<Response<CellVector>, Status> {
         // TODO security: circuit ids should be encrypted to avoid easy DoS (query for other users)
         let cell = req.into_inner();
-        // first collect all missed cells
-        let mut cell_vec = unwrap_or_throw_invalid!(
-            self.storage.remove_cells(&cell.circuit_id),
-            "Unknown circuit"
-        );
-        if cell_vec.is_empty() && cell.round_no > 0 {
-            cell_vec.push(Cell::dummy(cell.circuit_id, cell.round_no - 1));
+        let cid = cell.circuit_id;
+        let r = cell.round_no;
+
+        // first, enqueue new cell
+        self.cell_rx_queue.enqueue(cell.into());
+
+        // collect all missed cells
+        let mut cell_vec =
+            unwrap_or_throw_invalid!(self.storage.remove_cells(&cid), "Unknown circuit");
+        if cell_vec.is_empty() && r > 0 {
+            cell_vec.push(FlatCell::dummy(cid, r - 1));
         }
 
-        // handle new cell
-        self.cell_rx_queue.enqueue(cell);
+        // convert missed cells to grpc format
+        let grpc_cells = cell_vec.into_iter().map(|c| c.into()).collect();
 
-        Ok(Response::new(CellVector { cells: cell_vec }))
+        Ok(Response::new(CellVector { cells: grpc_cells }))
     }
 
     async fn late_poll(
@@ -147,10 +150,14 @@ impl Mix for Service {
         req: Request<LatePollRequest>,
     ) -> Result<Response<CellVector>, Status> {
         let ids = req.into_inner().circuit_ids;
-        let mut cell_vec = CellVector { cells: Vec::new() };
+        let mut cell_vec = CellVector::default();
         for circuit_id in ids {
             match self.storage.remove_cells(&circuit_id) {
-                Some(mut vec) => cell_vec.cells.append(&mut vec),
+                Some(vec) => {
+                    for c in vec.into_iter() {
+                        cell_vec.cells.push(c.into());
+                    }
+                }
                 None => (),
             }
         }

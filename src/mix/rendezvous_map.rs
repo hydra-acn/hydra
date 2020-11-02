@@ -24,10 +24,21 @@ impl RendezvousMap {
         RendezvousMap { map }
     }
 
-    pub fn rendezvous_address(&self, token: &Token) -> Option<SocketAddr> {
+    pub fn rendezvous_address(&self, token: &Token, subscribe: bool) -> Option<SocketAddr> {
         match self.map.len() {
             0 => None,
-            n => self.map.get((token % n as u64) as usize).cloned(),
+            n => self
+                .map
+                .get((token % n as u64) as usize)
+                .map(|a| match subscribe {
+                    true => a.clone(),
+                    false => {
+                        let mut with_fast_port = a.clone();
+                        // TODO code don't hardcode +100
+                        with_fast_port.set_port(a.port() + 100);
+                        with_fast_port
+                    }
+                }),
         }
     }
 

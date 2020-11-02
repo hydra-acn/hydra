@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use hydra::crypto::KeyExchangeAlgorithm;
 use hydra::defs::sigint_handler;
+use hydra::mix::cell_acceptor;
 use hydra::mix::cell_processor::cell_rss_t;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
@@ -14,7 +15,7 @@ use hydra::mix::setup_processor::setup_t;
 use hydra::mix::storage::{self, Storage};
 use hydra::mix::{self, sender, simple_relay};
 use hydra::rendezvous;
-use hydra::rendezvous::processor::{publish_t, subscribe_t};
+use hydra::rendezvous::processor::subscribe_t;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         entry_port: mix_addr.port(),
         relay_port: mix_addr.port(),
         rendezvous_port: mix_addr.port() + 100,
+        fast_port: mix_addr.port() + 200,
         directory_certificate,
         directory_domain,
         directory_port,
@@ -65,6 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let rendezvous_addr: std::net::SocketAddr =
         format!("{}:{}", dir_cfg.addr, dir_cfg.rendezvous_port).parse()?;
+    let fast_addr: std::net::SocketAddr =
+        format!("{}:{}", dir_cfg.addr, dir_cfg.fast_port).parse()?;
 
     let dir_client = Arc::new(Client::new(dir_cfg));
     let dir_client_handle = tokio::spawn(directory_client::run(dir_client.clone()));
@@ -91,13 +95,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // mix view pipelines
         let (setup_rx_queue, setup_processor, setup_tx_queue, subscribe_tx_queue): setup_t::Pipeline =
             new_pipeline(no_of_worker_threads);
-        let (cell_rx_queue, cell_processor, relay_tx_queue, publish_tx_queue): cell_rss_t::Pipeline =
+        let (cell_rx_queue, cell_processor, relay_tx_queue, _): cell_rss_t::Pipeline =
             new_pipeline(no_of_worker_threads);
 
-        // rendezvous view pipelines
+        // subscribe pipeline
         let (subscribe_rx_queue, subscribe_processor, _, _): subscribe_t::Pipeline =
-            new_pipeline(no_of_worker_threads);
-        let (publish_rx_queue, publish_processor, inject_tx_queue, _): publish_t::Pipeline =
             new_pipeline(no_of_worker_threads);
 
         // sync channel
@@ -111,20 +113,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mix_grpc_state = Arc::new(mix::grpc::State::new(
             dir_client.clone(),
             setup_rx_queue,
-            cell_rx_queue,
+            cell_rx_queue.clone(),
             storage,
         ));
         let (mix_grpc_handle, _) =
             mix::grpc::spawn_service(mix_grpc_state.clone(), mix_addr, None).await?;
 
         // setup rendezvous gRPC
-        let rendezvous_grpc_state = Arc::new(rendezvous::grpc::State::new(
-            subscribe_rx_queue,
-            publish_rx_queue,
-        ));
+        let rendezvous_grpc_state = Arc::new(rendezvous::grpc::State::new(subscribe_rx_queue));
         let (rendezvous_grpc_handle, _) =
             rendezvous::grpc::spawn_service(rendezvous_grpc_state.clone(), rendezvous_addr, None)
                 .await?;
+
+        // setup cell acceptor
+        let acceptor = Arc::new(cell_acceptor::State::new(cell_rx_queue));
+        let acceptor_handle =
+            tokio::task::spawn_blocking(move || cell_acceptor::accept(acceptor, fast_addr));
 
         // setup sender
         let sender = Arc::new(sender::State::new(
@@ -132,8 +136,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup_tx_queue,
             subscribe_tx_queue,
             relay_tx_queue,
-            publish_tx_queue,
-            inject_tx_queue,
         ));
         let sender_handle = tokio::spawn(sender::run(sender));
 
@@ -145,7 +147,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup_processor,
             subscribe_processor,
             cell_processor,
-            publish_processor,
             sync_tx,
         );
         let main_handle = tokio::task::spawn_blocking(move || worker.run());
@@ -156,6 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             storage_handle,
             mix_grpc_handle,
             rendezvous_grpc_handle,
+            acceptor_handle,
             sender_handle,
             main_handle
         ) {
