@@ -42,7 +42,7 @@ pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> cell_rss_t::Res
             // seems like we are behind in time -> requeue for inject
             return cell_rss_t::Result::Requeue(cell);
         } else {
-            warn!(
+            debug!(
                 "Dropping cell with wrong round number. Expected {}, got {}.",
                 PUBLISH_ROUND_NO,
                 cell.round_no()
@@ -53,6 +53,10 @@ pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> cell_rss_t::Res
     }
 
     let subscribers = map.get_subscribers(&cell.token());
+    if subscribers.is_empty() {
+        debug!("No subscribers!");
+        return ProcessResult::Drop;
+    }
     let mut out = Vec::new();
     for sub in subscribers {
         if cell.circuit_id() == sub.circuit_id() {

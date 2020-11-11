@@ -40,7 +40,7 @@ pub fn process_cell(
             }
         }
 
-        warn!(
+        debug!(
             "Dropping cell with wrong round number. Expected {}, got {}.",
             incomming_round_no,
             cell.round_no()

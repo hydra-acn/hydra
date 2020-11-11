@@ -225,7 +225,7 @@ impl Circuit {
                 match direction {
                     CellDirection::Upstream => return NextCellStep::Wait(cell), // too early
                     CellDirection::Downstream => {
-                        warn!("Dropping cell that's too late");
+                        debug!("Dropping cell that's too late");
                         return NextCellStep::Drop;
                     }
                 }
@@ -233,7 +233,7 @@ impl Circuit {
             Ordering::Greater => {
                 match direction {
                     CellDirection::Upstream => {
-                        warn!("Dropping cell that's too late");
+                        debug!("Dropping cell that's too late");
                         return NextCellStep::Drop;
                     }
                     CellDirection::Downstream => return NextCellStep::Wait(cell), // too early
@@ -383,8 +383,8 @@ impl Circuit {
             CellDirection::Upstream => {
                 // no upstream injection -> always dummy
                 debug!(
-                    "Creating dummy cell for circuit with upstream id {}",
-                    self.upstream_id
+                    "Creating upstream dummy cell in layer {}",
+                    self.layer
                 );
                 let mut dummy = Cell::dummy(circuit_id, round_no);
                 if self.is_exit() {
@@ -403,8 +403,8 @@ impl Circuit {
                     Some(c) => (c, true),
                     None => {
                         debug!(
-                            "Creating dummy cell for circuit with downstream id {}",
-                            self.downstream_id
+                            "Creating downstream dummy cell in layer {}",
+                            self.layer
                         );
                         (Cell::dummy(circuit_id, round_no), false)
                     }
