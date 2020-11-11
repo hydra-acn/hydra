@@ -1,7 +1,9 @@
 use log::*;
+use std::cmp::Ordering;
 use std::sync::{Arc, RwLock};
 
 use crate::defs::{INJECT_ROUND_NO, PUBLISH_ROUND_NO};
+use crate::epoch::EpochNo;
 use crate::mix::cell_processor::cell_rss_t;
 use crate::mix::rss_pipeline::ProcessResult;
 use crate::net::cell::{Cell, CellCmd};
@@ -13,12 +15,25 @@ use super::subscription_map::SubscriptionMap;
 crate::define_pipeline_types!(subscribe_t, Subscription, (), ());
 
 pub fn process_subscribe(
+    epoch_no: EpochNo,
     req: Subscription,
     map: Arc<RwLock<SubscriptionMap>>,
 ) -> subscribe_t::Result {
-    let mut map = map.write().expect("Lock poisoned");
-    map.subscribe(&req);
-    ProcessResult::Drop
+    match epoch_no.cmp(&req.epoch_no) {
+        Ordering::Less => {
+            warn!(
+                "Dropping late subscription; expected epoch {}, got {}",
+                epoch_no, req.epoch_no
+            );
+            ProcessResult::Drop
+        }
+        Ordering::Greater => ProcessResult::Requeue(req),
+        Ordering::Equal => {
+            let mut map = map.write().expect("Lock poisoned");
+            map.subscribe(req);
+            ProcessResult::Drop
+        }
+    }
 }
 
 pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> cell_rss_t::Result {
@@ -60,7 +75,7 @@ mod tests {
     use super::*;
     use crate::epoch::current_time;
     use crate::mix::rss_pipeline::new_pipeline;
-    use crate::tonic_mix::Subscription;
+    use crate::tonic_mix::{CircuitSubscription, Subscription};
 
     use std::net::SocketAddr;
     use std::time::Duration;
@@ -68,41 +83,39 @@ mod tests {
     #[test]
     fn test_pubsub() {
         let map = Arc::new(RwLock::new(SubscriptionMap::default()));
-        let (sub_rx, mut sub_processor, _, _): subscribe_t::Pipeline = new_pipeline(2);
+        let (sub_rx, mut sub_processor, _, _): subscribe_t::Pipeline = new_pipeline(1);
         let (pub_rx, mut pub_processor, inject_tx, _): cell_rss_t::Pipeline = new_pipeline(2);
-        let sub_1 = Subscription {
-            addr: vec![112, 13, 12, 1],
-            port: 9001,
+
+        let circuit_1 = CircuitSubscription {
             circuit_id: 1337,
             tokens: vec![1, 2, 3],
         };
-        let sub_2 = Subscription {
-            addr: vec![112, 13, 12, 1],
-            port: 9001,
+        let circuit_2 = CircuitSubscription {
             circuit_id: 99,
             tokens: vec![4, 5, 6],
         };
-        let sub_3 = Subscription {
-            addr: vec![112, 13, 13, 1],
-            port: 9001,
+        let circuit_3 = CircuitSubscription {
             circuit_id: 12,
             tokens: vec![1, 4, 7],
         };
 
-        // sequential processing for deterministic order of subscriptions
+        let sub_1 = Subscription {
+            epoch_no: 1337,
+            addr: vec![112, 13, 12, 1],
+            port: 9001,
+            circuits: vec![circuit_1, circuit_2],
+        };
+        let sub_2 = Subscription {
+            epoch_no: 1337,
+            addr: vec![112, 13, 13, 1],
+            port: 9001,
+            circuits: vec![circuit_3],
+        };
+
         sub_rx.enqueue(sub_1);
-        sub_processor.process_till(
-            |req| process_subscribe(req, map.clone()),
-            current_time() + Duration::from_millis(50),
-        );
         sub_rx.enqueue(sub_2);
         sub_processor.process_till(
-            |req| process_subscribe(req, map.clone()),
-            current_time() + Duration::from_millis(50),
-        );
-        sub_rx.enqueue(sub_3);
-        sub_processor.process_till(
-            |req| process_subscribe(req, map.clone()),
+            |req| process_subscribe(1337, req, map.clone()),
             current_time() + Duration::from_millis(50),
         );
 

@@ -74,11 +74,6 @@ impl Circuit {
         layer: u32,
         max_round_no: RoundNo,
     ) -> Result<(Self, NextSetupStep), Error> {
-        if rendezvous_map.is_empty() {
-            return Err(Error::InputError(
-                "We need rendezvous nodes to work correctly".to_string(),
-            ));
-        }
         let downstream_hop = pkt.previous_hop();
         if downstream_hop.is_none() && layer > 0 {
             return Err(Error::InputError(

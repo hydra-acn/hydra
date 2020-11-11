@@ -140,8 +140,9 @@ impl Subscription {
 }
 
 impl Scalable for Subscription {
-    fn thread_id(&self, size: usize) -> usize {
-        self.circuit_id as usize % size
+    fn thread_id(&self, _size: usize) -> usize {
+        // we cannot utilize parallelism for subscriptions
+        0
     }
 }
 

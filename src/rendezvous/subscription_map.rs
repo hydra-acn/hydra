@@ -24,7 +24,7 @@ impl Endpoint {
     }
 }
 
-type MapType = std::collections::BTreeMap<Token, Vec<Endpoint>>;
+type MapType = std::collections::HashMap<Token, Vec<Endpoint>>;
 
 /// Mapping tokens to subscribers
 #[derive(Clone, Default)]
@@ -39,8 +39,8 @@ impl SubscriptionMap {
         }
     }
 
-    pub fn subscribe(&mut self, to: &Subscription) {
-        let addr = match to.socket_addr() {
+    pub fn subscribe(&mut self, sub: Subscription) {
+        let addr = match sub.socket_addr() {
             Some(a) => a,
             None => {
                 warn!("Subscription validity should have been checked by gRPC before");
@@ -48,15 +48,18 @@ impl SubscriptionMap {
             }
         };
 
-        let endpoint = Endpoint {
-            addr,
-            circuit_id: to.circuit_id,
-        };
-        for token in to.tokens.iter() {
-            match self.map.get_mut(&token) {
-                Some(vec) => vec.push(endpoint.clone()),
-                None => {
-                    self.map.insert(*token, vec![endpoint.clone()]);
+        for circuit in sub.circuits.into_iter() {
+            let endpoint = Endpoint {
+                addr,
+                circuit_id: circuit.circuit_id,
+            };
+
+            for token in circuit.tokens.into_iter() {
+                match self.map.get_mut(&token) {
+                    Some(vec) => vec.push(endpoint.clone()),
+                    None => {
+                        self.map.insert(token, vec![endpoint.clone()]);
+                    }
                 }
             }
         }

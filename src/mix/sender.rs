@@ -149,14 +149,20 @@ async fn send_subscriptions(
     _dir_client: Arc<directory_client::Client>,
     mut c: RendezvousChannel,
     pkts: Vec<Subscription>,
-    deadline: Option<Duration>,
+    _deadline: Option<Duration>,
 ) {
-    let shuffle_it = ShuffleIterator::new(pkts, deadline);
-    let req = tonic::Request::new(stream::iter(shuffle_it));
-    c.subscribe(req)
-        .await
-        .map(|_| ())
-        .unwrap_or_else(|e| warn!("Subscription failed: {}", e));
+    if pkts.len() > 1 {
+        warn!("Expected one subscription to each rendezvous node only");
+    }
+
+    for sub in pkts.into_iter() {
+        info!("Sending subscriptions for {} circuits", sub.circuits.len());
+        let req = tonic::Request::new(sub);
+        c.subscribe(req)
+            .await
+            .map(|_| ())
+            .unwrap_or_else(|e| warn!("Subscription failed: {}", e));
+    }
 }
 
 async fn relay_cells(

@@ -1,22 +1,22 @@
 use log::*;
 use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use crate::crypto::key::Key;
 use crate::defs::{CircuitId, Token};
 use crate::epoch::EpochNo;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
-use crate::net::{ip_addr_to_vec, PacketWithNextHop};
+use crate::net::PacketWithNextHop;
 use crate::tonic_directory::EpochInfo;
-use crate::tonic_mix::{SetupPacket, Subscription};
+use crate::tonic_mix::{CircuitSubscription, SetupPacket, Subscription};
 
 use super::circuit::{Circuit, NextSetupStep};
 use super::directory_client;
 use super::dummy_circuit::DummyCircuit;
 use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap, DupFilter};
 use super::rendezvous_map::RendezvousMap;
+
+pub type SubCollector = Vec<Subscription>;
 
 crate::define_pipeline_types!(
     setup_t,
@@ -38,6 +38,7 @@ pub fn process_setup_pkt(
     circuit_map: Arc<RwLock<CircuitMap>>,
     dummy_circuit_map: Arc<RwLock<DummyCircuitMap>>,
     bloom_bitmap: Arc<RwLock<DupFilter>>,
+    sub_collector: Arc<RwLock<SubCollector>>,
 ) -> setup_t::Result {
     let current_ttl = epoch.path_length - layer - 1;
     let pkt_ttl = pkt.ttl().expect("Expected to reject this in gRPC!?");
@@ -111,7 +112,8 @@ pub fn process_setup_pkt(
             match next_hop_info {
                 NextSetupStep::Extend(extend) => setup_t::Result::Out(extend),
                 NextSetupStep::Rendezvous(tokens) => {
-                    create_subscriptions(tokens, &*dir_client, upstream_id, &rendezvous_map)
+                    collect_subscriptions(tokens, upstream_id, &rendezvous_map, &sub_collector);
+                    setup_t::Result::Drop
                 }
             }
         }
@@ -136,40 +138,33 @@ pub fn process_setup_pkt(
     }
 }
 
-fn create_subscriptions(
+fn collect_subscriptions(
     tokens: Vec<Token>,
-    dir_client: &directory_client::Client,
     circuit_id: CircuitId,
     rendezvous_map: &RendezvousMap,
-) -> setup_t::Result {
-    let mut map: HashMap<SocketAddr, Vec<Token>> = HashMap::new();
-    for token in tokens.into_iter() {
-        let rendezvous_addr = match rendezvous_map.rendezvous_address(&token, true) {
-            Some(addr) => addr,
-            None => {
-                warn!("Don't know rendezvous node for token {}", token);
-                continue;
-            }
-        };
-        match map.get_mut(&rendezvous_addr) {
-            Some(ts) => ts.push(token),
-            None => {
-                map.insert(rendezvous_addr, vec![token]);
-                ()
-            }
-        };
-    }
-    let mut sub_requests = Vec::new();
-    for (rendezvous_addr, tokens) in map.into_iter() {
-        let req = Subscription {
-            addr: ip_addr_to_vec(&dir_client.config().addr),
-            port: dir_client.config().fast_port as u32,
+    sub_collector: &Arc<RwLock<SubCollector>>,
+) {
+    let mut partition = Vec::new();
+    for _ in 0..rendezvous_map.len() {
+        let circuit = CircuitSubscription {
             circuit_id,
-            tokens,
+            tokens: Vec::new(),
         };
-        sub_requests.push(PacketWithNextHop::new(req, rendezvous_addr));
+        partition.push(circuit);
     }
-    setup_t::Result::MultipleAlt(sub_requests)
+
+    for token in tokens.into_iter() {
+        let idx = rendezvous_map.index(&token);
+        partition[idx].tokens.push(token);
+    }
+
+    let mut map = sub_collector.write().expect("Lock poisoned");
+    for (idx, circuit) in partition.into_iter().enumerate() {
+        map.get_mut(idx)
+            .expect("Wrong size of sub collector!?")
+            .circuits
+            .push(circuit);
+    }
 }
 
 /// Panics on failure as dummy circuits are essential for anonymity.

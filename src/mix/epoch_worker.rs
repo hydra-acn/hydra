@@ -114,7 +114,8 @@ impl Worker {
         communication_epoch: &EpochInfo,
         is_first: bool,
     ) {
-        self.setup_state.init_rendezvous_map(setup_epoch);
+        self.setup_state
+            .init_rendezvous_map(setup_epoch, &*self.dir_client);
 
         let round_duration = Duration::from_secs(communication_epoch.round_duration as u64);
         let round_waiting = Duration::from_secs(communication_epoch.round_waiting as u64);
@@ -177,8 +178,9 @@ impl Worker {
                         let circuit_map = self.setup_state.circuits();
                         let dummy_circuit_map = self.setup_state.dummy_circuits();
                         let bloom_bitmap = self.setup_state.bloom_bitmap();
+                        let sub_collector = self.setup_state.subscription_collector();
                         let f = |pkt| {
-                            process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone())
+                            process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone(), sub_collector.clone())
                         };
                         if do_send == false {
                             self.setup_processor.process_till(f, deadline);
@@ -189,7 +191,8 @@ impl Worker {
                             // send setup packets
                             self.setup_processor.send(Some(deadline));
                         } else {
-                            // send subscriptions
+                            // send collected subscriptions
+                            self.setup_processor.alt_pad(self.setup_state.get_final_subscriptions());
                             self.setup_processor.alt_send(Some(deadline));
                         }
                     },
@@ -201,7 +204,7 @@ impl Worker {
                 // acting as rendezvous node: process subscriptions
                 info!("Processing subscriptions of epoch {}", setup_epoch.epoch_no);
                 let sub_map = self.setup_state.subscription_map();
-                let f = |req| process_subscribe(req, sub_map.clone());
+                let f = |req| process_subscribe(setup_epoch.epoch_no, req, sub_map.clone());
                 self.subscribe_processor.process_till(f, deadline);
             }
         }

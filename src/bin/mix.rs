@@ -99,8 +99,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             new_pipeline(no_of_worker_threads);
 
         // subscribe pipeline
+        // note: we cannot utilize parallelism for subscriptions
         let (subscribe_rx_queue, subscribe_processor, _, _): subscribe_t::Pipeline =
-            new_pipeline(no_of_worker_threads);
+            new_pipeline(1);
 
         // sync channel
         let (sync_tx, sync_rx) = xbeam::unbounded();

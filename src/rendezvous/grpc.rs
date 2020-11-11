@@ -1,6 +1,4 @@
 //! gRPC service for the rendezvous part of a mix.
-use futures_util::StreamExt;
-use log::*;
 use tonic::{Request, Response, Status};
 
 use crate::grpc::macros::valid_request_check;
@@ -25,22 +23,11 @@ crate::define_grpc_service!(Service, State, RendezvousServer);
 impl Rendezvous for Service {
     async fn subscribe(
         &self,
-        req: Request<tonic::Streaming<Subscription>>,
+        req: Request<Subscription>,
     ) -> Result<Response<SubscribeAck>, Status> {
-        {
-            let mut stream = req.into_inner();
-            while let Some(s) = stream.next().await {
-                let sub = match s {
-                    Ok(ss) => ss,
-                    Err(e) => {
-                        warn!("Reading sub stream failed: {}", e);
-                        continue;
-                    }
-                };
-                valid_request_check(sub.is_valid(), "Address or port for injection invalid")?;
-                self.subscribe_rx_queue.enqueue(sub);
-            }
-        }
+        let sub = req.into_inner();
+        valid_request_check(sub.is_valid(), "Address or port for injection invalid")?;
+        self.subscribe_rx_queue.enqueue(sub);
         Ok(Response::new(SubscribeAck {}))
     }
 

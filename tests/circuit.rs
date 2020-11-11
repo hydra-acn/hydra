@@ -47,7 +47,7 @@ fn setup_onion() {
     let mut epoch_info = EpochInfo::default();
     epoch_info.mixes = path.clone();
     let subscribe_to = vec![13, 37];
-    let rendezvous_map = Arc::new(RendezvousMap::new(&epoch_info));
+    let rendezvous_map = Arc::new(RendezvousMap::new(&epoch_info).unwrap());
     let (client_circuit, extend) = ClientCircuit::new(42, &path, subscribe_to.clone()).unwrap();
     assert_eq!(*extend.next_hop(), endpoints[0]);
     let setup_pkt = extend.into_inner();
