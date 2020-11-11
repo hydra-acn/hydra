@@ -9,7 +9,8 @@ use log::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::time::{self, Duration};
+use tokio::time::delay_for as sleep;
+use tokio::time::Duration;
 
 type StatisticMap = HashMap<String, HashMap<EpochNo, MixStatistics>>;
 
@@ -200,7 +201,7 @@ pub fn key_exchange(pk_mix: &Key) -> Result<(Key, Key), Error> {
 pub async fn update_loop(state: Arc<State>) {
     loop {
         // wait till next update
-        time::delay_for(Duration::from_secs(30)).await;
+        sleep(Duration::from_secs(30)).await;
         state.update();
     }
 }

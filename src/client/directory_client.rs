@@ -5,7 +5,8 @@ use rand::Rng;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
-use tokio::time::{delay_for, Duration};
+use tokio::time::delay_for as sleep;
+use tokio::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Status;
 
@@ -136,7 +137,7 @@ impl Client {
                 default
             }
         };
-        delay_for(Duration::from_secs(wait_for)).await;
+        sleep(Duration::from_secs(wait_for)).await;
     }
 
     /// return the epoch number for the epoch that is currently in the communication phase
@@ -248,7 +249,7 @@ pub async fn run(client: Arc<Client>) {
             }
         }
         // another sleep to avoid multiple updates per epoch
-        delay_for(Duration::from_secs(slack + 1)).await;
+        sleep(Duration::from_secs(slack + 1)).await;
     }
 }
 

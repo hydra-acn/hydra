@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
-use tokio::time::{delay_for, Duration};
+use tokio::time::delay_for as sleep;
+use tokio::time::Duration;
 use tonic::transport::Channel;
 
 use super::channel_pool::{ChannelPool, MixChannel, RendezvousChannel, TcpChannel};
@@ -371,7 +372,7 @@ pub async fn run(client: Arc<Client>) {
         info!("Updating directory");
         client.update().await;
         // another sleep to avoid multiple updates per epoch
-        delay_for(Duration::from_secs(slack + 1)).await;
+        sleep(Duration::from_secs(slack + 1)).await;
     }
 }
 

@@ -10,8 +10,9 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
-use std::thread::sleep;
-use tokio::time::{delay_for, Duration};
+use std::thread;
+use tokio::time::delay_for as sleep;
+use tokio::time::Duration;
 
 use hydra::client::directory_client;
 use hydra::defs::{CircuitId, RoundNo};
@@ -68,7 +69,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
     let mut maybe_epoch = dir_client.next_epoch_info();
     while let None = maybe_epoch {
         warn!("Don't know the next epoch for setup, retrying in 5 seconds");
-        sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_secs(5));
         maybe_epoch = dir_client.next_epoch_info();
     }
 
@@ -80,7 +81,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
     // if we don't have plenty of time left (setup duration - 10s), skip this epoch
     let wait_for = Duration::from_secs(next_epoch.setup_start_time - current_time_in_secs() + 1);
     if wait_for < epoch_duration - Duration::from_secs(10) {
-        delay_for(wait_for).await;
+        sleep(wait_for).await;
         epoch_no += 1;
     }
 
@@ -161,7 +162,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
         .expect("Not enough epochs in advance?");
     let wait_for =
         Duration::from_secs(not_our_epoch.communication_start_time - current_time_in_secs() + 1);
-    delay_for(wait_for).await;
+    sleep(wait_for).await;
     // TODO code graceful shutdown?
     panic!("Panic intended :)");
 }
@@ -276,7 +277,7 @@ async fn run_receive_nack(circ: Arc<Circuit>, channels: Arc<MixChannelPool>) {
 
 async fn delay_till(time: Duration) {
     let duration = time.checked_sub(current_time()).expect("Out of sync");
-    delay_for(duration).await;
+    sleep(duration).await;
 }
 
 async fn prepare_entry_channels(epoch: &EpochInfo) -> MixChannelPool {

@@ -4,7 +4,8 @@ use ctrlc;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::time::{delay_for, Duration};
+use tokio::time::delay_for as sleep;
+use tokio::time::Duration;
 
 pub fn hydra_version() -> &'static str {
     option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
@@ -45,7 +46,7 @@ pub async fn sigint_handler(running: Arc<AtomicBool>) {
     })
     .expect("Setting Ctrl-C handler failed");
     while running.load(Ordering::SeqCst) {
-        delay_for(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(500)).await;
     }
     log::info!("Caught SIGINT");
     panic!("Interrupted");

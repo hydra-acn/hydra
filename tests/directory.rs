@@ -16,7 +16,8 @@ use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::runtime::Builder;
-use tokio::time::{self, Duration};
+use tokio::time::delay_for as sleep;
+use tokio::time::Duration;
 use tonic::Request;
 
 #[test]
@@ -31,7 +32,7 @@ fn integration() {
         let state = Arc::new(State::default());
 
         let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        let timeout = time::delay_for(Duration::from_secs(2));
+        let timeout = sleep(Duration::from_secs(2));
         let key =
             Key::read_from_file("tests/data/tls-test.key").expect("Failed to read key from file");
         let cert = std::fs::read_to_string("tests/data/tls-test.pem").unwrap();
@@ -57,7 +58,7 @@ async fn client_task(state: Arc<State>, port: u16) {
     let endpoint = format!("https://localhost:{}", port);
 
     // wait to avoid race condition client/server
-    time::delay_for(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(100)).await;
     let channel = tonic::transport::Channel::from_shared(endpoint)
         .unwrap()
         .tls_config(
