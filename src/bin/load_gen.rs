@@ -196,16 +196,23 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
             t.await.expect("Task failed");
         }
         let mut cum_lost_cells = 0;
+        let mut circuits_without_loss = 0;
         for circ in circuits.iter() {
-            cum_lost_cells += circ.lost_cells();
+            let lost = circ.lost_cells();
+            cum_lost_cells += lost;
+            if lost == 0 {
+                circuits_without_loss += 1;
+            }
         }
         info!(".. Send/receiving done");
         info!(".. Cumulative total cell loss counter: {}", cum_lost_cells);
+        info!(".. Circuits without loss: {}", circuits_without_loss);
         round_start += round_interval;
     }
 
     // wait and get the nacks (last round)
     delay_till(round_start).await;
+    info!("Late polling for epoch {}", epoch_no);
     let mut tasks = Vec::new();
     for circ in circuits.iter() {
         tasks.push(tokio::spawn(run_receive_nack(
@@ -217,6 +224,7 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
     for t in tasks.iter_mut() {
         t.await.expect("Task failed");
     }
+    info!(".. late polling done");
 
     info!("Communication for epoch {} done", epoch_no);
 
