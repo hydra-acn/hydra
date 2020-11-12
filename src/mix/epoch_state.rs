@@ -1,7 +1,7 @@
 use bloomfilter::Bloom;
 use log::*;
 use std::cmp::max;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
 use crate::defs::{AuthTag, CircuitId};
@@ -16,9 +16,9 @@ use super::dummy_circuit::DummyCircuit;
 use super::rendezvous_map::RendezvousMap;
 use super::setup_processor::SubCollector;
 
-pub type CircuitMap = BTreeMap<CircuitId, Circuit>;
+pub type CircuitMap = HashMap<CircuitId, Circuit>;
+pub type CircuitIdMap = HashMap<CircuitId, CircuitId>;
 pub type DummyCircuitMap = BTreeMap<CircuitId, DummyCircuit>;
-pub type CircuitIdMap = BTreeMap<CircuitId, CircuitId>;
 pub type DupFilter = Bloom<AuthTag>;
 
 /// All the state a mix collects about an epoch during the setup phase, filled by multiple threads.
