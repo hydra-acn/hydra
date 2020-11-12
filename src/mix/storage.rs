@@ -1,7 +1,7 @@
 //! Storage for cells at entry mixes.
 use crossbeam_channel as xbeam;
 use log::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
 use crate::defs::{CircuitId, RoundNo};
@@ -24,20 +24,29 @@ impl Circuit {
 }
 
 // TODO cleanup once in a while
-// TODO performance: avoid global lock on complete storage; "RSS" by circuit id instead
 pub struct Storage {
-    circuit_map: RwLock<BTreeMap<CircuitId, Circuit>>,
+    circuit_maps: Vec<RwLock<HashMap<CircuitId, Circuit>>>,
     firebase_map: RwLock<BTreeMap<EpochNo, Vec<String>>>,
     sync_rx: xbeam::Receiver<SyncBeat>,
 }
 
 impl Storage {
     pub fn new(sync_rx: xbeam::Receiver<SyncBeat>) -> Self {
+        let mut circuit_maps = Vec::new();
+        // TODO code: make number of maps configurable; should be high enough to make probability
+        // that two threads access the same map at the same time small
+        for _ in 0..128 {
+            circuit_maps.push(RwLock::default());
+        }
         Storage {
-            circuit_map: RwLock::new(BTreeMap::new()),
+            circuit_maps,
             firebase_map: RwLock::new(BTreeMap::new()),
             sync_rx,
         }
+    }
+
+    fn map_idx(&self, circuit_id: CircuitId) -> usize {
+        (circuit_id % self.circuit_maps.len() as u64) as usize
     }
 
     /// Create storage for `circuit_id`.
@@ -59,7 +68,8 @@ impl Storage {
             }
         }
 
-        let mut map = self.circuit_map.write().expect("Lock poisoned");
+        let idx = self.map_idx(circuit_id);
+        let mut map = self.circuit_maps[idx].write().expect("Lock poisoned");
         match map.get_mut(&circuit_id) {
             Some(_) => false,
             None => {
@@ -70,8 +80,10 @@ impl Storage {
     }
 
     pub fn insert_cell(&self, cell: Cell) {
-        let mut map = self.circuit_map.write().expect("Lock poisoned");
-        if let Some(circuit) = map.get_mut(&cell.circuit_id()) {
+        let cid = cell.circuit_id();
+        let idx = self.map_idx(cid);
+        let mut map = self.circuit_maps[idx].write().expect("Lock poisoned");
+        if let Some(circuit) = map.get_mut(&cid) {
             circuit.cells.push(cell);
         } else {
             warn!("Cell ready for delivery, but circuit id unknown -> dropping");
@@ -81,7 +93,8 @@ impl Storage {
     /// Returns and removes all cells stored for `circuit_id`.
     /// Returns `None` if `circuit_id` is not known.
     pub fn remove_cells(&self, circuit_id: &CircuitId) -> Option<Vec<Cell>> {
-        let mut map = self.circuit_map.write().expect("Lock poisoned");
+        let idx = self.map_idx(*circuit_id);
+        let mut map = self.circuit_maps[idx].write().expect("Lock poisoned");
         match map.get_mut(circuit_id) {
             Some(circuit) => Some(std::mem::replace(&mut circuit.cells, Vec::new())),
             None => None,
