@@ -156,8 +156,7 @@ impl Mix for Service {
         let ids = req.into_inner().circuit_ids;
         let mut cell_vec = CellVector::default();
         for circuit_id in ids {
-            // TODO performance: completely delete the circuit from storage (keep map small!)
-            match self.storage.remove_cells(&circuit_id) {
+            match self.storage.delete_circuit(&circuit_id) {
                 Some(vec) => {
                     for c in vec.into_iter() {
                         cell_vec.cells.push(c.into());

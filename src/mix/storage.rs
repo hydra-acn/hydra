@@ -101,6 +101,17 @@ impl Storage {
         }
     }
 
+    /// Delete circuit and return any cells stored for `circuit_id`.
+    /// Returns `None` if `circuit_id` is not known.
+    pub fn delete_circuit(&self, circuit_id: &CircuitId) -> Option<Vec<Cell>> {
+        let idx = self.map_idx(*circuit_id);
+        let mut map = self.circuit_maps[idx].write().expect("Lock poisoned");
+        match map.remove(circuit_id) {
+            Some(circuit) => Some(circuit.cells),
+            None => None,
+        }
+    }
+
     pub async fn send_firebase_notifications(&self, epoch_no: EpochNo, round_no: RoundNo) {
         // TODO performance: don't clone the tokens; need a read-only view instead
         let tokens;
