@@ -132,17 +132,21 @@ impl Mix for Service {
         // first, enqueue new cell
         self.cell_rx_queue.enqueue(cell.into());
 
-        // collect all missed cells
-        let mut cell_vec =
-            unwrap_or_throw_invalid!(self.storage.remove_cells(&cid), "Unknown circuit");
-        if cell_vec.is_empty() && r > 0 {
-            cell_vec.push(FlatCell::dummy(cid, r - 1));
+        if r > 0 {
+            // collect all missed cells
+            let mut cell_vec =
+                unwrap_or_throw_invalid!(self.storage.remove_cells(&cid), "Unknown circuit");
+            if cell_vec.is_empty() {
+                cell_vec.push(FlatCell::dummy(cid, r - 1));
+            }
+            // convert missed cells to grpc format
+            let grpc_cells = cell_vec.into_iter().map(|c| c.into()).collect();
+
+            Ok(Response::new(CellVector { cells: grpc_cells }))
+        } else {
+            // nothing to receive in first round -> empty response
+            Ok(Response::new(CellVector { cells: Vec::new() }))
         }
-
-        // convert missed cells to grpc format
-        let grpc_cells = cell_vec.into_iter().map(|c| c.into()).collect();
-
-        Ok(Response::new(CellVector { cells: grpc_cells }))
     }
 
     async fn late_poll(
@@ -152,6 +156,7 @@ impl Mix for Service {
         let ids = req.into_inner().circuit_ids;
         let mut cell_vec = CellVector::default();
         for circuit_id in ids {
+            // TODO performance: completely delete the circuit from storage (keep map small!)
             match self.storage.remove_cells(&circuit_id) {
                 Some(vec) => {
                     for c in vec.into_iter() {
