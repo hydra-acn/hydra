@@ -74,6 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let no_of_worker_threads = value_t!(args, "threads", usize).unwrap();
 
+    // configure rayon thread pool
+    rayon::ThreadPoolBuilder::new().num_threads(no_of_worker_threads).build_global().unwrap();
+
     // mix view pipelines
     let (setup_rx_queue, setup_processor, setup_tx_queue, subscribe_tx_queue): setup_t::Pipeline =
         new_pipeline(no_of_worker_threads);
