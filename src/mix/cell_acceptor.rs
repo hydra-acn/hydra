@@ -52,7 +52,7 @@ pub fn accept(state: Arc<State>, local_addr: SocketAddr) {
         match s {
             Ok(stream) => {
                 let cloned_state = state.clone();
-                let _ = tokio::task::spawn_blocking(move || handle_stream(cloned_state, stream));
+                std::thread::spawn(move || handle_stream(cloned_state, stream));
             }
             Err(e) => {
                 warn!("Accepting TCP connection failed: {}", e);

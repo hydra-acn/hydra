@@ -109,8 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // setup cell acceptor
     let acceptor = Arc::new(cell_acceptor::State::new(cell_rx_queue));
-    let acceptor_handle =
-        tokio::task::spawn_blocking(move || cell_acceptor::accept(acceptor, fast_addr));
+    std::thread::spawn(move || cell_acceptor::accept(acceptor, fast_addr));
 
     // setup sender
     let sender = Arc::new(sender::State::new(
@@ -131,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cell_processor,
         sync_tx,
     );
-    let main_handle = tokio::task::spawn_blocking(move || worker.run());
+    std::thread::spawn(move || worker.run());
 
     match tokio::try_join!(
         sigint_handle,
@@ -139,9 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         storage_handle,
         mix_grpc_handle,
         rendezvous_grpc_handle,
-        acceptor_handle,
         sender_handle,
-        main_handle
     ) {
         Ok(_) => (),
         Err(e) => error!("Something failed: {}", e),
