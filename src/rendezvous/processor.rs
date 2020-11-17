@@ -94,6 +94,10 @@ mod tests {
 
     #[test]
     fn test_pubsub() {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build_global()
+            .unwrap_or(());
         let map = Arc::new(SubscriptionMap::new());
         let (sub_rx, mut sub_processor, _, _): subscribe_t::Pipeline = new_pipeline(1);
         let (pub_rx, mut pub_processor, inject_tx, _): cell_rss_t::Pipeline = new_pipeline(2);
@@ -128,7 +132,7 @@ mod tests {
         sub_rx.enqueue(sub_2);
         sub_processor.process_till(
             |req| process_subscribe(1337, req, map.clone()),
-            current_time() + Duration::from_millis(1000),
+            current_time() + Duration::from_millis(100),
         );
 
         let mut cell_1 = Cell::dummy(1337, PUBLISH_ROUND_NO);

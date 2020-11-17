@@ -293,6 +293,11 @@ mod tests {
 
     #[test]
     pub fn test_simple_type() {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build_global()
+            .unwrap_or(());
+
         let (rx, mut proc, tx, alt_tx) = new_pipeline::<u32, u32, bool>(3);
         rx.enqueue(0);
         rx.enqueue(42);
@@ -317,7 +322,7 @@ mod tests {
             }
         };
 
-        let till = current_time() + Duration::from_millis(1000);
+        let till = current_time() + Duration::from_millis(100);
         proc.process_till(f, till);
         proc.pad(vec![1, 3, 3, 7]);
         proc.alt_pad(vec![false, false]);
