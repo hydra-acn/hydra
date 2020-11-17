@@ -113,38 +113,21 @@ impl<I: Send, O: Send, A: Send> Processor<I, O, A> {
 
     /// Receives and processes new request by applying the function `f` to each until the given
     /// `time` is reached. Also blocks till `time` is reached if no new requests arrive.
-    /// Returns `true` iff all requests have been processed in time.
     /// Panics if the matching rx queue is gone.
     pub fn process_till<F: FnMut(I) -> ProcessResult<I, O, A> + Clone + Sync>(
         &mut self,
         f: F,
-        time: Duration,
-    ) -> bool {
+        deadline: Duration,
+    ) {
         // pending requests
         self.threads
             .par_iter_mut()
-            .for_each(|t| process_pending(t, f.clone(), time));
+            .for_each(|t| process_pending(t, f.clone(), deadline));
 
-        // new requests in a loop
-        loop {
-            if let None = time.checked_sub(current_time()) {
-                // time limit reached
-                break;
-            }
-            self.threads
-                .par_iter_mut()
-                .for_each(|t| process_new(t, f.clone(), time));
-            // don't poll too hard
-            std::thread::sleep(Duration::from_millis(1));
-        }
-
-        // check if there are still incomming requests
-        for t in self.threads.iter() {
-            if t.in_queue.len() > 0 {
-                return false;
-            }
-        }
-        true
+        // new requests
+        self.threads
+            .par_iter_mut()
+            .for_each(|t| process_new(t, f.clone(), deadline));
     }
 
     /// Add additional output that does not belong to any input.
@@ -229,7 +212,6 @@ fn process_pending<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
 ) {
     let mut new_pending = VecDeque::new();
     while let Some(req) = thread.pending_queue.pop_front() {
-        // TODO performance: don't call current_time so often
         if let None = time.checked_sub(current_time()) {
             // time limit reached
             return;
@@ -249,11 +231,11 @@ fn process_pending<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
 fn process_new<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
     thread: &mut ThreadState<I, O, A>,
     mut f: F,
-    time: Duration,
+    deadline: Duration,
 ) {
-    // TODO performance: don't call current_time so often
+    let poll_interval = Duration::from_millis(1);
     loop {
-        if let None = time.checked_sub(current_time()) {
+        if let None = deadline.checked_sub(current_time()) {
             // time limit reached
             return;
         }
@@ -267,7 +249,10 @@ fn process_new<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
         }) {
             Ok(()) => (),
             Err(e) => match e {
-                crossbeam_channel::TryRecvError::Empty => break,
+                crossbeam_channel::TryRecvError::Empty => {
+                    // don't poll too hard
+                    std::thread::sleep(poll_interval);
+                }
                 crossbeam_channel::TryRecvError::Disconnected => {
                     unreachable!("Pipeline producer is gone")
                 }
