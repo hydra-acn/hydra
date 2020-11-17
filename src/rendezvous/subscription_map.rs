@@ -37,10 +37,15 @@ struct SmallEndpoint {
 type MapType = std::collections::HashMap<Token, Vec<SmallEndpoint>>;
 
 /// Mapping tokens to subscribers
-#[derive(Default)]
 pub struct SubscriptionMap {
     map: Vec<RwLock<MapType>>,
     addr_map: RwLock<Vec<SocketAddr>>,
+}
+
+impl Default for SubscriptionMap {
+    fn default() -> Self {
+        SubscriptionMap::new()
+    }
 }
 
 impl SubscriptionMap {
