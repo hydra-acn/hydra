@@ -113,12 +113,13 @@ impl<I: Send, O: Send, A: Send> Processor<I, O, A> {
 
     /// Receives and processes new request by applying the function `f` to each until the given
     /// `time` is reached. Also blocks till `time` is reached if no new requests arrive.
+    /// Returns the minimum idle time across all threads.
     /// Panics if the matching rx queue is gone.
     pub fn process_till<F: FnMut(I) -> ProcessResult<I, O, A> + Clone + Sync>(
         &mut self,
         f: F,
         deadline: Duration,
-    ) {
+    ) -> Duration {
         // pending requests
         self.threads
             .par_iter_mut()
@@ -127,7 +128,9 @@ impl<I: Send, O: Send, A: Send> Processor<I, O, A> {
         // new requests
         self.threads
             .par_iter_mut()
-            .for_each(|t| process_new(t, f.clone(), deadline));
+            .map(|t| process_new(t, f.clone(), deadline))
+            .min()
+            .expect("Iterator should not be empty")
     }
 
     /// Add additional output that does not belong to any input.
@@ -228,16 +231,18 @@ fn process_pending<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
     thread.pending_queue = new_pending;
 }
 
+/// Processes new incomming requests for one thread and returns the idle time.
 fn process_new<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
     thread: &mut ThreadState<I, O, A>,
     mut f: F,
     deadline: Duration,
-) {
+) -> Duration {
     let poll_interval = Duration::from_millis(1);
+    let mut idle_time = Duration::from_millis(0);
     loop {
         if let None = deadline.checked_sub(current_time()) {
             // time limit reached
-            return;
+            return idle_time;
         }
         match thread.in_queue.try_recv().map(|req| match f(req) {
             ProcessResult::Out(out) => thread.out_queue.push(out),
@@ -251,6 +256,7 @@ fn process_new<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
             Err(e) => match e {
                 crossbeam_channel::TryRecvError::Empty => {
                     // don't poll too hard
+                    idle_time += poll_interval;
                     std::thread::sleep(poll_interval);
                 }
                 crossbeam_channel::TryRecvError::Disconnected => {

@@ -253,7 +253,8 @@ impl Worker {
         let sub_map = self.state.subscription_map();
         info!(".. process publish of round {}", round_no);
         let f = |cell| process_publish(cell, sub_map.clone());
-        self.cell_processor.process_till(f, send_time);
+        let min_idle = self.cell_processor.process_till(f, send_time);
+        info!(".. min idle time = {}", min_idle.as_millis());
         send_time += subround_interval;
         info!(".. send injections of round {}", round_no);
         self.cell_processor.send(Some(send_time)); // injection
@@ -314,8 +315,9 @@ impl Worker {
                 dummy_circuit_map,
             )
         };
-        // TODO duration should be passed by ref
-        self.cell_processor.process_till(f, *send_time);
+        // TODO performance: duration should be passed by ref
+        let min_idle = self.cell_processor.process_till(f, *send_time);
+        info!(".. min idle time = {}", min_idle.as_millis());
 
         // insert dummy cells if necessary
         for (_, circuit) in self.state.circuits().iter() {
