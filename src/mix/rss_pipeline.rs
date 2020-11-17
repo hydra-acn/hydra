@@ -317,7 +317,7 @@ mod tests {
             }
         };
 
-        let till = current_time() + Duration::from_millis(500);
+        let till = current_time() + Duration::from_millis(1000);
         proc.process_till(f, till);
         proc.pad(vec![1, 3, 3, 7]);
         proc.alt_pad(vec![false, false]);

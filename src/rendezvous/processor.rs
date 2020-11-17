@@ -128,7 +128,7 @@ mod tests {
         sub_rx.enqueue(sub_2);
         sub_processor.process_till(
             |req| process_subscribe(1337, req, map.clone()),
-            current_time() + Duration::from_millis(50),
+            current_time() + Duration::from_millis(1000),
         );
 
         let mut cell_1 = Cell::dummy(1337, PUBLISH_ROUND_NO);
