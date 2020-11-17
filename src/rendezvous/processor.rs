@@ -1,6 +1,7 @@
 use log::*;
 use std::cmp::Ordering;
-use std::sync::{Arc, RwLock};
+use std::convert::TryInto;
+use std::sync::Arc;
 
 use crate::defs::{INJECT_ROUND_NO, PUBLISH_ROUND_NO};
 use crate::epoch::EpochNo;
@@ -10,14 +11,14 @@ use crate::net::cell::{Cell, CellCmd};
 use crate::net::PacketWithNextHop;
 use crate::tonic_mix::Subscription;
 
-use super::subscription_map::SubscriptionMap;
+use super::subscription_map::{CircuitId, SubscriptionMap};
 
 crate::define_pipeline_types!(subscribe_t, Subscription, (), ());
 
 pub fn process_subscribe(
     epoch_no: EpochNo,
     req: Subscription,
-    map: Arc<RwLock<SubscriptionMap>>,
+    map: Arc<SubscriptionMap>,
 ) -> subscribe_t::Result {
     match epoch_no.cmp(&req.epoch_no) {
         Ordering::Less => {
@@ -29,7 +30,6 @@ pub fn process_subscribe(
         }
         Ordering::Greater => ProcessResult::Requeue(req),
         Ordering::Equal => {
-            let mut map = map.write().expect("Lock poisoned");
             map.subscribe(req);
             ProcessResult::Drop
         }
@@ -52,6 +52,14 @@ pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> cell_rss_t::Res
         }
     }
 
+    let circuit_id: CircuitId = match cell.circuit_id().try_into() {
+        Ok(cid) => cid,
+        Err(_) => {
+            warn!("Rendezvous circuit id too large");
+            return ProcessResult::Drop;
+        }
+    };
+
     let subscribers = map.get_subscribers(&cell.token());
     if subscribers.is_empty() {
         debug!("No subscribers!");
@@ -59,7 +67,7 @@ pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> cell_rss_t::Res
     }
     let mut out = Vec::new();
     for sub in subscribers {
-        if cell.circuit_id() == sub.circuit_id() {
+        if circuit_id == sub.circuit_id() {
             // don't send cells back on the same circuit, except when asked to
             if let Some(CellCmd::Broadcast) = cell.command() {
             } else {
@@ -67,7 +75,7 @@ pub fn process_publish(cell: Cell, map: Arc<SubscriptionMap>) -> cell_rss_t::Res
             }
         }
         let mut inject_cell = cell.clone();
-        inject_cell.set_circuit_id(sub.circuit_id());
+        inject_cell.set_circuit_id(sub.circuit_id().into());
         inject_cell.set_round_no(INJECT_ROUND_NO);
         out.push(PacketWithNextHop::new(inject_cell, *sub.addr()));
     }
@@ -86,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_pubsub() {
-        let map = Arc::new(RwLock::new(SubscriptionMap::default()));
+        let map = Arc::new(SubscriptionMap::new());
         let (sub_rx, mut sub_processor, _, _): subscribe_t::Pipeline = new_pipeline(1);
         let (pub_rx, mut pub_processor, inject_tx, _): cell_rss_t::Pipeline = new_pipeline(2);
 
@@ -122,12 +130,6 @@ mod tests {
             |req| process_subscribe(1337, req, map.clone()),
             current_time() + Duration::from_millis(50),
         );
-
-        let mut map_guard = map.write().expect("Lock poisoned");
-        let map = Arc::new(std::mem::replace(
-            &mut *map_guard,
-            SubscriptionMap::default(),
-        ));
 
         let mut cell_1 = Cell::dummy(1337, PUBLISH_ROUND_NO);
         cell_1.set_token(1);

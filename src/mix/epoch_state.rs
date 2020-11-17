@@ -26,7 +26,7 @@ pub struct EpochSetupState {
     /// Map tokens to corresponding rendezvous nodes.
     rendezvous_map: Arc<RendezvousMap>,
     /// When acting as rendezvous node: map tokens to subscribers.
-    sub_map: Arc<RwLock<SubscriptionMap>>,
+    sub_map: Arc<SubscriptionMap>,
     /// Map downstream ids to circuits.
     circuits: Arc<RwLock<CircuitMap>>,
     /// Map *upstream* ids to dummy circuits (they have no downstream id).
@@ -46,7 +46,7 @@ impl EpochSetupState {
         EpochSetupState {
             // TODO code: one default should be enough for these -> no nested new necessary
             rendezvous_map: Arc::new(RendezvousMap::default()),
-            sub_map: Arc::new(RwLock::new(SubscriptionMap::default())),
+            sub_map: Arc::default(),
             circuits: Arc::new(RwLock::new(CircuitMap::default())),
             dummy_circuits: Arc::new(RwLock::new(DummyCircuitMap::default())),
             circuit_id_map: Arc::new(RwLock::new(CircuitIdMap::default())),
@@ -101,7 +101,7 @@ impl EpochSetupState {
         pkts
     }
 
-    pub fn subscription_map(&self) -> &Arc<RwLock<SubscriptionMap>> {
+    pub fn subscription_map(&self) -> &Arc<SubscriptionMap> {
         &self.sub_map
     }
 
@@ -137,9 +137,6 @@ impl EpochState {
     /// `state` will be prepared to handle the next setup by resetting
     /// all fields and resizing the bloomfilter
     pub fn finalize_setup(state: &mut EpochSetupState) -> EpochState {
-        let mut sub_guard = state.sub_map.write().expect("Lock poisoned");
-        let sub_map = std::mem::replace(&mut *sub_guard, SubscriptionMap::default());
-
         let mut circuits_guard = state.circuits.write().expect("Lock poisoned");
         let circuits = std::mem::replace(&mut *circuits_guard, CircuitMap::default());
 
@@ -158,7 +155,7 @@ impl EpochState {
 
         EpochState {
             rendezvous_map: std::mem::replace(&mut state.rendezvous_map, Arc::default()),
-            sub_map: Arc::new(sub_map),
+            sub_map: std::mem::replace(&mut state.sub_map, Arc::default()),
             circuits: Arc::new(circuits),
             dummy_circuits: Arc::new(dummy_circuits),
             circuit_id_map: Arc::new(circuit_id_map),

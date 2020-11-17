@@ -1,8 +1,12 @@
 use log::*;
+use std::convert::TryInto;
 use std::net::SocketAddr;
+use std::sync::RwLock;
 
-use crate::defs::{CircuitId, Token};
+use crate::defs::Token;
 use crate::tonic_mix::Subscription;
+
+pub type CircuitId = u32;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Endpoint {
@@ -24,22 +28,39 @@ impl Endpoint {
     }
 }
 
-type MapType = std::collections::HashMap<Token, Vec<Endpoint>>;
+#[derive(Clone)]
+struct SmallEndpoint {
+    addr_idx: u16,
+    circuit_id: CircuitId,
+}
+
+type MapType = std::collections::HashMap<Token, Vec<SmallEndpoint>>;
 
 /// Mapping tokens to subscribers
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct SubscriptionMap {
-    map: MapType,
+    map: Vec<RwLock<MapType>>,
+    addr_map: RwLock<Vec<SocketAddr>>,
 }
 
 impl SubscriptionMap {
     pub fn new() -> Self {
+        let mut map = Vec::new();
+        // TODO code: don't hardcode
+        for _ in 0..128 {
+            map.push(RwLock::default());
+        }
         SubscriptionMap {
-            map: MapType::new(),
+            map,
+            addr_map: RwLock::default(),
         }
     }
 
-    pub fn subscribe(&mut self, sub: Subscription) {
+    fn idx(&self, token: Token) -> usize {
+        token as usize % self.map.len()
+    }
+
+    pub fn subscribe(&self, sub: Subscription) {
         let addr = match sub.socket_addr() {
             Some(a) => a,
             None => {
@@ -48,26 +69,50 @@ impl SubscriptionMap {
             }
         };
 
+        let addr_idx;
+        {
+            let mut addr_guard = self.addr_map.write().expect("Lock poisoned");
+            addr_idx = match addr_guard.iter().position(|a| *a == addr) {
+                Some(idx) => idx,
+                None => {
+                    addr_guard.push(addr);
+                    addr_guard.len() - 1
+                }
+            };
+        }
+
         for circuit in sub.circuits.into_iter() {
-            let endpoint = Endpoint {
-                addr,
+            let endpoint = SmallEndpoint {
+                addr_idx: addr_idx.try_into().expect("Too many mixes?"),
                 circuit_id: circuit.circuit_id,
             };
 
             for token in circuit.tokens.into_iter() {
-                match self.map.get_mut(&token) {
+                let mut map_guard = self.map[self.idx(token)].write().expect("Lock poisoned");
+                match map_guard.get_mut(&token) {
                     Some(vec) => vec.push(endpoint.clone()),
                     None => {
-                        self.map.insert(token, vec![endpoint.clone()]);
+                        map_guard.insert(token, vec![endpoint.clone()]);
                     }
                 }
             }
         }
     }
 
+    fn get_endpoint(&self, e: &SmallEndpoint) -> Endpoint {
+        // TODO performance: read-only view would be better
+        let guard = self.addr_map.read().expect("Lock poisoned");
+        Endpoint {
+            addr: *guard.get(e.addr_idx as usize).unwrap(),
+            circuit_id: e.circuit_id,
+        }
+    }
+
     pub fn get_subscribers(&self, token: &Token) -> Vec<Endpoint> {
-        match self.map.get(token) {
-            Some(vec) => vec.clone(),
+        // TODO performance: read-only view would be better
+        let map_guard = self.map[self.idx(*token)].read().expect("Lock poisoned");
+        match map_guard.get(token) {
+            Some(vec) => vec.iter().map(|e| self.get_endpoint(e)).collect(),
             None => Vec::new(),
         }
     }

@@ -124,11 +124,20 @@ impl Circuit {
             .ttl()
             .ok_or_else(|| Error::InputError("Should have been filtered by gRPC".to_string()))?;
 
+        let upstream_id = match ttl {
+            0 => {
+                // rendezvous only uses 32bit of the circuit id
+                let small_id: u32 = thread_cprng().gen();
+                small_id.into()
+            }
+            _ => thread_cprng().gen(),
+        };
+
         let mut circuit = Circuit {
             rendezvous_map,
             layer,
             downstream_id: setup_pkt.circuit_id,
-            upstream_id: thread_cprng().gen(),
+            upstream_id,
             downstream_hop,
             upstream_hop: None,
             threefish,
@@ -382,10 +391,7 @@ impl Circuit {
         let (mut cell, need_enc) = match direction {
             CellDirection::Upstream => {
                 // no upstream injection -> always dummy
-                debug!(
-                    "Creating upstream dummy cell in layer {}",
-                    self.layer
-                );
+                debug!("Creating upstream dummy cell in layer {}", self.layer);
                 let mut dummy = Cell::dummy(circuit_id, round_no);
                 if self.is_exit() {
                     dummy.set_round_no(PUBLISH_ROUND_NO);
@@ -402,10 +408,7 @@ impl Circuit {
                 {
                     Some(c) => (c, true),
                     None => {
-                        debug!(
-                            "Creating downstream dummy cell in layer {}",
-                            self.layer
-                        );
+                        debug!("Creating downstream dummy cell in layer {}", self.layer);
                         (Cell::dummy(circuit_id, round_no), false)
                     }
                 },

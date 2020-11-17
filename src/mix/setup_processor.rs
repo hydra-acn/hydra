@@ -1,5 +1,6 @@
 use log::*;
 use std::cmp::Ordering;
+use std::convert::TryInto;
 use std::sync::{Arc, RwLock};
 
 use crate::crypto::key::Key;
@@ -147,7 +148,9 @@ fn collect_subscriptions(
     let mut partition = Vec::new();
     for _ in 0..rendezvous_map.len() {
         let circuit = CircuitSubscription {
-            circuit_id,
+            circuit_id: circuit_id
+                .try_into()
+                .expect("This circuit id should fit in 32bit"),
             tokens: Vec::new(),
         };
         partition.push(circuit);

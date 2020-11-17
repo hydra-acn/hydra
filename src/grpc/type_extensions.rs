@@ -140,9 +140,9 @@ impl Subscription {
 }
 
 impl Scalable for Subscription {
-    fn thread_id(&self, _size: usize) -> usize {
-        // we cannot utilize parallelism for subscriptions
-        0
+    fn thread_id(&self, size: usize) -> usize {
+        // random distribution
+        thread_cprng().gen_range(0, size)
     }
 }
 
