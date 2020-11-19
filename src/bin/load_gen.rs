@@ -37,6 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
         (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
+        (@arg nat: -c --nat "Query the testbed NAT addresses -> mandatory for external load generation")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
     .get_matches();
@@ -54,8 +55,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => Some(std::fs::read_to_string(&path)?),
         None => None,
     };
+    let nat = args.is_present("nat");
 
-    let dir_client = Arc::new(DirClient::new(dir_domain, dir_port, dir_certificate));
+    let dir_client = Arc::new(DirClient::new(dir_domain, dir_port, dir_certificate, nat));
     let dir_client_handle = tokio::spawn(directory_client::run(dir_client.clone()));
     let setup_handle = tokio::task::spawn(setup_loop(dir_client.clone(), n, runs));
     match tokio::try_join!(dir_client_handle, setup_handle) {

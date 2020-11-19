@@ -27,18 +27,21 @@ pub struct Client {
     tls_cert: Option<Cert>,
     // TODO performance: should store infos inside Arcs to avoid copies (key material is big!)
     epochs: RwLock<BTreeMap<EpochNo, EpochInfo>>,
+    testbed_nat: bool,
 }
 
 impl Client {
     /// Use a custom CA certificate `tls_cert` if the directory service certificate is not anchored
     /// in your system.
-    pub fn new(domain: String, port: u16, tls_cert: Option<Cert>) -> Self {
+    /// Set `testbed_nat` to true if you want to query the testbed NAT addresses.
+    pub fn new(domain: String, port: u16, tls_cert: Option<Cert>, testbed_nat: bool) -> Self {
         let grpc_url = format!("https://{}:{}", domain, port);
         Client {
             domain,
             grpc_url,
             tls_cert,
             epochs: RwLock::new(BTreeMap::new()),
+            testbed_nat,
         }
     }
 
@@ -59,7 +62,12 @@ impl Client {
 
     /// fetch directory, merge it with our view and return the number of epochs in the reply
     pub async fn fetch(&self, conn: &mut DirectoryChannel) -> Result<usize, Status> {
-        let query = DirectoryRequest { min_epoch_no: 0 };
+        let mut query = tonic::Request::new(DirectoryRequest { min_epoch_no: 0 });
+        if self.testbed_nat {
+            query
+                .metadata_mut()
+                .insert("testbed-nat", "true".parse().unwrap());
+        }
         let directory = conn.query_directory(query).await?.into_inner();
         let number_of_epochs = directory.epochs.len();
         debug!("Fetched directory with {} epochs", number_of_epochs);

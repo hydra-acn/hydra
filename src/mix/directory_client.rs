@@ -91,6 +91,7 @@ impl Client {
                 dir_domain.clone(),
                 *dir_port,
                 config.directory_certificate.clone(),
+                false,
             ),
             fingerprint: format!("{}:{}", config.addr, config.entry_port),
             sk,
