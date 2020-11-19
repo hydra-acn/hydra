@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
         (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
-        (@arg nat: -c --nat "Query the testbed NAT addresses -> mandatory for external load generation")
+        (@arg nat: --nat "Query the testbed NAT addresses -> mandatory for external load generation")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
     .get_matches();
