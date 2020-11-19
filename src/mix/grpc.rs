@@ -44,24 +44,6 @@ impl State {
             }
         }
     }
-
-    async fn relay_impl(&self, req: Request<tonic::Streaming<Cell>>) -> Result<(), Status> {
-        let mut stream = req.into_inner();
-        while let Some(c) = stream.next().await {
-            let cell = match c {
-                Ok(cell) => cell,
-                Err(e) => {
-                    warn!(
-                        "Error during stream processing in function relay_impl: {}",
-                        e
-                    );
-                    continue;
-                }
-            };
-            self.cell_rx_queue.enqueue(cell.into());
-        }
-        Ok(())
-    }
 }
 
 define_grpc_service!(Service, State, MixServer);
@@ -166,22 +148,6 @@ impl Mix for Service {
             }
         }
         Ok(Response::new(cell_vec))
-    }
-
-    async fn relay(
-        &self,
-        req: Request<tonic::Streaming<Cell>>,
-    ) -> Result<Response<RelayAck>, Status> {
-        self.relay_impl(req).await?;
-        Ok(Response::new(RelayAck {}))
-    }
-
-    async fn inject(
-        &self,
-        req: Request<tonic::Streaming<Cell>>,
-    ) -> Result<Response<InjectAck>, Status> {
-        self.relay_impl(req).await?;
-        Ok(Response::new(InjectAck {}))
     }
 }
 

@@ -3,7 +3,7 @@ use tonic::{Request, Response, Status};
 
 use crate::grpc::macros::valid_request_check;
 use crate::tonic_mix::rendezvous_server::{Rendezvous, RendezvousServer};
-use crate::tonic_mix::{Cell, PublishAck, SubscribeAck, Subscription};
+use crate::tonic_mix::{SubscribeAck, Subscription};
 
 use super::processor::subscribe_t;
 
@@ -29,13 +29,5 @@ impl Rendezvous for Service {
         valid_request_check(sub.is_valid(), "Address or port for injection invalid")?;
         self.subscribe_rx_queue.enqueue(sub);
         Ok(Response::new(SubscribeAck {}))
-    }
-
-    async fn publish(
-        &self,
-        _req: Request<tonic::Streaming<Cell>>,
-    ) -> Result<Response<PublishAck>, Status> {
-        // TODO code: remove publish from proto def
-        unimplemented!();
     }
 }
