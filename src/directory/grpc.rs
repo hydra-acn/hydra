@@ -167,12 +167,24 @@ impl directory_server::Directory for Service {
         &self,
         req: Request<DirectoryRequest>,
     ) -> Result<Response<DirectoryReply>, Status> {
+        let nat = match req.metadata().get("testbed-nat") {
+            Some(_) => true,
+            None => false,
+        };
         let epoch_queue = rethrow_as_internal!(self.epochs.read(), "Acquiring a lock failed");
         let mut epoch_infos = Vec::new();
         let min_epoch_no = req.into_inner().min_epoch_no;
         for epoch in epoch_queue.iter() {
             if epoch.epoch_no >= min_epoch_no {
-                epoch_infos.push(epoch.clone());
+                let mut cloned = epoch.clone();
+                if nat {
+                    for mix in cloned.mixes.iter_mut() {
+                        let idx = *mix.address.get(3).unwrap() as u32;
+                        mix.address = vec![141, 24, 207, 69];
+                        mix.entry_port = 9000 + idx;
+                    }
+                }
+                epoch_infos.push(cloned);
             }
         }
 
