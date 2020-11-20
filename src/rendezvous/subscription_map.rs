@@ -1,9 +1,13 @@
 use log::*;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
+use std::time::Duration;
 
 use crate::defs::Token;
+use crate::epoch::current_time;
 use crate::tonic_mix::Subscription;
 
 pub type CircuitId = u32;
@@ -34,12 +38,13 @@ struct SmallEndpoint {
     circuit_id: CircuitId,
 }
 
-type MapType = std::collections::HashMap<Token, Vec<SmallEndpoint>>;
+type MapType = HashMap<Token, Vec<SmallEndpoint>>;
 
 /// Mapping tokens to subscribers
 pub struct SubscriptionMap {
     map: Vec<RwLock<MapType>>,
     addr_map: RwLock<Vec<SocketAddr>>,
+    drop_idx: AtomicUsize,
 }
 
 impl Default for SubscriptionMap {
@@ -58,6 +63,7 @@ impl SubscriptionMap {
         SubscriptionMap {
             map,
             addr_map: RwLock::default(),
+            drop_idx: 0.into(),
         }
     }
 
@@ -119,6 +125,20 @@ impl SubscriptionMap {
         match map_guard.get(token) {
             Some(vec) => vec.iter().map(|e| self.get_endpoint(e)).collect(),
             None => Vec::new(),
+        }
+    }
+
+    pub fn drop_some(&self, deadline: Duration) {
+        loop {
+            if let None = deadline.checked_sub(current_time()) {
+                return;
+            }
+            let drop_idx = self.drop_idx.fetch_add(1, Ordering::Relaxed);
+            if drop_idx >= self.map.len() {
+                return;
+            }
+            let mut guard = self.map[drop_idx].write().unwrap();
+            std::mem::replace(&mut *guard, HashMap::default());
         }
     }
 }

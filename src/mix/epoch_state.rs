@@ -3,6 +3,7 @@ use log::*;
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use crate::defs::{AuthTag, CircuitId};
 use crate::net::PacketWithNextHop;
@@ -180,6 +181,15 @@ impl EpochState {
 
     pub fn circuit_id_map(&self) -> &Arc<CircuitIdMap> {
         &self.circuit_id_map
+    }
+
+    /// Drops the circuit information (if not dropped already). If time permits, starts to drop the
+    /// subscription map as well.
+    pub fn drop_some(&mut self, deadline: Duration) {
+        if self.circuits.len() > 0 {
+            std::mem::replace(&mut self.circuits, Arc::default());
+        }
+        self.sub_map.drop_some(deadline);
     }
 }
 

@@ -29,6 +29,7 @@ pub struct Worker {
     cell_processor: cell_rss_t::Processor,
     setup_state: EpochSetupState,
     state: EpochState,
+    drop_state: EpochState,
     sync_tx: xbeam::Sender<SyncBeat>,
 }
 
@@ -51,6 +52,7 @@ impl Worker {
             cell_processor,
             setup_state: EpochSetupState::new(0),
             state: EpochState::default(),
+            drop_state: EpochState::default(),
             sync_tx,
         }
     }
@@ -126,6 +128,9 @@ impl Worker {
             true => Duration::from_secs(setup_epoch.setup_start_time),
         };
 
+        info!("Dropping some old state (circuits only)");
+        self.drop_state.drop_some(current_time());
+
         info!(
             "Next up: setup for epoch {}, and communication for epoch {}",
             setup_epoch.epoch_no, communication_epoch.epoch_no
@@ -157,6 +162,10 @@ impl Worker {
 
             // round done, time for some setup handling
             // TODO code: move inside separate function
+            let drop_deadline = current_time() + Duration::from_secs(1);
+            info!("Dropping some old state");
+            self.drop_state.drop_some(drop_deadline);
+
             let l = setup_epoch.path_length;
             let k = communication_epoch.number_of_rounds;
             let setup_layer = (l + 1) * round_no / k;
@@ -209,7 +218,8 @@ impl Worker {
             }
         }
         info!("Communication of epoch {} and setup of epoch {} done, updating the circuit maps accordingly", communication_epoch.epoch_no, setup_epoch.epoch_no);
-        self.state = EpochState::finalize_setup(&mut self.setup_state);
+        let next_comm_state = EpochState::finalize_setup(&mut self.setup_state);
+        self.drop_state = std::mem::replace(&mut self.state, next_comm_state);
         info!(
             "We have {} circuits and {} dummy circuits for the next communication",
             self.state.circuits().len(),
