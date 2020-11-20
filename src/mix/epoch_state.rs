@@ -187,7 +187,7 @@ impl EpochState {
     /// subscription map as well.
     pub fn drop_some(&mut self, deadline: Duration) {
         if self.circuits.len() > 0 {
-            std::mem::replace(&mut self.circuits, Arc::default());
+            self.circuits = Arc::default();
         }
         self.sub_map.drop_some(deadline);
     }
