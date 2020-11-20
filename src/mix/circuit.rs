@@ -23,7 +23,7 @@ use rand::Rng;
 use std::cmp::{self, Ordering};
 use std::collections::{BTreeMap, VecDeque};
 use std::convert::TryInto;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
 pub type ExtendInfo = PacketWithNextHop<SetupPacket>;
@@ -163,9 +163,18 @@ impl Circuit {
                 IpAddr::V6(v6) => v6,
                 _ => panic!("Why should this not be an v6 address?"),
             };
-            let port = decrypted[16] as u16 + 256 * decrypted[17] as u16;
+            let mut port = decrypted[16] as u16 + 256 * decrypted[17] as u16;
             let next_setup_hop = match v6.to_ipv4() {
-                Some(v4) => SocketAddr::new(IpAddr::V4(v4), port),
+                Some(mut v4) => {
+                    // we have to undo NAT for forwarding inside the testbed
+                    let nat_addr = Ipv4Addr::new(141, 24, 207, 69);
+                    if v4 == nat_addr {
+                        let mix_idx = (port - 9000) as u8;
+                        v4 = Ipv4Addr::new(10, 0, 0, mix_idx);
+                        port = 9000;
+                    }
+                    SocketAddr::new(IpAddr::V4(v4), port)
+                }
                 None => SocketAddr::new(IpAddr::V6(v6), port),
             };
             let mut upstream_hop = next_setup_hop.clone();
