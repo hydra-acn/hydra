@@ -182,6 +182,7 @@ impl directory_server::Directory for Service {
                         let idx = *mix.address.get(3).unwrap() as u32;
                         mix.address = vec![141, 24, 207, 69];
                         mix.entry_port = 9000 + idx;
+                        mix.relay_port = 9000 + idx;
                     }
                 }
                 epoch_infos.push(cloned);
