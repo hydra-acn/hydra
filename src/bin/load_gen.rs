@@ -38,6 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
         (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
         (@arg nat: --nat "Query the testbed NAT addresses -> mandatory for external load generation")
+        (@arg noWait: --("no-wait") "Don't wait for the next epoch start")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
     .get_matches();
@@ -56,10 +57,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => None,
     };
     let nat = args.is_present("nat");
+    let wait = !args.is_present("noWait");
 
     let dir_client = Arc::new(DirClient::new(dir_domain, dir_port, dir_certificate, nat));
     let dir_client_handle = tokio::spawn(directory_client::run(dir_client.clone()));
-    let setup_handle = tokio::task::spawn(setup_loop(dir_client.clone(), n, runs));
+    let setup_handle = tokio::task::spawn(setup_loop(dir_client.clone(), n, runs, wait));
     match tokio::try_join!(dir_client_handle, setup_handle) {
         Ok(_) => (),
         Err(e) => error!("Something panicked: {}", e),
@@ -67,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
+async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32, wait: bool) {
     let mut maybe_epoch = dir_client.next_epoch_info();
     while let None = maybe_epoch {
         warn!("Don't know the next epoch for setup, retrying in 5 seconds");
@@ -80,11 +82,14 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32) {
     let epoch_duration =
         Duration::from_secs(next_epoch.communication_start_time - next_epoch.setup_start_time);
 
-    // if we don't have plenty of time left (setup duration - 10s), skip this epoch
-    let wait_for = Duration::from_secs(next_epoch.setup_start_time - current_time_in_secs() + 1);
-    if wait_for < epoch_duration - Duration::from_secs(10) {
-        sleep(wait_for).await;
-        epoch_no += 1;
+    if wait {
+        // if we don't have plenty of time left (setup duration - 10s), skip this epoch
+        let wait_for =
+            Duration::from_secs(next_epoch.setup_start_time - current_time_in_secs() + 1);
+        if wait_for < epoch_duration - Duration::from_secs(10) {
+            sleep(wait_for).await;
+            epoch_no += 1;
+        }
     }
 
     for r in 0..runs {
