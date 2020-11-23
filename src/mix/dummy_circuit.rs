@@ -56,7 +56,7 @@ impl DummyCircuit {
         // system by forcing the system to echo them back on the same circuit; to provide security
         // benefits, cells should be send "end-to-end" between *different* dummy circuits on the
         // same mix, with random payload; nevertheless, this should only happen occassionally -
-        // otherwise rendezvous nodes find out that a circuit never has dummy circuits -> return
+        // otherwise rendezvous nodes find out that a circuit never has dummy cells -> return
         // `None` in this case
         let mut cell = Cell::dummy(self.circuit.circuit_id(), round_no);
         // TODO security: use some Zipf-like distribution

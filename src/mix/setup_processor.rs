@@ -46,7 +46,7 @@ pub fn process_setup_pkt(
     // first of all, check if its the right place and time for this setup packet
     match pkt.epoch_no().cmp(&epoch.epoch_no) {
         Ordering::Less => {
-            debug!(
+            warn!(
                 "Dropping late (by {} epochs) setup packet",
                 epoch.epoch_no - pkt.epoch_no()
             );
@@ -58,14 +58,13 @@ pub fn process_setup_pkt(
         }
         Ordering::Equal => match pkt_ttl.cmp(&current_ttl) {
             Ordering::Greater => {
-                debug!(
+                warn!(
                     "Dropping late (by {} hops) setup packet",
                     pkt_ttl - current_ttl
                 );
                 return setup_t::Result::Drop;
             }
             Ordering::Less => {
-                // this should not happen because of sync between mixes
                 warn!(
                     "Requeing early (by {} hops) setup packet",
                     current_ttl - pkt_ttl
@@ -88,7 +87,7 @@ pub fn process_setup_pkt(
 
     let mut dup_filter = bloom_bitmap.write().expect("Lock poisoned");
     if dup_filter.check_and_set(pkt.auth_tag()) {
-        debug!("Dropping duplicate setup packet");
+        warn!("Dropping duplicate setup packet");
         return setup_t::Result::Drop;
     }
 
