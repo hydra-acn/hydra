@@ -4,10 +4,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
 
+use crate::defs::CircuitId;
+use crate::grpc::macros::valid_request_check;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
 use crate::net::cell::Cell as FlatCell;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
-use crate::tonic_mix::*;
+use crate::tonic_mix::{
+    Cell, CellVector, LatePollRequest, SendAndLatePollRequest, SetupAck, SetupPacket,
+};
 use crate::{define_grpc_service, rethrow_as_invalid, unwrap_or_throw_invalid};
 
 use super::cell_processor::cell_rss_t;
@@ -43,6 +47,21 @@ impl State {
                 self.storage.insert_cell(cell);
             }
         }
+    }
+
+    fn late_poll_impl(&self, circuit_ids: &[CircuitId]) -> CellVector {
+        let mut cell_vec = CellVector::default();
+        for circuit_id in circuit_ids {
+            match self.storage.delete_circuit(&circuit_id) {
+                Some(vec) => {
+                    for c in vec.into_iter() {
+                        cell_vec.cells.push(c.into());
+                    }
+                }
+                None => (),
+            }
+        }
+        cell_vec
     }
 }
 
@@ -136,17 +155,27 @@ impl Mix for Service {
         req: Request<LatePollRequest>,
     ) -> Result<Response<CellVector>, Status> {
         let ids = req.into_inner().circuit_ids;
-        let mut cell_vec = CellVector::default();
-        for circuit_id in ids {
-            match self.storage.delete_circuit(&circuit_id) {
-                Some(vec) => {
-                    for c in vec.into_iter() {
-                        cell_vec.cells.push(c.into());
-                    }
-                }
-                None => (),
-            }
+        let cell_vec = self.late_poll_impl(&ids);
+        Ok(Response::new(cell_vec))
+    }
+
+    async fn send_and_late_poll(
+        &self,
+        req: Request<SendAndLatePollRequest>,
+    ) -> Result<Response<CellVector>, Status> {
+        let req = req.into_inner();
+
+        // first, enqueue the new cell
+        if let Some(cell) = req.cell {
+            valid_request_check(
+                cell.round_no == 0,
+                "Only use SendAndLatePoll for first round",
+            )?;
+            self.cell_rx_queue.enqueue(cell.into());
         }
+
+        // late poll
+        let cell_vec = self.late_poll_impl(&req.circuit_ids);
         Ok(Response::new(cell_vec))
     }
 }
