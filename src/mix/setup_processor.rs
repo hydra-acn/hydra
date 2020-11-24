@@ -180,7 +180,12 @@ pub fn create_dummy_circuit(
 ) -> PacketWithNextHop<SetupPacket> {
     // TODO code: move path selection inside DummyCircuit::new()?
     let path = dir_client
-        .select_path_tunable(epoch_no, Some(ttl as usize), Some(dir_client.fingerprint()))
+        .select_path_tunable(
+            epoch_no,
+            Some(ttl as usize),
+            Some(dir_client.fingerprint()),
+            None,
+        )
         .expect("No path available");
     let (circuit, extend) =
         DummyCircuit::new(epoch_no, layer, &path).expect("Creating dummy circuit failed");

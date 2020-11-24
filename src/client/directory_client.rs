@@ -180,17 +180,20 @@ impl Client {
 
     /// Default client side path selection according to the Hydra protocol for epoch `epoch_no`.
     pub fn select_path(&self, epoch_no: EpochNo) -> Result<Vec<MixInfo>, Error> {
-        self.select_path_tunable(epoch_no, None, None)
+        // TODO security: use entry guards per default
+        self.select_path_tunable(epoch_no, None, None, None)
     }
 
     /// Tuneable path selection for epoch `epoch_no`.
     /// Use `number_of_hops` if you do not want to use the path length dictated by the directory.
     /// Use `exclude_fingerprint` if you want to exclude a mix from path selection.
+    /// Use `entry_guard` if you want to force a specific mix (fingerprint) as first hop.
     pub fn select_path_tunable(
         &self,
         epoch_no: EpochNo,
         number_of_hops: Option<usize>,
         exclude_fingerprint: Option<&str>,
+        entry_guard: Option<&str>,
     ) -> Result<Vec<MixInfo>, Error> {
         let epoch_map = self.epochs.read().expect("Lock poisoned");
         let epoch = epoch_map
@@ -222,10 +225,23 @@ impl Client {
             .map(|&mix| mix.clone())
             .collect();
 
-        if allow_dup {
+        if let Some(guard_fp) = entry_guard {
+            if allow_dup == false {
+                warn!("Using entry guards with custom path length is currently not recommended, you may have an unwanted duplicate on the path now")
+            };
+            let new_entry_ref = canditates.iter().find(|mix| mix.fingerprint == *guard_fp);
+            match new_entry_ref {
+                Some(mix) => path[0] = (*mix).clone(),
+                None => warn!(
+                    "Entry guard with fingerprint {} not found, using another entry mix",
+                    guard_fp
+                ),
+            }
+        } else if allow_dup {
             let new_entry_ref = canditates.choose(cprng).expect("Checked above");
             path[0] = (*new_entry_ref).clone();
         }
+
         Ok(path)
     }
 

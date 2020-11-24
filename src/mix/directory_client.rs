@@ -122,7 +122,8 @@ impl Client {
     delegate!(select_path_tunable;
         epoch_no: EpochNo,
         number_of_hops: Option<usize>,
-        exclude_fingerprint: Option<&str>
+        exclude_fingerprint: Option<&str>,
+        entry_guard: Option<&str>
      => Result<Vec<MixInfo>, Error>);
 
     /// note: registration also includes the first fetch
