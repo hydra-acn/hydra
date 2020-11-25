@@ -146,7 +146,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
         info!("Sending setup packets for epoch {} done", epoch_no);
 
         // spawn a task to handle the communication phase
-        tokio::spawn(run_epoch_communication(epoch, clients.clone(), n, r, runs));
+        tokio::spawn(run_epoch_communication(epoch, clients.clone(), r, runs));
         epoch_no += 1;
     }
 
@@ -165,7 +165,6 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
 async fn run_epoch_communication(
     epoch: EpochInfo,
     clients: Vec<Arc<Client>>,
-    n: usize,
     run: usize,
     runs: usize,
 ) {
@@ -211,6 +210,9 @@ async fn run_epoch_communication(
         info!(".. Cumulative total cell loss counter: {}", cum_lost_cells);
         info!(".. Clients without loss: {}", circuits_without_loss);
         round_start += round_interval;
+        if run > 0 && round_no == 0 {
+            epoch_stats(&epoch, run, &clients);
+        }
     }
 
     // wait and do a plain late poll for the last run
@@ -230,11 +232,13 @@ async fn run_epoch_communication(
             t.await.expect("Task failed");
         }
         info!(".. late polling done");
+        epoch_stats(&epoch, run, &clients);
     }
 
     info!("Communication for epoch {} done", epoch_no);
+}
 
-    // collect stats
+fn epoch_stats(epoch: &EpochInfo, run: usize, clients: &Vec<Arc<Client>>) {
     let mut avg_loss_rate = 0f64;
     let result_path = "load-gen-results.dat";
     let (file, is_new) = match Path::new(result_path).exists() {
@@ -245,19 +249,19 @@ async fn run_epoch_communication(
     match file {
         Ok(mut f) => {
             if is_new {
-                f.write_all(b"n, n_dash, loss, run, epoch\n")
+                f.write_all(b"n, loss, run, epoch\n")
                     .unwrap_or_else(|e| warn!("Writing header failed: {}", e));
             };
             for client in clients.iter() {
                 let loss_rate = client.lost_cells() as f64 / epoch.number_of_rounds as f64;
+                client.clear_lost_cells();
                 avg_loss_rate += loss_rate / clients.len() as f64;
                 let result_line = format!(
-                    "{}, {}, {}, {}, {}\n",
-                    n,
+                    "{}, {}, {}, {}\n",
                     clients.len(),
                     loss_rate,
                     run,
-                    epoch_no
+                    epoch.epoch_no
                 );
                 f.write_all(result_line.as_bytes())
                     .unwrap_or_else(|e| warn!("Writing results failed: {}", e));
@@ -503,6 +507,10 @@ impl Client {
 
     pub fn lost_cells(&self) -> u32 {
         self.lost_cells.load(Ordering::Relaxed)
+    }
+
+    pub fn clear_lost_cells(&self) {
+        self.lost_cells.store(0, Ordering::Relaxed);
     }
 }
 
