@@ -2,6 +2,7 @@ use clap::{clap_app, value_t};
 use futures_util::stream;
 use log::*;
 use rand::seq::IteratorRandom;
+use rand::thread_rng;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -15,12 +16,12 @@ use tokio::time::delay_for as sleep;
 use tokio::time::Duration;
 
 use hydra::client::directory_client;
-use hydra::defs::{CircuitId, RoundNo};
+use hydra::defs::RoundNo;
 use hydra::epoch::{current_time, current_time_in_secs, EpochNo};
 use hydra::mix::channel_pool::{ChannelPool, MixChannel};
 use hydra::net::cell::CellCmd;
 use hydra::net::PacketWithNextHop;
-use hydra::tonic_directory::{EpochInfo, MixInfo};
+use hydra::tonic_directory::EpochInfo;
 use hydra::tonic_mix::{Cell, LatePollRequest, SendAndLatePollRequest, SetupPacket};
 
 type DirClient = hydra::client::directory_client::Client;
@@ -82,11 +83,6 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
     let epoch_duration =
         Duration::from_secs(next_epoch.communication_start_time - next_epoch.setup_start_time);
 
-    let mut entry_guards: Vec<RwLock<Option<String>>> = Vec::new();
-    for _ in 0..n {
-        entry_guards.push(RwLock::default());
-    }
-
     if wait {
         // if we don't have plenty of time left (setup duration - 10s), skip this epoch
         let wait_for =
@@ -97,13 +93,17 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
         }
     }
 
+    let mut clients: Vec<Arc<Client>> = Vec::new();
+    for i in 0..n {
+        clients.push(Arc::new(Client::new(i, dir_client.clone(), epoch_no)));
+    }
+
     for r in 0..runs {
         let epoch = dir_client
             .get_epoch_info(epoch_no)
             .expect("Not enough epochs in advance?");
 
         let channels = prepare_entry_channels(&epoch).await;
-        let circuits: RwLock<Vec<Arc<Circuit>>> = RwLock::default();
         let pkt_by_dst: RwLock<HashMap<SocketAddr, Vec<SetupPacket>>> = RwLock::default();
 
         info!("Starting to create setup packets for epoch {}", epoch_no);
@@ -113,17 +113,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
                 return;
             }
 
-            let mut entry_guard = entry_guards[i].write().unwrap();
-            let entry_as_ref = entry_guard.as_ref().map(|fp| fp.as_str());
-
-            let path = dir_client
-                .select_path_tunable(epoch_no, None, None, entry_as_ref)
-                .expect("Path selection failed");
-
-            *entry_guard = Some(path[0].fingerprint.to_string());
-
-            let (circuit, setup_pkt) = Circuit::new(epoch_no, path, r, n, i);
-            circuits.write().unwrap().push(Arc::new(circuit));
+            let setup_pkt = clients[i].new_circuit(epoch_no, dir_client.clone());
 
             let mut map = pkt_by_dst.write().unwrap();
             match map.get_mut(setup_pkt.next_hop()) {
@@ -155,21 +145,8 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
         }
         info!("Sending setup packets for epoch {} done", epoch_no);
 
-        // move circuits out of the RwLock
-        let final_circuits;
-        {
-            let mut circuit_guard = circuits.write().unwrap();
-            final_circuits = std::mem::replace(&mut *circuit_guard, Vec::new());
-        }
-        if final_circuits.len() != n as usize {
-            warn!(
-                "Did not create all circuits in time; {} missing",
-                n as usize - final_circuits.len()
-            );
-        }
-
         // spawn a task to handle the communication phase
-        tokio::spawn(run_epoch_communication(epoch, final_circuits, n, r, runs));
+        tokio::spawn(run_epoch_communication(epoch, clients.clone(), n, r, runs));
         epoch_no += 1;
     }
 
@@ -181,15 +158,15 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
     let wait_for =
         Duration::from_secs(not_our_epoch.communication_start_time - current_time_in_secs() + 1);
     sleep(wait_for).await;
-    // TODO code graceful shutdown?
+    // TODO code: graceful shutdown?
     panic!("Panic intended :)");
 }
 
 async fn run_epoch_communication(
     epoch: EpochInfo,
-    circuits: Vec<Arc<Circuit>>,
+    clients: Vec<Arc<Client>>,
     n: usize,
-    r: usize,
+    run: usize,
     runs: usize,
 ) {
     let epoch_no = epoch.epoch_no;
@@ -209,9 +186,10 @@ async fn run_epoch_communication(
         );
 
         let mut tasks = Vec::new();
-        for circ in circuits.iter() {
+        for client in clients.iter() {
             tasks.push(tokio::spawn(run_communication_round(
-                circ.clone(),
+                client.clone(),
+                run,
                 round_no,
                 channels.clone(),
             )));
@@ -222,8 +200,8 @@ async fn run_epoch_communication(
         }
         let mut cum_lost_cells = 0;
         let mut circuits_without_loss = 0;
-        for circ in circuits.iter() {
-            let lost = circ.lost_cells();
+        for client in clients.iter() {
+            let lost = client.lost_cells();
             cum_lost_cells += lost;
             if lost == 0 {
                 circuits_without_loss += 1;
@@ -231,17 +209,21 @@ async fn run_epoch_communication(
         }
         info!(".. Send/receiving done");
         info!(".. Cumulative total cell loss counter: {}", cum_lost_cells);
-        info!(".. Circuits without loss: {}", circuits_without_loss);
+        info!(".. Clients without loss: {}", circuits_without_loss);
         round_start += round_interval;
     }
 
     // wait and do a plain late poll for the last run
-    if r == runs - 1 {
+    if run == runs - 1 {
         delay_till(round_start).await;
         info!("Late polling for epoch {}", epoch_no);
         let mut tasks = Vec::new();
-        for circ in circuits.iter() {
-            tasks.push(tokio::spawn(run_late_poll(circ.clone(), channels.clone())));
+        for client in clients.iter() {
+            tasks.push(tokio::spawn(run_late_poll(
+                client.clone(),
+                run,
+                channels.clone(),
+            )));
         }
         // wait for all tasks to finish
         for t in tasks.iter_mut() {
@@ -266,15 +248,15 @@ async fn run_epoch_communication(
                 f.write_all(b"n, n_dash, loss, run, epoch\n")
                     .unwrap_or_else(|e| warn!("Writing header failed: {}", e));
             };
-            for circ in circuits.iter() {
-                let loss_rate = circ.lost_cells() as f64 / epoch.number_of_rounds as f64;
-                avg_loss_rate += loss_rate / circuits.len() as f64;
+            for client in clients.iter() {
+                let loss_rate = client.lost_cells() as f64 / epoch.number_of_rounds as f64;
+                avg_loss_rate += loss_rate / clients.len() as f64;
                 let result_line = format!(
                     "{}, {}, {}, {}, {}\n",
                     n,
-                    circuits.len(),
+                    clients.len(),
                     loss_rate,
-                    r,
+                    run,
                     epoch_no
                 );
                 f.write_all(result_line.as_bytes())
@@ -287,15 +269,18 @@ async fn run_epoch_communication(
 }
 
 async fn run_communication_round(
-    circ: Arc<Circuit>,
+    client: Arc<Client>,
+    run: usize,
     round_no: RoundNo,
     channels: Arc<MixChannelPool>,
 ) {
-    circ.run_communication_round(round_no, channels).await;
+    client
+        .run_communication_round(run, round_no, channels)
+        .await;
 }
 
-async fn run_late_poll(circ: Arc<Circuit>, channels: Arc<MixChannelPool>) {
-    circ.late_poll(channels).await;
+async fn run_late_poll(client: Arc<Client>, run: usize, channels: Arc<MixChannelPool>) {
+    client.late_poll(run, channels).await;
 }
 
 async fn delay_till(time: Duration) {
@@ -314,100 +299,86 @@ async fn prepare_entry_channels(epoch: &EpochInfo) -> MixChannelPool {
     channels
 }
 
-struct Circuit {
-    circuit: ClientCircuit,
-    path: Vec<MixInfo>,
+struct Client {
+    client_id: usize,
+    circuits: RwLock<Vec<ClientCircuit>>,
+    entry_fingerprint: String,
     entry_addr: SocketAddr,
     expected_cell: RwLock<Option<Cell>>,
     lost_cells: AtomicU32,
-    prev_circuit_id: Option<CircuitId>,
 }
 
-impl std::fmt::Debug for Circuit {
+impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let path_str = self
-            .path
-            .iter()
-            .map(|m| m.entry_port.to_string())
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        write!(f, "[{}: {}]", self.circuit_id(), path_str)
+        write!(f, "[Client {}]", self.client_id)
     }
 }
 
-impl Circuit {
-    /// Create circuit with index `i` (out of `n` circuits in total) for run `r`.
-    pub fn new(
-        epoch_no: EpochNo,
-        path: Vec<MixInfo>,
-        r: usize,
-        n: usize,
-        i: usize,
-    ) -> (Self, PacketWithNextHop<SetupPacket>) {
-        let circuit_id = Some((r * n + i) as CircuitId);
-        let prev_circuit_id = match r {
-            0 => None,
-            _ => Some(((r - 1) * n + i) as CircuitId),
-        };
-        let (client_circuit, setup_pkt) =
-            ClientCircuit::new(epoch_no, &path, Vec::new(), circuit_id)
-                .expect("Creating setup packet failed");
-        let entry_addr = path[0]
-            .entry_address()
-            .expect("Getting entry address failed");
-        let circuit = Circuit {
-            circuit: client_circuit,
-            path,
-            entry_addr,
-            expected_cell: RwLock::new(None),
+impl Client {
+    pub fn new(client_id: usize, dir_client: Arc<DirClient>, first_epoch: EpochNo) -> Self {
+        let entry_guard = dir_client.select_entry_guard(first_epoch).unwrap();
+        Client {
+            client_id,
+            circuits: RwLock::default(),
+            entry_fingerprint: entry_guard.fingerprint.clone(),
+            entry_addr: entry_guard.entry_address().unwrap(),
+            expected_cell: RwLock::default(),
             lost_cells: AtomicU32::new(0),
-            prev_circuit_id,
-        };
-        (circuit, setup_pkt)
-    }
-
-    pub fn circuit_id(&self) -> CircuitId {
-        self.circuit.circuit_id()
-    }
-
-    pub fn create_plaintext_cell(&self, round_no: RoundNo) -> Cell {
-        let mut cell = Cell::dummy(self.circuit.circuit_id(), round_no);
-        let rng = &mut rand::thread_rng();
-        let token = self
-            .circuit
-            .dummy_tokens()
-            .iter()
-            .choose(rng)
-            .expect("Expected at least one token");
-        cell.set_token(*token);
-        // we want the cell echoed back by the rendezvous service
-        cell.set_command(CellCmd::Broadcast);
-        cell
-    }
-
-    pub async fn run_communication_round(&self, round_no: RoundNo, channels: Arc<MixChannelPool>) {
-        if round_no == 0 {
-            self.send_and_late_poll(channels).await;
-        } else {
-            self.send_and_receive(round_no, channels).await;
         }
     }
 
-    pub async fn send_and_late_poll(&self, channels: Arc<MixChannelPool>) {
-        let plain_cell = self.create_plaintext_cell(0);
-        let mut cell = plain_cell.clone();
-        self.circuit
-            .onion_encrypt(cell.round_no, &mut cell.onion)
-            .expect("Onion encryption failed");
+    pub fn new_circuit(
+        &self,
+        epoch_no: EpochNo,
+        dir_client: Arc<DirClient>,
+    ) -> PacketWithNextHop<SetupPacket> {
+        let path = dir_client
+            .select_path_tunable(epoch_no, None, None, Some(self.entry_fingerprint.as_str()))
+            .unwrap();
+        let (circuit, setup_pkt) =
+            ClientCircuit::new(epoch_no, &path, Vec::new(), None).expect("Creating circuit failed");
+        self.circuits.write().unwrap().push(circuit);
+        setup_pkt
+    }
 
-        let late_poll_ids = match self.prev_circuit_id {
-            Some(id) => vec![id],
-            None => vec![],
-        };
-        let poll_req = SendAndLatePollRequest {
-            cell: Some(cell),
-            circuit_ids: late_poll_ids,
-        };
+    pub async fn run_communication_round(
+        &self,
+        run: usize,
+        round_no: RoundNo,
+        channels: Arc<MixChannelPool>,
+    ) {
+        if round_no == 0 {
+            self.send_and_late_poll(run, channels).await;
+        } else {
+            self.send_and_receive(run, round_no, channels).await;
+        }
+    }
+
+    pub async fn send_and_late_poll(&self, run: usize, channels: Arc<MixChannelPool>) {
+        let poll_req;
+        let plain_cell;
+        {
+            let circuits_guard = self.circuits.read().unwrap();
+            let circuit = circuits_guard.get(run).unwrap();
+            let prev_circuit = match run {
+                0 => None,
+                _ => Some(circuits_guard.get(run - 1).unwrap()),
+            };
+            plain_cell = create_plaintext_cell(circuit, 0);
+            let mut cell = plain_cell.clone();
+            circuit
+                .onion_encrypt(cell.round_no, &mut cell.onion)
+                .expect("Onion encryption failed");
+
+            let late_poll_ids = match prev_circuit {
+                None => vec![],
+                Some(circ) => vec![circ.circuit_id()],
+            };
+            poll_req = SendAndLatePollRequest {
+                cell: Some(cell),
+                circuit_ids: late_poll_ids,
+            };
+        }
         let mut channel = channels
             .get_channel(&self.entry_addr)
             .await
@@ -419,15 +390,30 @@ impl Circuit {
             .into_inner()
             .cells;
         *self.expected_cell.write().unwrap() = Some(plain_cell);
-        self.check_nack(&mut received);
+        if run > 0 {
+            self.check_nack(&mut received, run - 1);
+        } else if received.len() > 0 {
+            warn!("Late polled something, but did not expect it");
+        }
     }
 
-    pub async fn send_and_receive(&self, round_no: RoundNo, channels: Arc<MixChannelPool>) {
-        let plain_cell = self.create_plaintext_cell(round_no);
-        let mut cell = plain_cell.clone();
-        self.circuit
-            .onion_encrypt(cell.round_no, &mut cell.onion)
-            .expect("Onion encryption failed");
+    pub async fn send_and_receive(
+        &self,
+        run: usize,
+        round_no: RoundNo,
+        channels: Arc<MixChannelPool>,
+    ) {
+        let mut cell;
+        let plain_cell;
+        {
+            let circuits_guard = self.circuits.read().unwrap();
+            let circuit = circuits_guard.get(run).unwrap();
+            plain_cell = create_plaintext_cell(circuit, round_no);
+            cell = plain_cell.clone();
+            circuit
+                .onion_encrypt(cell.round_no, &mut cell.onion)
+                .expect("Onion encryption failed");
+        }
         let mut channel = channels
             .get_channel(&self.entry_addr)
             .await
@@ -438,14 +424,19 @@ impl Circuit {
             .expect("Send and receive failed")
             .into_inner()
             .cells;
-        self.check_received(&mut received);
+        self.check_received(&mut received, run);
         *self.expected_cell.write().unwrap() = Some(plain_cell);
     }
 
-    pub async fn late_poll(&self, channels: Arc<MixChannelPool>) {
-        let req = LatePollRequest {
-            circuit_ids: vec![self.circuit_id()],
-        };
+    pub async fn late_poll(&self, run: usize, channels: Arc<MixChannelPool>) {
+        let req;
+        {
+            let circuits_guard = self.circuits.read().unwrap();
+            let circuit = circuits_guard.get(run).unwrap();
+            req = LatePollRequest {
+                circuit_ids: vec![circuit.circuit_id()],
+            };
+        }
         let mut channel = channels
             .get_channel(&self.entry_addr)
             .await
@@ -456,16 +447,18 @@ impl Circuit {
             .expect("Late poll failed")
             .into_inner()
             .cells;
-        self.check_nack(&mut received);
+        self.check_nack(&mut received, run);
     }
 
-    pub fn check_received(&self, cells: &mut [Cell]) {
+    pub fn check_received(&self, cells: &mut [Cell], run: usize) {
+        let circuits_guard = self.circuits.read().unwrap();
+        let circuit = circuits_guard.get(run).unwrap();
         if let Some(expected) = &*self.expected_cell.read().unwrap() {
             if cells.len() > 1 {
                 debug!("{:?} Received {} cells instead of 1", self, cells.len());
             }
             if let Some(cell) = cells.last_mut() {
-                self.circuit
+                circuit
                     .onion_decrypt(cell.round_no, &mut cell.onion)
                     .expect("Onion decryption failed");
                 if expected.onion != cell.onion {
@@ -483,19 +476,20 @@ impl Circuit {
         }
     }
 
-    pub fn check_nack(&self, cells: &mut [Cell]) {
+    pub fn check_nack(&self, cells: &mut [Cell], run: usize) {
+        let circuits_guard = self.circuits.read().unwrap();
+        let circuit = circuits_guard.get(run).unwrap();
         if cells.is_empty() {
-            if self.prev_circuit_id.is_some() {
-                debug!("{:?} Late polled nothing", self);
-                self.lost_cells.fetch_add(1, Ordering::Relaxed);
-            }
+            debug!("{:?} Late polled nothing", self);
+            self.lost_cells.fetch_add(1, Ordering::Relaxed);
             return;
         }
         if cells.len() > 1 {
             debug!("{:?} Late polled {} cells instead of 1", self, cells.len());
         }
         let nack = cells.last_mut().expect("Checked before");
-        self.circuit
+
+        circuit
             .onion_decrypt(nack.round_no, &mut nack.onion)
             .expect("Onion decryption failed");
         for b in &nack.onion[1..8] {
@@ -510,4 +504,17 @@ impl Circuit {
     pub fn lost_cells(&self) -> u32 {
         self.lost_cells.load(Ordering::Relaxed)
     }
+}
+
+fn create_plaintext_cell(circuit: &ClientCircuit, round_no: RoundNo) -> Cell {
+    let mut cell = Cell::dummy(circuit.circuit_id(), round_no);
+    let token = circuit
+        .dummy_tokens()
+        .iter()
+        .choose(&mut thread_rng())
+        .expect("Expected at least one dummy token");
+    cell.set_token(*token);
+    // we want the cell echoed back by the rendezvous service
+    cell.set_command(CellCmd::Broadcast);
+    cell
 }
