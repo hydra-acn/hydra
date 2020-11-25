@@ -178,6 +178,20 @@ impl Client {
         None
     }
 
+    /// Select one mix as entry guard, using the available mixes from epoch `epoch_no`.
+    pub fn select_entry_guard(&self, epoch_no: EpochNo) -> Result<MixInfo, Error> {
+        let epoch_map = self.epochs.read().expect("Lock poisoned");
+        let epoch = epoch_map
+            .get(&epoch_no)
+            .ok_or_else(|| Error::NoneError(format!("Epoch {} not known", epoch_no)))?;
+
+        epoch
+            .mixes
+            .choose(&mut thread_cprng())
+            .cloned()
+            .ok_or_else(|| Error::NoneError(format!("No mix in epoch {}", epoch_no)))
+    }
+
     /// Default client side path selection according to the Hydra protocol for epoch `epoch_no`.
     pub fn select_path(&self, epoch_no: EpochNo) -> Result<Vec<MixInfo>, Error> {
         // TODO security: use entry guards per default
