@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     hydra::log_cfg::init(args.occurrences_of("verbose") > 0);
     info!("Starting load generator");
 
-    let n = value_t!(args, "n", u64).expect("n has to an unsigned integer");
+    let n = value_t!(args, "n", usize).expect("n has to an unsigned integer");
     let runs = value_t!(args, "runs", u32).expect("runs has to an unsigned integer");
 
     // directory client config
@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32, wait: bool) {
+async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: u32, wait: bool) {
     let mut maybe_epoch = dir_client.next_epoch_info();
     while let None = maybe_epoch {
         warn!("Don't know the next epoch for setup, retrying in 5 seconds");
@@ -81,6 +81,11 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32, wait: bool) {
     let mut epoch_no = next_epoch.epoch_no;
     let epoch_duration =
         Duration::from_secs(next_epoch.communication_start_time - next_epoch.setup_start_time);
+
+    let mut entry_guards: Vec<RwLock<Option<String>>> = Vec::new();
+    for _ in 0..n {
+        entry_guards.push(RwLock::default());
+    }
 
     if wait {
         // if we don't have plenty of time left (setup duration - 10s), skip this epoch
@@ -103,14 +108,20 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32, wait: bool) {
 
         info!("Starting to create setup packets for epoch {}", epoch_no);
         // first, create all packets and circuit state
-        (0..n).into_par_iter().for_each(|_| {
+        (0..n).into_par_iter().for_each(|i| {
             if current_time_in_secs() > epoch.setup_start_time - 1 {
                 return;
             }
 
+            let mut entry_guard = entry_guards[i].write().unwrap();
+            let entry_as_ref = entry_guard.as_ref().map(|fp| fp.as_str());
+
             let path = dir_client
-                .select_path(epoch_no)
+                .select_path_tunable(epoch_no, None, None, entry_as_ref)
                 .expect("Path selection failed");
+
+            *entry_guard = Some(path[0].fingerprint.to_string());
+
             let (circuit, setup_pkt) = Circuit::new(epoch_no, path);
             circuits.write().unwrap().push(Arc::new(circuit));
 
@@ -174,7 +185,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: u64, runs: u32, wait: bool) {
     panic!("Panic intended :)");
 }
 
-async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, n: u64, r: u32) {
+async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, n: usize, r: u32) {
     let epoch_no = epoch.epoch_no;
     let round_duration = Duration::from_secs(epoch.round_duration as u64);
     let round_waiting = Duration::from_secs(epoch.round_waiting as u64);
