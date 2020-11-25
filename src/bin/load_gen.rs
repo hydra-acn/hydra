@@ -21,7 +21,7 @@ use hydra::mix::channel_pool::{ChannelPool, MixChannel};
 use hydra::net::cell::CellCmd;
 use hydra::net::PacketWithNextHop;
 use hydra::tonic_directory::{EpochInfo, MixInfo};
-use hydra::tonic_mix::{Cell, LatePollRequest, SetupPacket};
+use hydra::tonic_mix::{Cell, LatePollRequest, SendAndLatePollRequest, SetupPacket};
 
 type DirClient = hydra::client::directory_client::Client;
 type MixChannelPool = ChannelPool<MixChannel>;
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting load generator");
 
     let n = value_t!(args, "n", usize).expect("n has to an unsigned integer");
-    let runs = value_t!(args, "runs", u32).expect("runs has to an unsigned integer");
+    let runs = value_t!(args, "runs", usize).expect("runs has to an unsigned integer");
 
     // directory client config
     let dir_domain = args.value_of("dirDom").unwrap().parse()?;
@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: u32, wait: bool) {
+async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: bool) {
     let mut maybe_epoch = dir_client.next_epoch_info();
     while let None = maybe_epoch {
         warn!("Don't know the next epoch for setup, retrying in 5 seconds");
@@ -122,7 +122,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: u32, wait: bool)
 
             *entry_guard = Some(path[0].fingerprint.to_string());
 
-            let (circuit, setup_pkt) = Circuit::new(epoch_no, path);
+            let (circuit, setup_pkt) = Circuit::new(epoch_no, path, r, n, i);
             circuits.write().unwrap().push(Arc::new(circuit));
 
             let mut map = pkt_by_dst.write().unwrap();
@@ -169,7 +169,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: u32, wait: bool)
         }
 
         // spawn a task to handle the communication phase
-        tokio::spawn(run_epoch_communication(epoch, final_circuits, n, r));
+        tokio::spawn(run_epoch_communication(epoch, final_circuits, n, r, runs));
         epoch_no += 1;
     }
 
@@ -185,7 +185,13 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: u32, wait: bool)
     panic!("Panic intended :)");
 }
 
-async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, n: usize, r: u32) {
+async fn run_epoch_communication(
+    epoch: EpochInfo,
+    circuits: Vec<Arc<Circuit>>,
+    n: usize,
+    r: usize,
+    runs: usize,
+) {
     let epoch_no = epoch.epoch_no;
     let round_duration = Duration::from_secs(epoch.round_duration as u64);
     let round_waiting = Duration::from_secs(epoch.round_waiting as u64);
@@ -204,7 +210,7 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
 
         let mut tasks = Vec::new();
         for circ in circuits.iter() {
-            tasks.push(tokio::spawn(run_send_and_receive(
+            tasks.push(tokio::spawn(run_communication_round(
                 circ.clone(),
                 round_no,
                 channels.clone(),
@@ -229,21 +235,20 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
         round_start += round_interval;
     }
 
-    // wait and get the nacks (last round)
-    delay_till(round_start).await;
-    info!("Late polling for epoch {}", epoch_no);
-    let mut tasks = Vec::new();
-    for circ in circuits.iter() {
-        tasks.push(tokio::spawn(run_receive_nack(
-            circ.clone(),
-            channels.clone(),
-        )));
+    // wait and do a plain late poll for the last run
+    if r == runs - 1 {
+        delay_till(round_start).await;
+        info!("Late polling for epoch {}", epoch_no);
+        let mut tasks = Vec::new();
+        for circ in circuits.iter() {
+            tasks.push(tokio::spawn(run_late_poll(circ.clone(), channels.clone())));
+        }
+        // wait for all tasks to finish
+        for t in tasks.iter_mut() {
+            t.await.expect("Task failed");
+        }
+        info!(".. late polling done");
     }
-    // wait for all tasks to finish
-    for t in tasks.iter_mut() {
-        t.await.expect("Task failed");
-    }
-    info!(".. late polling done");
 
     info!("Communication for epoch {} done", epoch_no);
 
@@ -281,16 +286,16 @@ async fn run_epoch_communication(epoch: EpochInfo, circuits: Vec<Arc<Circuit>>, 
     info!(".. average loss rate: {}", avg_loss_rate);
 }
 
-async fn run_send_and_receive(
+async fn run_communication_round(
     circ: Arc<Circuit>,
     round_no: RoundNo,
     channels: Arc<MixChannelPool>,
 ) {
-    circ.send_and_receive(round_no, channels).await;
+    circ.run_communication_round(round_no, channels).await;
 }
 
-async fn run_receive_nack(circ: Arc<Circuit>, channels: Arc<MixChannelPool>) {
-    circ.receive_nack(channels).await;
+async fn run_late_poll(circ: Arc<Circuit>, channels: Arc<MixChannelPool>) {
+    circ.late_poll(channels).await;
 }
 
 async fn delay_till(time: Duration) {
@@ -315,6 +320,7 @@ struct Circuit {
     entry_addr: SocketAddr,
     expected_cell: RwLock<Option<Cell>>,
     lost_cells: AtomicU32,
+    prev_circuit_id: Option<CircuitId>,
 }
 
 impl std::fmt::Debug for Circuit {
@@ -330,9 +336,22 @@ impl std::fmt::Debug for Circuit {
 }
 
 impl Circuit {
-    pub fn new(epoch_no: EpochNo, path: Vec<MixInfo>) -> (Self, PacketWithNextHop<SetupPacket>) {
-        let (client_circuit, setup_pkt) = ClientCircuit::new(epoch_no, &path, Vec::new(), None)
-            .expect("Creating setup packet failed");
+    /// Create circuit with index `i` (out of `n` circuits in total) for run `r`.
+    pub fn new(
+        epoch_no: EpochNo,
+        path: Vec<MixInfo>,
+        r: usize,
+        n: usize,
+        i: usize,
+    ) -> (Self, PacketWithNextHop<SetupPacket>) {
+        let circuit_id = Some((r * n + i) as CircuitId);
+        let prev_circuit_id = match r {
+            0 => None,
+            _ => Some(((r - 1) * n + i) as CircuitId),
+        };
+        let (client_circuit, setup_pkt) =
+            ClientCircuit::new(epoch_no, &path, Vec::new(), circuit_id)
+                .expect("Creating setup packet failed");
         let entry_addr = path[0]
             .entry_address()
             .expect("Getting entry address failed");
@@ -342,6 +361,7 @@ impl Circuit {
             entry_addr,
             expected_cell: RwLock::new(None),
             lost_cells: AtomicU32::new(0),
+            prev_circuit_id,
         };
         (circuit, setup_pkt)
     }
@@ -365,6 +385,43 @@ impl Circuit {
         cell
     }
 
+    pub async fn run_communication_round(&self, round_no: RoundNo, channels: Arc<MixChannelPool>) {
+        if round_no == 0 {
+            self.send_and_late_poll(channels).await;
+        } else {
+            self.send_and_receive(round_no, channels).await;
+        }
+    }
+
+    pub async fn send_and_late_poll(&self, channels: Arc<MixChannelPool>) {
+        let plain_cell = self.create_plaintext_cell(0);
+        let mut cell = plain_cell.clone();
+        self.circuit
+            .onion_encrypt(cell.round_no, &mut cell.onion)
+            .expect("Onion encryption failed");
+
+        let late_poll_ids = match self.prev_circuit_id {
+            Some(id) => vec![id],
+            None => vec![],
+        };
+        let poll_req = SendAndLatePollRequest {
+            cell: Some(cell),
+            circuit_ids: late_poll_ids,
+        };
+        let mut channel = channels
+            .get_channel(&self.entry_addr)
+            .await
+            .expect(&format!("No connection to {}", self.entry_addr));
+        let mut received = channel
+            .send_and_late_poll(tonic::Request::new(poll_req))
+            .await
+            .expect("Send and late poll failed")
+            .into_inner()
+            .cells;
+        *self.expected_cell.write().unwrap() = Some(plain_cell);
+        self.check_nack(&mut received);
+    }
+
     pub async fn send_and_receive(&self, round_no: RoundNo, channels: Arc<MixChannelPool>) {
         let plain_cell = self.create_plaintext_cell(round_no);
         let mut cell = plain_cell.clone();
@@ -383,6 +440,23 @@ impl Circuit {
             .cells;
         self.check_received(&mut received);
         *self.expected_cell.write().unwrap() = Some(plain_cell);
+    }
+
+    pub async fn late_poll(&self, channels: Arc<MixChannelPool>) {
+        let req = LatePollRequest {
+            circuit_ids: vec![self.circuit_id()],
+        };
+        let mut channel = channels
+            .get_channel(&self.entry_addr)
+            .await
+            .expect(&format!("No connection to {}", self.entry_addr));
+        let mut received = channel
+            .late_poll(tonic::Request::new(req))
+            .await
+            .expect("Late poll failed")
+            .into_inner()
+            .cells;
+        self.check_nack(&mut received);
     }
 
     pub fn check_received(&self, cells: &mut [Cell]) {
@@ -409,24 +483,12 @@ impl Circuit {
         }
     }
 
-    pub async fn receive_nack(&self, channels: Arc<MixChannelPool>) {
-        let mut channel = channels
-            .get_channel(&self.entry_addr)
-            .await
-            .expect(&format!("No connection to {}", self.entry_addr));
-        let poll_req = LatePollRequest {
-            circuit_ids: vec![self.circuit_id()],
-        };
-        let mut cells = channel
-            .late_poll(tonic::Request::new(poll_req))
-            .await
-            .expect("Late poll failed")
-            .into_inner()
-            .cells;
-
+    pub fn check_nack(&self, cells: &mut [Cell]) {
         if cells.is_empty() {
-            debug!("{:?} Late polled nothing", self);
-            self.lost_cells.fetch_add(1, Ordering::Relaxed);
+            if self.prev_circuit_id.is_some() {
+                debug!("{:?} Late polled nothing", self);
+                self.lost_cells.fetch_add(1, Ordering::Relaxed);
+            }
             return;
         }
         if cells.len() > 1 {
