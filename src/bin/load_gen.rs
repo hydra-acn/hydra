@@ -331,8 +331,8 @@ impl std::fmt::Debug for Circuit {
 
 impl Circuit {
     pub fn new(epoch_no: EpochNo, path: Vec<MixInfo>) -> (Self, PacketWithNextHop<SetupPacket>) {
-        let (client_circuit, setup_pkt) =
-            ClientCircuit::new(epoch_no, &path, Vec::new()).expect("Creating setup packet failed");
+        let (client_circuit, setup_pkt) = ClientCircuit::new(epoch_no, &path, Vec::new(), None)
+            .expect("Creating setup packet failed");
         let entry_addr = path[0]
             .entry_address()
             .expect("Getting entry address failed");

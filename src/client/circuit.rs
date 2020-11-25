@@ -42,11 +42,13 @@ pub struct Circuit {
 impl Circuit {
     /// Create a new circuit for epoch `epoch_no`, using the given `path` and subscribe to the
     /// given `tokens` (filled up by random dummy tokens if necessary).
+    /// If `circuit_id` is `None`, a random id will be selected.
     /// Returns the circuit context and the setup packet.
     pub fn new(
         epoch_no: EpochNo,
         path: &[MixInfo],
         tokens: Vec<Token>,
+        circuit_id: Option<CircuitId>,
     ) -> Result<(Circuit, PacketWithNextHop<SetupPacket>), Error> {
         let first_mix = path
             .first()
@@ -62,7 +64,7 @@ impl Circuit {
         );
 
         let mut rng = thread_cprng();
-        let circuit_id = rng.gen();
+        let circuit_id = circuit_id.unwrap_or_else(|| rng.gen());
 
         struct Hop {
             nonce: Vec<u8>,
