@@ -100,7 +100,7 @@ build=1
 while [ -n "$1" ]; do
     case "$1" in
         --debug) mode="debug" ;;
-        -d|--dirdom) dirdom=$2; shift ;;
+        --dirdom) dirdom=$2; shift ;;
         --cache) build=0 ;;
         -k|--comm-rounds) numrounds=$2; shift ;;
         -d|--round-duration) rounddur=$2; shift ;;
