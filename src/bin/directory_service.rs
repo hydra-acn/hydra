@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg key_path: +required "Path to key file")
         (@arg cert_path: +required "Path to certificate file")
         (@arg number_of_rounds: -k --("comm-rounds") +takes_value default_value("8") "Number of communication rounds per epoch")
-        (@arg round_dur: -w --("round-duration") +takes_value default_value("7.0") "Duration of one communication round in seconds")
+        (@arg round_dur: -d --("round-duration") +takes_value default_value("7.0") "Duration of one communication round in seconds")
         (@arg round_wait: -w --("round-wait") +takes_value default_value("13.0") "Duration between communication rounds in seconds")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
