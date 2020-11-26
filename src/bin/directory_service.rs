@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg port: -p --port +takes_value default_value("9000") "Port to listen on")
         (@arg key_path: +required "Path to key file")
         (@arg cert_path: +required "Path to certificate file")
+        (@arg path_len: -l --("path-len") +takes_value default_value("3") "Number of mixes for client circuits")
         (@arg number_of_rounds: -k --("comm-rounds") +takes_value default_value("8") "Number of communication rounds per epoch")
         (@arg round_dur: -d --("round-duration") +takes_value default_value("7.0") "Duration of one communication round in seconds")
         (@arg round_wait: -w --("round-wait") +takes_value default_value("13.0") "Duration between communication rounds in seconds")
@@ -27,10 +28,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     hydra::log_cfg::init(args.occurrences_of("verbose") > 0);
     info!("Starting directory service");
 
+    let l = value_t!(args, "path_len", u8).unwrap();
     let k = value_t!(args, "number_of_rounds", u32).unwrap();
     let round_dur_secs = value_t!(args, "round_dur", f64).unwrap();
     let round_wait_secs = value_t!(args, "round_wait", f64).unwrap();
     let cfg = ConfigBuilder::default()
+        .path_len(l)
         .number_of_rounds(k)
         .round_duration(Duration::from_secs_f64(round_dur_secs))
         .round_waiting(Duration::from_secs_f64(round_wait_secs))

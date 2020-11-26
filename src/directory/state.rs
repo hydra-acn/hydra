@@ -103,7 +103,7 @@ impl State {
                 round_duration: cfg.round_duration.as_secs_f64(),
                 round_waiting: cfg.round_waiting.as_secs_f64(),
                 number_of_rounds: cfg.number_of_rounds,
-                path_length: cfg.path_length.into(),
+                path_length: cfg.path_len.into(),
                 mixes,
             };
             epoch_queue.push_back(epoch_info);
@@ -119,7 +119,7 @@ impl State {
 pub struct Config {
     number_of_rounds: u32,
     epochs_in_advance: u8,
-    path_length: u8,
+    path_len: u8,
     round_duration: Duration,
     round_waiting: Duration,
 }
@@ -129,7 +129,7 @@ impl Default for Config {
         Config {
             number_of_rounds: 8,
             epochs_in_advance: 10,
-            path_length: 3,
+            path_len: 3,
             round_duration: Duration::from_secs(7),
             round_waiting: Duration::from_secs(13),
         }
@@ -146,8 +146,8 @@ impl Config {
         self.epochs_in_advance
     }
 
-    pub fn path_length(&self) -> u8 {
-        self.path_length
+    pub fn path_len(&self) -> u8 {
+        self.path_len
     }
 
     pub fn round_duration(&self) -> Duration {
@@ -160,7 +160,7 @@ impl Config {
 
     fn is_valid(&self) -> bool {
         self.phase_duration().subsec_nanos() == 0
-            && self.number_of_rounds % (self.path_length as u32 + 1) == 0
+            && self.number_of_rounds % (self.path_len as u32 + 1) == 0
     }
 }
 
