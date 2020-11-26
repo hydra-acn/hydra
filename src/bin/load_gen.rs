@@ -288,8 +288,10 @@ async fn run_late_poll(client: Arc<Client>, run: usize, channels: Arc<MixChannel
 }
 
 async fn delay_till(time: Duration) {
-    let duration = time.checked_sub(current_time()).expect("Out of sync");
-    sleep(duration).await;
+    match time.checked_sub(current_time()) {
+        Some(d) => sleep(d).await,
+        None => warn!("Out of sync!"),
+    }
 }
 
 async fn prepare_entry_channels(epoch: &EpochInfo) -> MixChannelPool {
