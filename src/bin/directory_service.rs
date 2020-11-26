@@ -1,6 +1,7 @@
 use clap::{clap_app, value_t};
 use log::*;
 use std::sync::Arc;
+use std::time::Duration;
 
 use hydra::crypto::key::Key;
 use hydra::crypto::tls::ServerCredentials;
@@ -16,8 +17,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (@arg port: -p --port +takes_value default_value("9000") "Port to listen on")
         (@arg key_path: +required "Path to key file")
         (@arg cert_path: +required "Path to certificate file")
-        (@arg phaseDuration: -d --duration +takes_value default_value("160") "Duration of one phase (setup/communication have the same duration")
-        (@arg roundWait: -w --("round-wait") +takes_value default_value("13") "Duration between communication rounds")
+        (@arg number_of_rounds: -k --("comm-rounds") +takes_value default_value("8") "Number of communication rounds per epoch")
+        (@arg round_dur: -w --("round-duration") +takes_value default_value("7.0") "Duration of one communication round in seconds")
+        (@arg round_wait: -w --("round-wait") +takes_value default_value("13.0") "Duration between communication rounds in seconds")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
     .get_matches();
@@ -25,11 +27,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     hydra::log_cfg::init(args.occurrences_of("verbose") > 0);
     info!("Starting directory service");
 
-    let phase_duration = value_t!(args, "phaseDuration", u64).unwrap();
-    let round_wait = value_t!(args, "roundWait", u8).unwrap();
+    let k = value_t!(args, "number_of_rounds", u32).unwrap();
+    let round_dur_secs = value_t!(args, "round_dur", f64).unwrap();
+    let round_wait_secs = value_t!(args, "round_wait", f64).unwrap();
     let cfg = ConfigBuilder::default()
-        .round_waiting(round_wait)
-        .phase_duration(phase_duration)
+        .number_of_rounds(k)
+        .round_duration(Duration::from_secs_f64(round_dur_secs))
+        .round_waiting(Duration::from_secs_f64(round_wait_secs))
         .build_valid()?;
     let state = Arc::new(State::new(cfg));
 

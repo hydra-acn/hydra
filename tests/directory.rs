@@ -193,11 +193,11 @@ async fn client_task(state: Arc<State>, port: u16) {
             );
         }
 
-        assert_eq!(epoch.round_duration, config.round_duration() as u32);
-        assert_eq!(epoch.round_waiting, config.round_waiting() as u32);
+        assert_eq!(epoch.round_duration, config.round_duration().as_secs_f64());
+        assert_eq!(epoch.round_waiting, config.round_waiting().as_secs_f64());
         assert_eq!(
-            epoch.number_of_rounds,
-            config.phase_duration() as u32 / (epoch.round_duration + epoch.round_waiting)
+            epoch.number_of_rounds as f64,
+            config.phase_duration().as_secs_f64() / (epoch.round_duration + epoch.round_waiting)
         );
 
         for mix in epoch.mixes.iter() {
@@ -221,7 +221,7 @@ async fn client_task(state: Arc<State>, port: u16) {
                 "Epoch numbers not ascending"
             );
             assert_eq!(
-                epoch.setup_start_time + config.phase_duration(),
+                epoch.setup_start_time + config.phase_duration().as_secs(),
                 epoch.communication_start_time,
                 "Duration mismatch"
             );
@@ -231,12 +231,12 @@ async fn client_task(state: Arc<State>, port: u16) {
             );
             assert_eq!(
                 epoch.setup_start_time,
-                last_setup_start + config.phase_duration(),
+                last_setup_start + config.phase_duration().as_secs(),
                 "Duration mismatch"
             );
             assert_eq!(
                 epoch.communication_start_time,
-                last_comm_start + config.phase_duration(),
+                last_comm_start + config.phase_duration().as_secs(),
                 "Duration mismatch"
             );
         }

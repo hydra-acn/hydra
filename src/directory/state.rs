@@ -23,7 +23,7 @@ pub struct State {
 
 impl State {
     pub fn new(config: Config) -> Self {
-        let current_epoch_no = current_epoch_no(config.phase_duration);
+        let current_epoch_no = current_epoch_no(config.phase_duration());
         info!("Initializing directory in epoch {}", current_epoch_no);
 
         State {
@@ -43,7 +43,10 @@ impl State {
     }
 
     pub fn update(self: &Self) {
-        let current_epoch_no = current_epoch_no(self.config.phase_duration);
+        let cfg = &self.config;
+        let phase_duration = cfg.phase_duration();
+
+        let current_epoch_no = current_epoch_no(phase_duration);
         if current_epoch_no == MAX_EPOCH_NO {
             panic!("End of time reached!");
         }
@@ -65,11 +68,8 @@ impl State {
             Some(e) => e.epoch_no + 1,
             None => current_epoch_no + 1,
         };
-        let cfg = &self.config;
-        let mut setup_start_time = epoch_no as u64 * cfg.phase_duration;
-        let mut communication_start_time = setup_start_time + cfg.phase_duration;
-        let number_of_rounds =
-            (cfg.phase_duration as u32) / (cfg.round_duration + cfg.round_waiting) as u32;
+        let mut setup_start_time = phase_duration.mul_f64(epoch_no as f64);
+        let mut communication_start_time = setup_start_time + phase_duration;
 
         while epoch_queue.len() < cfg.epochs_in_advance.into() {
             let mut mixes = Vec::new();
@@ -98,18 +98,18 @@ impl State {
             }
             let epoch_info = EpochInfo {
                 epoch_no,
-                setup_start_time,
-                communication_start_time,
-                round_duration: cfg.round_duration.into(),
-                round_waiting: cfg.round_waiting.into(),
-                number_of_rounds,
+                setup_start_time: setup_start_time.as_secs(),
+                communication_start_time: communication_start_time.as_secs(),
+                round_duration: cfg.round_duration.as_secs_f64(),
+                round_waiting: cfg.round_waiting.as_secs_f64(),
+                number_of_rounds: cfg.number_of_rounds,
                 path_length: cfg.path_length.into(),
                 mixes,
             };
             epoch_queue.push_back(epoch_info);
             epoch_no += 1;
-            setup_start_time += cfg.phase_duration as u64;
-            communication_start_time += cfg.phase_duration as u64;
+            setup_start_time += phase_duration;
+            communication_start_time += phase_duration;
         }
     }
 }
@@ -117,31 +117,29 @@ impl State {
 #[derive(Builder)]
 #[builder(default)]
 pub struct Config {
-    phase_duration: u64,
+    number_of_rounds: u32,
     epochs_in_advance: u8,
     path_length: u8,
-    round_duration: u8,
-    round_waiting: u8,
+    round_duration: Duration,
+    round_waiting: Duration,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let mut cfg = Config {
-            phase_duration: 0,
+        Config {
+            number_of_rounds: 8,
             epochs_in_advance: 10,
             path_length: 3,
-            round_duration: 7,
-            round_waiting: 13,
-        };
-        cfg.phase_duration = 2 * cfg.min_phase_duration();
-        cfg
+            round_duration: Duration::from_secs(7),
+            round_waiting: Duration::from_secs(13),
+        }
     }
 }
 
 impl Config {
     /// TODO code: getter macro?
-    pub fn phase_duration(&self) -> u64 {
-        self.phase_duration
+    pub fn phase_duration(&self) -> Duration {
+        self.number_of_rounds * (self.round_duration + self.round_waiting)
     }
 
     pub fn epochs_in_advance(&self) -> u8 {
@@ -152,20 +150,17 @@ impl Config {
         self.path_length
     }
 
-    pub fn round_duration(&self) -> u8 {
+    pub fn round_duration(&self) -> Duration {
         self.round_duration
     }
 
-    pub fn round_waiting(&self) -> u8 {
+    pub fn round_waiting(&self) -> Duration {
         self.round_waiting
     }
 
-    fn min_phase_duration(&self) -> u64 {
-        (self.path_length as u64 + 1) * (self.round_duration as u64 + self.round_waiting as u64)
-    }
-
     fn is_valid(&self) -> bool {
-        self.phase_duration % self.min_phase_duration() == 0
+        self.phase_duration().subsec_nanos() == 0
+            && self.number_of_rounds % (self.path_length as u32 + 1) == 0
     }
 }
 

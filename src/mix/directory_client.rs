@@ -402,8 +402,8 @@ pub mod mocks {
             setup_start_time: current_time - 10,
             communication_start_time: current_time,
             number_of_rounds: 20,
-            round_duration: 1000,
-            round_waiting: 1050,
+            round_duration: 1000.0,
+            round_waiting: 30.0,
             mixes: vec![],
         };
         mock_dir_client.base_client.insert_epoch(mock_epoch);
