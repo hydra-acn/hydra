@@ -26,7 +26,7 @@ impl Circuit {
 // TODO cleanup once in a while
 pub struct Storage {
     circuit_maps: Vec<RwLock<HashMap<CircuitId, Circuit>>>,
-    firebase_map: RwLock<BTreeMap<EpochNo, Vec<String>>>,
+    firebase_map: RwLock<BTreeMap<EpochNo, HashMap<CircuitId, String>>>,
     sync_rx: xbeam::Receiver<SyncBeat>,
 }
 
@@ -58,14 +58,7 @@ impl Storage {
         firebase_token: Option<String>,
     ) -> bool {
         if let Some(token) = firebase_token {
-            let mut fb_map = self.firebase_map.write().expect("Lock poisoned");
-            match fb_map.get_mut(&epoch_no) {
-                Some(vec) => vec.push(token),
-                None => {
-                    fb_map.insert(epoch_no, vec![token]);
-                    ()
-                }
-            }
+            self.update_firebase_token(epoch_no, circuit_id, token);
         }
 
         let idx = self.map_idx(circuit_id);
@@ -75,6 +68,22 @@ impl Storage {
             None => {
                 map.insert(circuit_id, Circuit::new());
                 true
+            }
+        }
+    }
+
+    pub fn update_firebase_token(&self, epoch_no: EpochNo, circuit_id: CircuitId, token: String) {
+        let mut fb_map = self.firebase_map.write().expect("Lock poisoned");
+        match fb_map.get_mut(&epoch_no) {
+            Some(cmap) => {
+                cmap.insert(circuit_id, token);
+                ()
+            }
+            None => {
+                let mut cmap = HashMap::new();
+                cmap.insert(circuit_id, token);
+                fb_map.insert(epoch_no, cmap);
+                ()
             }
         }
     }
@@ -113,14 +122,14 @@ impl Storage {
     }
 
     pub async fn send_firebase_notifications(&self, epoch_no: EpochNo, round_no: RoundNo) {
-        // TODO performance: don't clone the tokens; need a read-only view instead
-        let tokens;
+        // TODO performance: don't clone circuit map; need a read-only view instead
+        let cmap;
         {
             let map = self.firebase_map.read().expect("Lock poisoned");
-            tokens = map.get(&epoch_no).cloned().unwrap_or_default()
+            cmap = map.get(&epoch_no).cloned().unwrap_or_default()
         }
         let fcm_client = fcm::Client::new();
-        for token in tokens {
+        for token in cmap.values() {
             let mut builder = fcm::MessageBuilder::new(FCM_AUTH_KEY, &token);
             builder.priority(fcm::Priority::High).time_to_live(60);
 

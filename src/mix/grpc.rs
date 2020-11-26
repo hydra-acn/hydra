@@ -10,7 +10,8 @@ use crate::grpc::type_extensions::SetupPacketWithPrev;
 use crate::net::cell::Cell as FlatCell;
 use crate::tonic_mix::mix_server::{Mix, MixServer};
 use crate::tonic_mix::{
-    Cell, CellVector, LatePollRequest, SendAndLatePollRequest, SetupAck, SetupPacket,
+    Cell, CellVector, FirebaseUpdate, FirebaseUpdateAck, LatePollRequest, SendAndLatePollRequest,
+    SetupAck, SetupPacket,
 };
 use crate::{define_grpc_service, rethrow_as_invalid, unwrap_or_throw_invalid};
 
@@ -177,6 +178,16 @@ impl Mix for Service {
         // late poll
         let cell_vec = self.late_poll_impl(&req.circuit_ids);
         Ok(Response::new(cell_vec))
+    }
+
+    async fn update_firebase_token(
+        &self,
+        req: Request<FirebaseUpdate>,
+    ) -> Result<Response<FirebaseUpdateAck>, Status> {
+        let update = req.into_inner();
+        self.storage
+            .update_firebase_token(update.epoch_no, update.circuit_id, update.token);
+        Ok(Response::new(FirebaseUpdateAck {}))
     }
 }
 
