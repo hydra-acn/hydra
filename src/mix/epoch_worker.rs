@@ -119,8 +119,8 @@ impl Worker {
         self.setup_state
             .init_rendezvous_map(setup_epoch, &*self.dir_client);
 
-        let round_duration = Duration::from_secs(communication_epoch.round_duration as u64);
-        let round_waiting = Duration::from_secs(communication_epoch.round_waiting as u64);
+        let round_duration = Duration::from_secs_f64(communication_epoch.round_duration);
+        let round_waiting = Duration::from_secs_f64(communication_epoch.round_waiting);
         let interval = round_duration + round_waiting;
         let subround_interval = round_duration / (2 * communication_epoch.path_length + 1);
         let mut next_round_start = match is_first {
@@ -229,9 +229,9 @@ impl Worker {
 
     fn process_communication_round(&mut self, epoch: &EpochInfo, round_no: RoundNo) {
         // read/calculate important timing information
-        let round_duration = Duration::from_secs(epoch.round_duration as u64);
-        let round_waiting = Duration::from_secs(epoch.round_waiting as u64);
-        let round_start = Duration::from_secs(epoch.communication_start_time as u64)
+        let round_duration = Duration::from_secs_f64(epoch.round_duration);
+        let round_waiting = Duration::from_secs_f64(epoch.round_waiting);
+        let round_start = Duration::from_secs(epoch.communication_start_time)
             + round_no * (round_duration + round_waiting);
         let subround_interval = round_duration / (2 * epoch.path_length + 1);
         let mut send_time = round_start;

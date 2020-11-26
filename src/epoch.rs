@@ -30,9 +30,9 @@ pub fn current_epoch_no(phase_duration: Duration) -> EpochNo {
 impl EpochInfo {
     /// Return the end time for the communication phase of this epoch (keep keys till then).
     pub fn communication_end_time(&self) -> u64 {
-        let k = self.number_of_rounds as u64;
-        let d = self.round_duration as u64;
-        let w = self.round_waiting as u64;
-        self.communication_start_time + k * (d + w)
+        let k = self.number_of_rounds as f64;
+        let d = self.round_duration;
+        let w = self.round_waiting;
+        self.communication_start_time + (k * (d + w)) as u64
     }
 }

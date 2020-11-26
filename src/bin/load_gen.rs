@@ -169,8 +169,8 @@ async fn run_epoch_communication(
     runs: usize,
 ) {
     let epoch_no = epoch.epoch_no;
-    let round_duration = Duration::from_secs(epoch.round_duration as u64);
-    let round_waiting = Duration::from_secs(epoch.round_waiting as u64);
+    let round_duration = Duration::from_secs_f64(epoch.round_duration);
+    let round_waiting = Duration::from_secs_f64(epoch.round_waiting);
     let round_interval = round_duration + round_waiting;
     let mut round_start = Duration::from_secs(epoch.communication_start_time) - round_waiting
         + Duration::from_secs(1);
