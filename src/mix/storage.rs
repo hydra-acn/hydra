@@ -11,7 +11,7 @@ use crate::net::cell::Cell;
 use super::epoch_worker::SyncBeat;
 
 // TODO code: don't hardcode
-const FCM_AUTH_KEY: &str = "AAAA_bAyLik:APA91bGxLbubzFvUKKveyS-_61sExaXvyESqDEMni9FlR5ib2RikubU0y82ofpLbOhrf6L7tUAymNOkjeC81m6nuDHEzWldddo2Yzok4DUoDx2epkdeA4MZ_tdOSIsZ9QMRh1A9pMJLP";
+const FCM_AUTH_KEY: &str = "AAAAkL_9jR0:APA91bGNnHvw-FicsfQaRtdpZrjBU5LA_jf_k89-2aYnEl2dAKdRvrEQUhVtHx7DSBfeiFOc-zqZrnYTz0HFx7Rfj-bhzyi1vc-OKQAtU9oiGzoz_l-riSxgyNUmrpUXDU9hLANJoPba";
 
 struct Circuit {
     cells: Vec<Cell>,
