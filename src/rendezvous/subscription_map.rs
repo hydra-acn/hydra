@@ -138,7 +138,7 @@ impl SubscriptionMap {
                 return;
             }
             let mut guard = self.map[drop_idx].write().unwrap();
-            std::mem::replace(&mut *guard, HashMap::default());
+            *guard = HashMap::default();
         }
     }
 }

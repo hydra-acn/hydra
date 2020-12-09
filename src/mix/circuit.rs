@@ -304,7 +304,7 @@ impl Circuit {
                         // special case: nack in last round
                         if round_no == self.max_round_no {
                             let token = cell.token();
-                            let _ = std::mem::replace(&mut cell, self.create_nack(Some(token)));
+                            cell = self.create_nack(Some(token));
                         }
                     }
                 } else {
