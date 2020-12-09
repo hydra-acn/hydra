@@ -14,7 +14,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Simple, non distributed, implementation of the Hydra directory service")
         (@arg addr: +required "IP address to listen on")
-        (@arg port: -p --port +takes_value default_value("9000") "Port to listen on")
+        (@arg port: -p --port +takes_value default_value("9000") "Port to listen on (with TLS)")
+        (@arg plain_port: --("plain-port") +takes_value default_value("8999") "Port to listen on without TLS. Clients should use this for debugging only")
         (@arg key_path: +required "Path to key file")
         (@arg cert_path: +required "Path to certificate file")
         (@arg path_len: -l --("path-len") +takes_value default_value("3") "Number of mixes for client circuits")
@@ -50,9 +51,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (grpc_handle, _) =
         grpc::spawn_service(state.clone(), local_endpoint, Some(tls_cred)).await?;
 
+    let plain_port = value_t!(args, "plain_port", u16).unwrap();
+    let plain_local_endpoint = format!("{}:{}", addr, plain_port).parse()?;
+    let (plain_grpc_handle, _) =
+        grpc::spawn_service(state.clone(), plain_local_endpoint, None).await?;
+
     let update_handle = tokio::spawn(state::update_loop(state.clone()));
 
-    match tokio::try_join!(update_handle, grpc_handle) {
+    match tokio::try_join!(update_handle, grpc_handle, plain_grpc_handle) {
         Ok(_) => (),
         Err(e) => error!("Something failed: {}", e),
     }
