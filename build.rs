@@ -4,10 +4,10 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=x448");
 
-    // build static skein3fish lib
-    let dst = cmake::build("include/skein3fish");
+    // build static threefish lib
+    let dst = cmake::build("include/threefish");
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
-    println!("cargo:rustc-link-lib=static=skein3fish");
+    println!("cargo:rustc-link-lib=static=threefish");
 
     // build static fakerand lib
     let dst = cmake::build("include/fakerand");

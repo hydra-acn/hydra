@@ -1,14 +1,11 @@
 use crate::error::Error;
-use std::sync::Mutex;
 
 use super::key::Key;
-use super::threefish_bindings::{
-    threefishEncrypt1024, threefishSetKey, ThreefishKey, THREEFISH1024,
-};
+use super::threefish_bindings::{threefish1024_encrypt, threefish1024_set_key, Threefish1024Key};
 
 /// Double the block size of Threefish1024, using a 12-round Feistel network.
 pub struct Threefish2048 {
-    key: Mutex<ThreefishKey>,
+    key: Threefish1024Key,
 }
 
 enum Mode {
@@ -24,23 +21,11 @@ impl Threefish2048 {
                 key.len()
             )));
         }
-        let mut init_tweak = [0; 3];
-        let mut tf_key = ThreefishKey {
-            state_size: THREEFISH1024 as u64,
-            key: [0; 17],
-            tweak: init_tweak.clone(),
-        };
+        let mut tf_key = Threefish1024Key { key: [0; 17] };
         unsafe {
-            threefishSetKey(
-                &mut tf_key,
-                THREEFISH1024,
-                key.head_ptr() as *mut u64,
-                &mut init_tweak[0] as *mut u64,
-            );
+            threefish1024_set_key(&mut tf_key, key.head_ptr() as *const u64);
         }
-        Ok(Threefish2048 {
-            key: Mutex::new(tf_key),
-        })
+        Ok(Threefish2048 { key: tf_key })
     }
 
     /// Encrypt `data` in place.
@@ -75,23 +60,20 @@ impl Threefish2048 {
             }
         }
 
-        let mut ctx = self.key.lock().expect("Lock poisoned");
-
         for tweak_ctr in tweak_ctrs {
             // step 0: set the tweak
             // TODO will not work on big endian?
-            ctx.tweak[0] = tweak_ctr;
-            ctx.tweak[1] = 0;
-            ctx.tweak[2] = tweak_ctr;
+            let tweak: [u64; 2] = [tweak_ctr, 0];
 
             // step 1: encrypt right (not in place!)
             let mut enc = [0u8; 128];
             enc.copy_from_slice(right);
 
             unsafe {
-                threefishEncrypt1024(
-                    &mut (*ctx),
-                    (&mut enc[0] as *mut u8).cast(),
+                threefish1024_encrypt(
+                    &self.key,
+                    &tweak[0] as *const u64,
+                    (&enc[0] as *const u8).cast(),
                     (&mut enc[0] as *mut u8).cast(),
                 );
             }
