@@ -6,4 +6,4 @@
 	url = ../x448.git
 [submodule "include/threefish"]
 	path = include/threefish
-	url = https://telematik.prakinf.tu-ilmenau.de/gitlab/hydra/threefish
+	url = ../threefish.git
