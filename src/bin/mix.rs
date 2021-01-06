@@ -8,6 +8,7 @@ use hydra::crypto::KeyExchangeAlgorithm;
 use hydra::defs::sigint_handler;
 use hydra::mix::cell_acceptor;
 use hydra::mix::cell_processor::cell_rss_t;
+use hydra::mix::cfg::Config;
 use hydra::mix::directory_client::{self, Client};
 use hydra::mix::epoch_worker::Worker;
 use hydra::mix::rss_pipeline::new_pipeline;
@@ -22,6 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = clap_app!(hydra_mix =>
         (version: hydra::defs::hydra_version())
         (about: "Mix for the Hydra system")
+        (@arg cfgFile: --config +takes_value "Path to (optional) config file")
         (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
         (@arg threads: +required "Number of worker threads to use")
         (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
@@ -38,7 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let running = Arc::new(AtomicBool::new(true));
     let sigint_handle = tokio::spawn(sigint_handler(running.clone()));
 
+    let cfg = Config::new(args.value_of("cfgFile")).expect("Building config failed");
+
     // directory client config
+    // TODO code: unify config
     let mix_addr: std::net::SocketAddr = args.value_of("sockAddr").unwrap().parse()?;
     let directory_domain = args.value_of("dirDom").unwrap().parse()?;
     let directory_port = value_t!(args, "dirPort", u16).unwrap();
@@ -94,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (sync_tx, sync_rx) = xbeam::unbounded();
 
     // setup entry mix storage
-    let storage = Arc::new(Storage::new(sync_rx));
+    let storage = Arc::new(Storage::new(&cfg, sync_rx));
     let storage_handle = tokio::spawn(storage::run(storage.clone()));
 
     // setup mix gRPC

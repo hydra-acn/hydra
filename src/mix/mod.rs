@@ -1,5 +1,6 @@
 pub mod cell_acceptor;
 pub mod cell_processor;
+pub mod cfg;
 pub mod circuit;
 pub mod directory_client;
 pub mod dummy_circuit;

@@ -8,10 +8,8 @@ use crate::defs::{CircuitId, RoundNo};
 use crate::epoch::EpochNo;
 use crate::net::cell::Cell;
 
+use super::cfg::Config;
 use super::epoch_worker::SyncBeat;
-
-// TODO code: don't hardcode
-const FCM_AUTH_KEY: &str = "AAAAkL_9jR0:APA91bGNnHvw-FicsfQaRtdpZrjBU5LA_jf_k89-2aYnEl2dAKdRvrEQUhVtHx7DSBfeiFOc-zqZrnYTz0HFx7Rfj-bhzyi1vc-OKQAtU9oiGzoz_l-riSxgyNUmrpUXDU9hLANJoPba";
 
 struct Circuit {
     cells: Vec<Cell>,
@@ -26,12 +24,13 @@ impl Circuit {
 // TODO cleanup once in a while
 pub struct Storage {
     circuit_maps: Vec<RwLock<HashMap<CircuitId, Circuit>>>,
+    firebase_auth_key: Option<String>,
     firebase_map: RwLock<BTreeMap<EpochNo, HashMap<CircuitId, String>>>,
     sync_rx: xbeam::Receiver<SyncBeat>,
 }
 
 impl Storage {
-    pub fn new(sync_rx: xbeam::Receiver<SyncBeat>) -> Self {
+    pub fn new(cfg: &Config, sync_rx: xbeam::Receiver<SyncBeat>) -> Self {
         let mut circuit_maps = Vec::new();
         // TODO code: make number of maps configurable; should be high enough to make probability
         // that two threads access the same map at the same time small
@@ -40,6 +39,7 @@ impl Storage {
         }
         Storage {
             circuit_maps,
+            firebase_auth_key: cfg.firebase.server_auth_key.clone(),
             firebase_map: RwLock::new(BTreeMap::new()),
             sync_rx,
         }
@@ -128,9 +128,18 @@ impl Storage {
             let map = self.firebase_map.read().expect("Lock poisoned");
             cmap = map.get(&epoch_no).cloned().unwrap_or_default()
         }
+
+        if let None = self.firebase_auth_key {
+            if cmap.len() > 0 {
+                warn!("At least one user requested firebase support, but we don't know the server auth key");
+            }
+            return;
+        }
+
         let fcm_client = fcm::Client::new();
         for token in cmap.values() {
-            let mut builder = fcm::MessageBuilder::new(FCM_AUTH_KEY, &token);
+            let mut builder =
+                fcm::MessageBuilder::new(self.firebase_auth_key.as_ref().unwrap(), &token);
             builder.priority(fcm::Priority::High).time_to_live(60);
 
             let mut body = BTreeMap::new();
