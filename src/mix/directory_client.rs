@@ -162,7 +162,7 @@ impl Client {
             }
             Err(status) => match status.code() {
                 tonic::Code::InvalidArgument if status.message().contains("registered") => {
-                    info!("Seems like we are already registered");
+                    info!("Seems like we are already registered ({})", status.message());
                     unimplemented!("We have to load the auth key from disk here!");
                 }
                 _ => panic!("Register failed with unexpected reason: {}", status),

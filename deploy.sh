@@ -26,7 +26,7 @@ deploy_local() {
         port=`echo $dirport + $i | bc`
         echo -n "-> Starting mix on port $port ..."
         tmux new-window -d -t "=${session}" -n mix-$i
-        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port $threads -d $dirdom -p $dirport -c $cacrt $x25519" Enter
+        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port $threads --config $mixcfg -d $dirdom -p $dirport -c $cacrt $x25519" Enter
         echo " Done"
     done
     # Kill the "default" tmux window
@@ -60,14 +60,15 @@ deploy_testbed() {
         # kill last tmux session and prepare testbed directory
         ssh $mix tmux kill-session -t $session > /dev/null 2>&1
         ssh $mix mkdir -p .testbed
-        # copy binary and ca file
+        # copy binary, config and ca file
         scp target/$mode/mix $mix:.testbed/ > /dev/null
+        scp $mixcfg $mix:.testbed/ > /dev/null
         scp $cacrt $mix:.testbed/ > /dev/null
         # start tmux session
         ssh $mix tmux new-session -d -s $session
         # start the engine :)
         # TODO avoid SPACE?
-        ssh $mix tmux send-keys -t "=${session}:" ".testbed/mix Space $addr:$port Space $threads Space -d Space $dirdom Space -p Space $dirport Space -c Space $cacrt Space $x25519" Enter
+        ssh $mix tmux send-keys -t "=${session}:" ".testbed/mix Space $addr:$port Space $threads Space --config Space $mixcfg Space -d Space $dirdom Space -p Space $dirport Space -c Space $cacrt Space $x25519" Enter
     done
 }
 
@@ -86,6 +87,7 @@ args=$@
 session="hydra-testbed"
 dirdom="hydra-swp.prakinf.tu-ilmenau.de"
 dirport=9000
+mixcfg=".testbed/mix.toml"
 dirkey=".testbed/directory.key"
 dircrt=".testbed/directory.crt"
 cacrt=".testbed/ca.pem"
@@ -109,6 +111,7 @@ while [ -n "$1" ]; do
         -w|--round-wait) roundwait=$2; shift ;;
         --x25519) x25519="--x25519" ;;
         -t|--threads) threads=$2; shift ;;
+        --mixcfg) mixcfg=$2; shift ;;
         -*) echo "Unknown option $1"; exit -1;;
     esac
     # shift once in any case
