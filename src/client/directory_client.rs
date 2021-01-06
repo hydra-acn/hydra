@@ -108,7 +108,7 @@ impl Client {
         map.get(&epoch_no).cloned()
     }
 
-    /// return info about the epoch that starts next (based on setup start time)
+    /// Return info about the epoch that starts next (based on setup start time).
     pub fn next_epoch_info(&self) -> Option<EpochInfo> {
         let current_time = current_time_in_secs();
         let epoch_map = self.epochs.read().expect("Lock failure");
@@ -120,7 +120,12 @@ impl Client {
         None
     }
 
-    /// return the start time of the next epoch setup (as UNIX time in seconds)
+    /// Return the epoch number of the epoch that starts next (based on setup start time).
+    pub fn next_epoch_no(&self) -> Option<EpochNo> {
+        self.next_epoch_info().map(|epoch| epoch.epoch_no)
+    }
+
+    /// Return the start time of the next epoch setup (as UNIX time in seconds).
     pub fn next_setup_start(&self) -> Option<u64> {
         self.next_epoch_info().map(|epoch| epoch.setup_start_time)
     }
