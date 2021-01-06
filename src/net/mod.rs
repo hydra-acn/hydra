@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use crate::error::Error;
 
 pub mod cell;
+pub mod channel_pool;
 
 pub fn ip_addr_from_slice(a: &[u8]) -> Result<IpAddr, Error> {
     match a.len() {

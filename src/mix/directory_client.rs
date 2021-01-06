@@ -12,12 +12,12 @@ use tokio::time::delay_for as sleep;
 use tokio::time::Duration;
 use tonic::transport::Channel;
 
-use super::channel_pool::{ChannelPool, MixChannel, RendezvousChannel, TcpChannel};
 use crate::crypto::key::{hkdf_sha256, Key};
 use crate::crypto::{x25519, x448, KeyExchangeAlgorithm};
 use crate::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use crate::epoch::{current_time_in_secs, EpochNo};
 use crate::error::Error;
+use crate::net::channel_pool::{ChannelPool, MixChannel, RendezvousChannel, TcpChannel};
 use crate::tonic_directory::directory_client::DirectoryClient;
 use crate::tonic_directory::{
     DhMessage, EpochInfo, MixInfo, MixStatistics, RegisterRequest, UnregisterRequest,

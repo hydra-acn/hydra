@@ -1,4 +1,4 @@
-//! Pool for storing and managing generic gRPC channels ("clients")
+//! Pool for storing and managing generic communication channels.
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::net::TcpStream;

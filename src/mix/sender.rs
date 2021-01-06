@@ -13,11 +13,11 @@ use crate::crypto::cprng::thread_cprng;
 use crate::epoch::current_time;
 use crate::error::Error;
 use crate::net::cell::Cell;
+use crate::net::channel_pool::{MixChannel, RendezvousChannel, TcpChannel};
 use crate::net::PacketWithNextHop;
 use crate::tonic_mix::{SetupPacket, Subscription};
 
 use super::cell_processor::cell_rss_t;
-use super::channel_pool::{MixChannel, RendezvousChannel, TcpChannel};
 use super::directory_client;
 use super::setup_processor::setup_t;
 
