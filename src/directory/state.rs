@@ -122,6 +122,8 @@ pub struct Config {
     path_len: u8,
     round_duration: Duration,
     round_waiting: Duration,
+    testbed_nat_addr: Vec<u8>,
+    testbed_nat_base_port: u16,
 }
 
 impl Default for Config {
@@ -132,6 +134,8 @@ impl Default for Config {
             path_len: 3,
             round_duration: Duration::from_secs(7),
             round_waiting: Duration::from_secs(13),
+            testbed_nat_addr: Vec::default(),
+            testbed_nat_base_port: 9000,
         }
     }
 }
@@ -156,6 +160,14 @@ impl Config {
 
     pub fn round_waiting(&self) -> Duration {
         self.round_waiting
+    }
+
+    pub fn testbed_nat_addr(&self) -> &[u8] {
+        &self.testbed_nat_addr
+    }
+
+    pub fn testbed_nat_base_port(&self) -> u16 {
+        self.testbed_nat_base_port
     }
 
     fn is_valid(&self) -> bool {

@@ -1,5 +1,6 @@
 use clap::{clap_app, value_t};
 use log::*;
+use std::net::{SocketAddr, IpAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,6 +8,7 @@ use hydra::crypto::key::Key;
 use hydra::crypto::tls::ServerCredentials;
 use hydra::directory::grpc;
 use hydra::directory::state::{self, ConfigBuilder, State};
+use hydra::net::ip_addr_to_vec;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,6 +31,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     hydra::log_cfg::init(args.occurrences_of("verbose") > 0);
     info!("Starting directory service");
 
+    // config
+    let addr: IpAddr = args.value_of("addr").unwrap().parse()?;
+    let port = value_t!(args, "port", u16).unwrap();
     let l = value_t!(args, "path_len", u8).unwrap();
     let k = value_t!(args, "number_of_rounds", u32).unwrap();
     let round_dur_secs = value_t!(args, "round_dur", f64).unwrap();
@@ -38,6 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .number_of_rounds(k)
         .round_duration(Duration::from_secs_f64(round_dur_secs))
         .round_waiting(Duration::from_secs_f64(round_wait_secs))
+        .testbed_nat_addr(ip_addr_to_vec(&addr))
+        .testbed_nat_base_port(port)
         .build_valid()?;
     let state = Arc::new(State::new(cfg));
 
@@ -45,9 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = std::fs::read_to_string(args.value_of("cert_path").unwrap())?;
     let tls_cred = ServerCredentials::new(key, &cert);
 
-    let addr = args.value_of("addr").unwrap();
-    let port = value_t!(args, "port", u16).unwrap();
-    let local_endpoint = format!("{}:{}", addr, port).parse()?;
+    let local_endpoint = SocketAddr::new(addr, port);
     let (grpc_handle, _) =
         grpc::spawn_service(state.clone(), local_endpoint, Some(tls_cred)).await?;
 

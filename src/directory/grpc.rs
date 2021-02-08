@@ -180,9 +180,10 @@ impl directory_server::Directory for Service {
                 if nat {
                     for mix in cloned.mixes.iter_mut() {
                         let idx = *mix.address.get(3).unwrap() as u32;
-                        mix.address = vec![141, 24, 207, 69];
-                        mix.entry_port = 9000 + idx;
-                        mix.relay_port = 9000 + idx;
+                        mix.address = self.config().testbed_nat_addr().to_vec();
+                        let nat_port = self.config().testbed_nat_base_port() as u32 + idx;
+                        mix.entry_port = nat_port;
+                        mix.relay_port = nat_port;
                     }
                 }
                 epoch_infos.push(cloned);
