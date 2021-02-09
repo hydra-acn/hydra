@@ -1,3 +1,17 @@
+# Disclaimer
+
+This repository includes the research prototypes for the anonymous communication network Hydra.
+The main concepts/ideas are published in the following conference paper:
+
+
+> Schatz, David; Rossberg, Michael; Schaefer, Guenter. Hydra: Practical Metadata Security for Contact Discovery,Messaging, and Dialing. ICISSP, 2021. Accepted and in press.
+
+Apart from the concepts described in the paper, the prototype code lacks a lot of documentation at the moment. Some more details are specified in the `protobuf` submodule (as comments for the `gRPC` definitions).
+
+:warning: **Deploy and use the prototype at own risk.**
+
+
+
 # Submodules
 
 Do not forget to update the submodules on a regular basis (after `clone` and after `pull` if necessary):
@@ -45,3 +59,17 @@ The documentation of the project and all dependencies (the latter being more use
 ```
 cargo doc --open
 ```
+
+# Deploy
+
+First, launch the directory service. More information can be found using the command line, e.g.:
+```
+target/release/directory_service --help
+```
+
+Then, launch the mixes. Again, more information can be found using the command line, e.g.:
+```
+target/release/mix --help
+```
+
+Coming soon: Prototype Android Client
