@@ -24,11 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (version: hydra::defs::hydra_version())
         (about: "Mix for the Hydra system")
         (@arg cfgFile: --config +takes_value "Path to (optional) config file")
-        (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001")
-        (@arg threads: +required "Number of worker threads to use")
-        (@arg dirDom: -d --("directory-dom") +takes_value default_value("hydra-swp.prakinf.tu-ilmenau.de") "Address of directory service")
+        (@arg sockAddr: +required "Socket address to listen on, e.g. 127.0.0.1:9001. Currently, two more TCP ports are opened, with offsets of +100 and +200 to the specified one.")
+        (@arg dirDom: +required "Fully qualified domain name of the directory service")
         (@arg dirPort: -p --("directory-port") +takes_value default_value("9000") "Port of directory service")
-        (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system")
+        (@arg threads: -t --threads default_value("4") "Number of worker threads to use")
+        (@arg certPath: -c --("directory-certificate") +takes_value "Path to directory server certificate (only necessary if trust is not anchored in system)")
         (@arg x25519: --x25519 "Use x25519 for circuit key exchange instead of the default x448")
         (@arg verbose: -v --verbose ... "Also show log of dependencies")
     )
@@ -62,6 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         addr: mix_addr.ip(),
         entry_port: mix_addr.port(),
         relay_port: mix_addr.port(),
+        // TODO code: don't hardcode port offsets
         rendezvous_port: mix_addr.port() + 100,
         fast_port: mix_addr.port() + 200,
         directory_certificate,

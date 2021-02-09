@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
 deploy_local() {
-    if [ $# -lt 2 ]; then
-        echo "Usage: ./deploy.sh local <n> <localAddr> [options]"
+    if [ $# -lt 3 ]; then
+        echo "Usage: ./deploy.sh local <n> <localAddr> <dirDom> [options]"
         exit -1
     fi
 
     n=$1
     localhost=$2
+    dirdom=$3
     shift
     shift
 
@@ -34,11 +35,12 @@ deploy_local() {
 }
 
 deploy_testbed() {
-    if [ $# -lt 1 ]; then
-        echo "Usage: ./deploy.sh testbed <n> [options]"
+    if [ $# -lt 2 ]; then
+        echo "Usage: ./deploy.sh testbed <n> <dirDom> [options]"
         exit -1
     fi
     n=$1
+    dirdom=$2
     shift
 
     # setup directory service on this host (kill old session before)
@@ -85,7 +87,6 @@ args=$@
 
 # global argument parsing (independent of subcmd)
 session="hydra-testbed"
-dirdom="hydra-swp.prakinf.tu-ilmenau.de"
 dirport=9000
 mixcfg=".testbed/mix.toml"
 dirkey=".testbed/directory.key"
@@ -103,7 +104,6 @@ build=1
 while [ -n "$1" ]; do
     case "$1" in
         --debug) mode="debug" ;;
-        --dirdom) dirdom=$2; shift ;;
         --cache) build=0 ;;
         -l|--path-len) pathlen=$2; shift ;;
         -k|--comm-rounds) numrounds=$2; shift ;;
