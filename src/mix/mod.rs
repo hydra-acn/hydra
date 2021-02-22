@@ -13,3 +13,4 @@ pub mod sender;
 pub mod setup_processor;
 pub mod stat_recorder;
 pub mod storage;
+pub mod sub_collector;

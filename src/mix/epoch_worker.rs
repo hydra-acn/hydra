@@ -116,8 +116,7 @@ impl Worker {
         communication_epoch: &EpochInfo,
         is_first: bool,
     ) {
-        self.setup_state
-            .init_rendezvous_map(setup_epoch, &*self.dir_client);
+        self.setup_state.init_rendezvous_map(setup_epoch);
 
         let round_duration = Duration::from_secs_f64(communication_epoch.round_duration);
         let round_waiting = Duration::from_secs_f64(communication_epoch.round_waiting);
@@ -201,7 +200,7 @@ impl Worker {
                             self.setup_processor.send(Some(deadline));
                         } else {
                             // send collected subscriptions
-                            self.setup_processor.alt_pad(self.setup_state.get_final_subscriptions());
+                            self.setup_processor.alt_pad(sub_collector.extract_final_subscriptions(setup_epoch.epoch_no, dir_client));
                             self.setup_processor.alt_send(Some(deadline));
                         }
                     },

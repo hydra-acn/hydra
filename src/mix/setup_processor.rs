@@ -1,23 +1,20 @@
 use log::*;
 use std::cmp::Ordering;
-use std::convert::TryInto;
 use std::sync::{Arc, RwLock};
 
 use crate::crypto::key::Key;
-use crate::defs::{CircuitId, Token};
 use crate::epoch::EpochNo;
 use crate::grpc::type_extensions::SetupPacketWithPrev;
 use crate::net::PacketWithNextHop;
 use crate::tonic_directory::EpochInfo;
-use crate::tonic_mix::{CircuitSubscription, SetupPacket, Subscription};
+use crate::tonic_mix::{SetupPacket, Subscription};
 
 use super::circuit::{Circuit, NextSetupStep};
 use super::directory_client;
 use super::dummy_circuit::DummyCircuit;
 use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap, DupFilter};
 use super::rendezvous_map::RendezvousMap;
-
-pub type SubCollector = Vec<Subscription>;
+use super::sub_collector::SubCollector;
 
 crate::define_pipeline_types!(
     setup_t,
@@ -39,7 +36,7 @@ pub fn process_setup_pkt(
     circuit_map: Arc<RwLock<CircuitMap>>,
     dummy_circuit_map: Arc<RwLock<DummyCircuitMap>>,
     bloom_bitmap: Arc<RwLock<DupFilter>>,
-    sub_collector: Arc<RwLock<SubCollector>>,
+    sub_collector: Arc<SubCollector>,
 ) -> setup_t::Result {
     let current_ttl = epoch.path_length - layer - 1;
     let pkt_ttl = pkt.ttl().expect("Expected to reject this in gRPC!?");
@@ -112,7 +109,7 @@ pub fn process_setup_pkt(
             match next_hop_info {
                 NextSetupStep::Extend(extend) => setup_t::Result::Out(extend),
                 NextSetupStep::Rendezvous(tokens) => {
-                    collect_subscriptions(tokens, upstream_id, &rendezvous_map, &sub_collector);
+                    sub_collector.collect_subscriptions(tokens, upstream_id);
                     setup_t::Result::Drop
                 }
             }
@@ -135,37 +132,6 @@ pub fn process_setup_pkt(
                 setup_t::Result::Drop
             }
         }
-    }
-}
-
-fn collect_subscriptions(
-    tokens: Vec<Token>,
-    circuit_id: CircuitId,
-    rendezvous_map: &RendezvousMap,
-    sub_collector: &Arc<RwLock<SubCollector>>,
-) {
-    let mut partition = Vec::new();
-    for _ in 0..rendezvous_map.len() {
-        let circuit = CircuitSubscription {
-            circuit_id: circuit_id
-                .try_into()
-                .expect("This circuit id should fit in 32bit"),
-            tokens: Vec::new(),
-        };
-        partition.push(circuit);
-    }
-
-    for token in tokens.into_iter() {
-        let idx = rendezvous_map.index(&token);
-        partition[idx].tokens.push(token);
-    }
-
-    let mut map = sub_collector.write().expect("Lock poisoned");
-    for (idx, circuit) in partition.into_iter().enumerate() {
-        map.get_mut(idx)
-            .expect("Wrong size of sub collector!?")
-            .circuits
-            .push(circuit);
     }
 }
 
