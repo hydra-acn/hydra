@@ -162,7 +162,10 @@ impl Client {
             }
             Err(status) => match status.code() {
                 tonic::Code::InvalidArgument if status.message().contains("registered") => {
-                    info!("Seems like we are already registered ({})", status.message());
+                    info!(
+                        "Seems like we are already registered ({})",
+                        status.message()
+                    );
                     unimplemented!("We have to load the auth key from disk here!");
                 }
                 _ => panic!("Register failed with unexpected reason: {}", status),
@@ -405,6 +408,8 @@ pub mod mocks {
             round_duration: 1000.0,
             round_waiting: 30.0,
             mixes: vec![],
+            contact_service_addr: vec![8, 8, 8, 8],
+            contact_service_port: 1337,
         };
         mock_dir_client.base_client.insert_epoch(mock_epoch);
         mock_dir_client

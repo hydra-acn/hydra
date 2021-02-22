@@ -3,7 +3,7 @@ use hydra::crypto::key::{hkdf_sha256, Key};
 use hydra::crypto::x448;
 use hydra::defs::{DIR_AUTH_KEY_INFO, DIR_AUTH_KEY_SIZE, DIR_AUTH_UNREGISTER};
 use hydra::directory::grpc;
-use hydra::directory::state::State;
+use hydra::directory::state::{Config, State};
 use hydra::epoch::MAX_EPOCH_NO;
 use hydra::tonic_directory::directory_client::DirectoryClient;
 use hydra::tonic_directory::{
@@ -29,9 +29,10 @@ fn integration() {
         .expect("Failed to init tokio runtime");
 
     rt.block_on(async {
-        let state = Arc::new(State::default());
-
         let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+        let contact_service_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1337);
+        let state = Arc::new(State::new(Config::default(), contact_service_addr));
+
         let timeout = sleep(Duration::from_secs(2));
         let key =
             Key::read_from_file("tests/data/tls-test.key").expect("Failed to read key from file");

@@ -1,7 +1,7 @@
 use log::*;
 use std::net::SocketAddr;
 
-use crate::defs::Token;
+use crate::defs::{Token, CONTACT_SERVICE_TOKEN};
 use crate::error::Error;
 use crate::tonic_directory::EpochInfo;
 
@@ -9,6 +9,7 @@ use crate::tonic_directory::EpochInfo;
 #[derive(Default)]
 pub struct RendezvousMap {
     map: Vec<SocketAddr>,
+    contact_service: Option<SocketAddr>,
 }
 
 /// Invariant: The map always has at least one rendezvous node.
@@ -29,7 +30,26 @@ impl RendezvousMap {
         }
         rendezvous_nodes.sort_by(|a, b| a.1.cmp(b.1));
         let map = rendezvous_nodes.into_iter().map(|(a, _)| a).collect();
-        Ok(RendezvousMap { map })
+
+        let contact_service = match crate::net::ip_addr_from_slice(&epoch.contact_service_addr) {
+            Ok(ip) => {
+                if epoch.contact_service_port <= std::u16::MAX as u32 {
+                    Some(SocketAddr::new(ip, epoch.contact_service_port as u16))
+                } else {
+                    warn!("Contact service has an invalid port");
+                    None
+                }
+            }
+            Err(e) => {
+                warn!("Contact service has an invalid IP address: {}", e);
+                None
+            }
+        };
+
+        Ok(RendezvousMap {
+            map,
+            contact_service,
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -55,9 +75,13 @@ impl RendezvousMap {
 
     /// Set `subscribe` to `true` for sending subscriptions, `false` for publish.
     pub fn rendezvous_address(&self, token: &Token, subscribe: bool) -> Option<SocketAddr> {
-        let n = self.map.len();
-        assert!(n > 0, "Checked during construction");
-        let idx = (token % n as u64) as usize;
-        self.rendezvous_address_for_index(idx, subscribe)
+        if *token == CONTACT_SERVICE_TOKEN {
+            self.contact_service
+        } else {
+            let n = self.map.len();
+            assert!(n > 0, "Checked during construction");
+            let idx = (token % n as u64) as usize;
+            self.rendezvous_address_for_index(idx, subscribe)
+        }
     }
 }

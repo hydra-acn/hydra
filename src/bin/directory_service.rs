@@ -1,6 +1,6 @@
 use clap::{clap_app, value_t};
 use log::*;
-use std::net::{SocketAddr, IpAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,10 +14,11 @@ use hydra::net::ip_addr_to_vec;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = clap_app!(directory_service =>
         (version: hydra::defs::hydra_version())
-        (about: "Simple, non distributed, implementation of the Hydra directory service")
+        (about: "Simple, non distributed, implementation of the Hydra directory service. Also includes the contact service.")
         (@arg addr: +required "IP address to listen on")
         (@arg port: -p --port +takes_value default_value("9000") "Port to listen on (with TLS)")
         (@arg plain_port: --("plain-port") +takes_value default_value("8999") "Port to listen on without TLS. Clients should use this for debugging only")
+        (@arg contact_port: --("contact-port") +takes_value default_value("8000") "Port to listen on as contact service")
         (@arg key_path: +required "Path of the TLS private key")
         (@arg cert_path: +required "Path of the TLS certificate")
         (@arg path_len: -l --("path-len") +takes_value default_value("3") "Number of mixes for client circuits")
@@ -46,7 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .testbed_nat_addr(ip_addr_to_vec(&addr))
         .testbed_nat_base_port(port)
         .build_valid()?;
-    let state = Arc::new(State::new(cfg));
+    let contact_port = value_t!(args, "contact_port", u16).unwrap();
+    // TODO start contact service
+    let contact_endpoint = SocketAddr::new(addr, contact_port);
+    let state = Arc::new(State::new(cfg, contact_endpoint));
 
     let key = Key::read_from_file(args.value_of("key_path").unwrap()).expect("Failed to read File");
     let cert = std::fs::read_to_string(args.value_of("cert_path").unwrap())?;

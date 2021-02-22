@@ -35,6 +35,8 @@ pub const SETUP_AUTH_LEN: usize = 16;
 pub const PUBLISH_ROUND_NO: RoundNo = std::u32::MAX;
 pub const INJECT_ROUND_NO: RoundNo = std::u32::MAX - 1;
 
+pub const CONTACT_SERVICE_TOKEN: Token = 0;
+
 /// Usage: create an `AtomicBool` with value `true` and spawn the handler on a separate thread. As
 /// soon as `SIGINT` is catched, two things will happen (both may be helpful for cleanup):
 /// 1. the thread the handler ran own panics -> catch and cleanup

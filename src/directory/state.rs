@@ -7,7 +7,7 @@ use derive_builder::*;
 
 use log::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::time::delay_for as sleep;
 use tokio::time::Duration;
@@ -16,26 +16,24 @@ type StatisticMap = HashMap<String, HashMap<EpochNo, MixStatistics>>;
 
 pub struct State {
     pub mix_map: Mutex<HashMap<String, Mix>>,
+    contact_service_addr: SocketAddr,
     config: Config,
     pub epochs: RwLock<VecDeque<EpochInfo>>,
     pub stat_map: RwLock<StatisticMap>,
 }
 
 impl State {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, contact_service_addr: SocketAddr) -> Self {
         let current_epoch_no = current_epoch_no(config.phase_duration());
         info!("Initializing directory in epoch {}", current_epoch_no);
 
         State {
             mix_map: Mutex::new(HashMap::new()),
+            contact_service_addr,
             config,
             epochs: RwLock::new(VecDeque::new()),
             stat_map: RwLock::new(StatisticMap::new()),
         }
-    }
-
-    pub fn default() -> Self {
-        State::new(Config::default())
     }
 
     pub fn config(self: &Self) -> &Config {
@@ -105,6 +103,8 @@ impl State {
                 number_of_rounds: cfg.number_of_rounds,
                 path_length: cfg.path_len.into(),
                 mixes,
+                contact_service_addr: crate::net::ip_addr_to_vec(&self.contact_service_addr.ip()),
+                contact_service_port: self.contact_service_addr.port() as u32,
             };
             epoch_queue.push_back(epoch_info);
             epoch_no += 1;
