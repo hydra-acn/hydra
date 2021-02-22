@@ -20,7 +20,7 @@ impl Aes256Gcm {
 
     pub fn encrypt(
         &self,
-        iv: &[u8],
+        nonce: &[u8],
         plaintext: &[u8],
         ciphertext: &mut [u8],
         auth_data: Option<&[u8]>,
@@ -34,7 +34,7 @@ impl Aes256Gcm {
         let ct = symm::encrypt_aead(
             symm::Cipher::aes_256_gcm(),
             self.key.borrow_raw(),
-            Some(iv),
+            Some(nonce),
             aad,
             plaintext,
             tag,
@@ -50,7 +50,7 @@ impl Aes256Gcm {
 
     pub fn decrypt(
         &self,
-        iv: &[u8],
+        nonce: &[u8],
         ciphertext: &[u8],
         plaintext: &mut [u8],
         auth_data: Option<&[u8]>,
@@ -64,7 +64,7 @@ impl Aes256Gcm {
         let pt = symm::decrypt_aead(
             symm::Cipher::aes_256_gcm(),
             self.key.borrow_raw(),
-            Some(iv),
+            Some(nonce),
             aad,
             ciphertext,
             tag,
@@ -89,7 +89,7 @@ mod tests {
         let key =
             Key::from_hex_str("92ace3e348cd821092cd921aa3546374299ab46209691bc28b8752d17f123c20")
                 .unwrap();
-        let iv = hex::decode("00112233445566778899aabb").unwrap();
+        let nonce = hex::decode("00112233445566778899aabb").unwrap();
         let aad = hex::decode("00000000ffffffff").unwrap();
         let data = hex::decode("00010203040506070809").unwrap();
         let ct_expected = hex::decode("e27abdd2d2a53d2f136b").unwrap();
@@ -102,24 +102,24 @@ mod tests {
         let ctx = Aes256Gcm::new(key);
 
         // test encrypt
-        ctx.encrypt(&iv, &data, &mut ct_buf, Some(&aad), &mut tag_buf)
+        ctx.encrypt(&nonce, &data, &mut ct_buf, Some(&aad), &mut tag_buf)
             .unwrap();
         assert_eq!(ct_expected, ct_buf);
 
         // test decrypt
-        ctx.decrypt(&iv, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
+        ctx.decrypt(&nonce, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
             .unwrap();
         assert_eq!(data, pt_buf);
 
         // test failing authentication (wrong tag)
         tag_buf[0] += 1;
-        ctx.decrypt(&iv, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
+        ctx.decrypt(&nonce, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
             .unwrap_err();
 
         // test failing authentication (wrong ciphertext)
         tag_buf[0] -= 1;
         ct_buf[5] -= 1;
-        ctx.decrypt(&iv, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
+        ctx.decrypt(&nonce, &ct_buf, &mut pt_buf, Some(&aad), &tag_buf)
             .unwrap_err();
     }
 }
