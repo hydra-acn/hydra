@@ -87,19 +87,26 @@ impl Cell {
 
 pub enum CellCmd {
     Delay(u8),
+    Subscribe(u8),
     Broadcast,
 }
 
+/// Read the 8 bytes (args, cmd) of cells and return the `CellCmd` if there is one.
 pub fn read_command(slice: &[u8]) -> Option<CellCmd> {
-    if slice[1..].iter().all(|b| *b == 0) {
-        Some(CellCmd::Delay(slice[0]))
-    } else if slice.iter().all(|b| *b == 255) {
+    if slice.iter().all(|b| *b == 255) {
         Some(CellCmd::Broadcast)
+    } else if slice[2..].iter().all(|b| *b == 0) {
+        match slice[1] {
+            0 => Some(CellCmd::Delay(slice[0])),
+            1 => Some(CellCmd::Subscribe(slice[0])),
+            _ => None,
+        }
     } else {
         None
     }
 }
 
+/// Set the 8 bytes (args, cmd) of cells based on the given `CellCmd`.
 pub fn set_command(cmd: CellCmd, slice: &mut [u8]) {
     match cmd {
         CellCmd::Delay(rounds) => {
@@ -107,6 +114,13 @@ pub fn set_command(cmd: CellCmd, slice: &mut [u8]) {
                 *b = 0;
             }
             slice[0] = rounds;
+        }
+        CellCmd::Subscribe(n_tokens) => {
+            for b in slice.iter_mut() {
+                *b = 0;
+            }
+            slice[1] = 1;
+            slice[0] = n_tokens;
         }
         CellCmd::Broadcast => {
             for b in slice.iter_mut() {

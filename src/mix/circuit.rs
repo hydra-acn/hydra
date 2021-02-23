@@ -16,6 +16,7 @@ use crate::net::{ip_addr_from_slice, PacketWithNextHop};
 use crate::tonic_mix::SetupPacket;
 
 use super::rendezvous_map::RendezvousMap;
+use super::sub_collector::SubCollector;
 
 use byteorder::{ByteOrder, LittleEndian};
 use log::*;
@@ -235,6 +236,7 @@ impl Circuit {
         round_no: RoundNo,
         layer: u32,
         direction: CellDirection,
+        sub_collector: &SubCollector,
     ) -> NextCellStep {
         // out-of-sync detection
         match layer.cmp(&self.layer) {
@@ -336,18 +338,25 @@ impl Circuit {
                     cell = delayed_cell;
                 }
 
-                // TODO we could skip the check if we use a delayed cell
                 // read command
-                if let Some(CellCmd::Delay(rounds)) = cell.command() {
-                    // we shall delay the cell -> forward dummy instead
-                    let dummy = Cell::dummy(cell.circuit_id(), cell.round_no());
-                    // randomize cmd of original cell
-                    thread_cprng().fill(&mut cell.onion_mut()[0..8]);
-                    self.delayed_cells
-                        .write()
-                        .expect("Lock poisoned")
-                        .insert(cell.round_no() + rounds as u32, cell);
-                    cell = dummy;
+                match cell.command() {
+                    // TODO design: delaying does not work as expected -> can only delay a *different* cell?
+                    Some(CellCmd::Delay(_)) => {
+                        warn!("Somebody used the delay cmd, but it is not implemented yet")
+                    }
+                    Some(CellCmd::Subscribe(n_tokens)) if self.is_exit() => {
+                        let slice_upper = (n_tokens as usize) * std::mem::size_of::<Token>();
+                        let tokens = crate::defs::tokens_from_bytes(&cell.onion()[0..slice_upper]);
+                        match tokens.len() {
+                            0 => (),
+                            1 => sub_collector.collect_subscription(tokens[0], self.upstream_id),
+                            _ => sub_collector.collect_subscriptions(tokens, self.upstream_id),
+                        }
+                        // this cell has no end-to-end payload -> drop
+                        return NextCellStep::Drop;
+                    }
+                    // remaining commands are not for upstream mixes
+                    _ => (),
                 }
 
                 match self.upstream_hop {

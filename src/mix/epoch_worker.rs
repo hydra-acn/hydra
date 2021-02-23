@@ -159,12 +159,22 @@ impl Worker {
                 )
             }
 
-            // round done, time for some setup handling
-            // TODO code: move inside separate function
+            // normal communication done -> first drop some old state
             let drop_deadline = current_time() + Duration::from_secs(1);
             info!("Dropping some old state");
             self.drop_state.drop_some(drop_deadline);
 
+            // send any subscriptions we collected this round
+            let deadline = next_round_start - subround_interval - Duration::from_secs(2);
+            self.setup_processor.alt_pad(
+                self.state
+                    .sub_collector()
+                    .extract_final_subscriptions(communication_epoch.epoch_no, &self.dir_client),
+            );
+            self.setup_processor.alt_send(Some(deadline));
+
+            // round complete, time for some setup handling
+            // TODO code: move inside separate function
             let l = setup_epoch.path_length;
             let k = communication_epoch.number_of_rounds;
             let setup_layer = (l + 1) * round_no / k;
@@ -186,7 +196,7 @@ impl Worker {
                         let circuit_map = self.setup_state.circuits();
                         let dummy_circuit_map = self.setup_state.dummy_circuits();
                         let bloom_bitmap = self.setup_state.bloom_bitmap();
-                        let sub_collector = self.setup_state.subscription_collector();
+                        let sub_collector = self.setup_state.sub_collector();
                         let f = |pkt| {
                             process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone(), sub_collector.clone())
                         };
@@ -311,6 +321,7 @@ impl Worker {
         let circuit_id_map = &*self.state.circuit_id_map();
         let circuit_map = &*self.state.circuits();
         let dummy_circuit_map = &*self.state.dummy_circuits();
+        let sub_collector = &*self.state.sub_collector();
         let f = |cell| {
             process_cell(
                 cell,
@@ -322,6 +333,7 @@ impl Worker {
                 circuit_id_map,
                 circuit_map,
                 dummy_circuit_map,
+                sub_collector,
             )
         };
         // TODO performance: duration should be passed by ref

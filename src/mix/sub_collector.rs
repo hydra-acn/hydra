@@ -21,8 +21,7 @@ impl SubCollector {
     pub fn new(rendezvous_map: Arc<RendezvousMap>) -> Self {
         let mut sub_vec = Vec::new();
         for _ in 0..rendezvous_map.len() {
-            let subs = Vec::new();
-            sub_vec.push(RwLock::new(subs));
+            sub_vec.push(RwLock::default());
         }
         SubCollector {
             rendezvous_map,
@@ -87,13 +86,13 @@ impl SubCollector {
         let sub_port = dir_client.config().fast_port as u32;
         let mut pkts = Vec::new();
         for (idx, sub) in self.sub_vec.iter().enumerate() {
-            // move circuit subscriptions out of RwLock
             let mut guard = sub.write().expect("Lock poisoned");
-            let circuits = std::mem::replace(&mut *guard, Vec::new());
-            if circuits.is_empty() {
+            if guard.is_empty() {
                 // no subs at this rendezvous mix -> don't send an "empty" subscription request
                 continue;
             }
+            // move circuit subscriptions out of RwLock
+            let circuits = std::mem::replace(&mut *guard, Vec::new());
             // TODO security: shuffle circuits inside sub
             match self.rendezvous_map.rendezvous_address_for_index(idx, true) {
                 Some(addr) => {

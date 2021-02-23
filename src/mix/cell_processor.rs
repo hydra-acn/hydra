@@ -6,6 +6,7 @@ use crate::net::PacketWithNextHop;
 
 use super::circuit::{CellDirection, NextCellStep};
 use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap};
+use super::sub_collector::SubCollector;
 
 crate::define_pipeline_types!(cell_rss_t, Cell, PacketWithNextHop<Cell>, Cell);
 
@@ -31,6 +32,7 @@ pub fn process_cell(
     circuit_id_map: &CircuitIdMap,
     circuits: &CircuitMap,
     dummy_circuits: &DummyCircuitMap,
+    sub_collector: &SubCollector,
 ) -> cell_rss_t::Result {
     if cell.round_no() != incomming_round_no {
         if let CellDirection::Upstream = direction {
@@ -52,7 +54,7 @@ pub fn process_cell(
         CellDirection::Upstream => {
             if let Some(circuit) = circuits.get(&cell.circuit_id()) {
                 return circuit
-                    .process_cell(cell, round_no, layer, direction)
+                    .process_cell(cell, round_no, layer, direction, sub_collector)
                     .into();
             } else {
                 warn!(
@@ -70,7 +72,7 @@ pub fn process_cell(
             if let Some(mapped_id) = circuit_id_map.get(&cell.circuit_id()) {
                 if let Some(circuit) = circuits.get(&mapped_id) {
                     return circuit
-                        .process_cell(cell, round_no, layer, direction)
+                        .process_cell(cell, round_no, layer, direction, sub_collector)
                         .into();
                 }
             }

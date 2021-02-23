@@ -63,7 +63,7 @@ impl EpochSetupState {
         &self.rendezvous_map
     }
 
-    pub fn subscription_collector(&self) -> &Arc<SubCollector> {
+    pub fn sub_collector(&self) -> &Arc<SubCollector> {
         &self.sub_collector
     }
 
@@ -96,6 +96,7 @@ pub struct EpochState {
     circuits: Arc<CircuitMap>,
     dummy_circuits: Arc<DummyCircuitMap>,
     circuit_id_map: Arc<CircuitIdMap>,
+    sub_collector: Arc<SubCollector>,
 }
 
 impl EpochState {
@@ -116,15 +117,13 @@ impl EpochState {
         let mut bloom_guard = state.bloom.write().expect("Lock poisoned");
         *bloom_guard = create_bloomfilter(circuits.len());
 
-        // TODO move the collector to the communication state as well
-        state.sub_collector = Arc::default();
-
         EpochState {
             rendezvous_map: std::mem::replace(&mut state.rendezvous_map, Arc::default()),
             sub_map: std::mem::replace(&mut state.sub_map, Arc::default()),
             circuits: Arc::new(circuits),
             dummy_circuits: Arc::new(dummy_circuits),
             circuit_id_map: Arc::new(circuit_id_map),
+            sub_collector: std::mem::replace(&mut state.sub_collector, Arc::default()),
         }
     }
 
@@ -146,6 +145,10 @@ impl EpochState {
 
     pub fn circuit_id_map(&self) -> &Arc<CircuitIdMap> {
         &self.circuit_id_map
+    }
+
+    pub fn sub_collector(&self) -> &Arc<SubCollector> {
+        &self.sub_collector
     }
 
     /// Drops the circuit information (if not dropped already). If time permits, starts to drop the
