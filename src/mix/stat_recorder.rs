@@ -68,12 +68,11 @@ impl Statistics {
 
     pub fn send_statistic_msg(&self, dir_client: &directory_client::Client) {
         let mut avg_processing_time_per_layer = vec![0; self.total_processing_time.len()];
-        for i in 0..self.total_processing_time.len() {
+        for (i, avg_time) in avg_processing_time_per_layer.iter_mut().enumerate() {
             if self.counter[i] != 0 {
-                avg_processing_time_per_layer[i] =
-                    (self.total_processing_time[i] / self.counter[i]) as u32;
+                *avg_time = (self.total_processing_time[i] / self.counter[i]) as u32;
             } else {
-                avg_processing_time_per_layer[i] = 0;
+                *avg_time = 0;
             }
         }
 
@@ -102,7 +101,11 @@ mod tests {
         //insert per layer setup time
         test_stat.record_setup_time(Duration::from_micros(100), Duration::from_micros(120), 0);
         test_stat.record_setup_time(Duration::from_micros(200), Duration::from_micros(180), 1);
-        test_stat.record_setup_time(Duration::from_micros(1), Duration::from_micros(std::u64::MAX), 2);
+        test_stat.record_setup_time(
+            Duration::from_micros(1),
+            Duration::from_micros(std::u64::MAX),
+            2,
+        );
         //insert processing time for one layer
         test_stat.record_processing_time(
             Duration::from_micros(2000),

@@ -77,13 +77,11 @@ impl Storage {
         match fb_map.get_mut(&epoch_no) {
             Some(cmap) => {
                 cmap.insert(circuit_id, token);
-                ()
             }
             None => {
                 let mut cmap = HashMap::new();
                 cmap.insert(circuit_id, token);
                 fb_map.insert(epoch_no, cmap);
-                ()
             }
         }
     }
@@ -129,8 +127,8 @@ impl Storage {
             cmap = map.get(&epoch_no).cloned().unwrap_or_default()
         }
 
-        if let None = self.firebase_auth_key {
-            if cmap.len() > 0 {
+        if self.firebase_auth_key.is_none() {
+            if !cmap.is_empty() {
                 warn!("At least one user requested firebase support, but we don't know the server auth key");
             }
             return;

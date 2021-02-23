@@ -88,13 +88,7 @@ pub fn process_setup_pkt(
         return setup_t::Result::Drop;
     }
 
-    match Circuit::new(
-        pkt,
-        sk,
-        rendezvous_map.clone(),
-        layer,
-        epoch.number_of_rounds - 1,
-    ) {
+    match Circuit::new(pkt, sk, rendezvous_map, layer, epoch.number_of_rounds - 1) {
         Ok((circuit, next_hop_info)) => {
             // insert mappings
             let upstream_id = circuit.upstream_id();

@@ -177,7 +177,6 @@ async fn relay_cells(
         for cell in shuffle_it {
             stream.write_all(cell.buf()).unwrap_or_else(|e| {
                 warn!("Writing to TCP stream failed: {}", e);
-                ()
             });
         }
     })
@@ -245,13 +244,13 @@ impl<T: Default> Iterator for ShuffleIterator<T> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
         if let Some(deadline) = self.deadline {
-            if let None = deadline.checked_sub(current_time()) {
+            if deadline.checked_sub(current_time()).is_none() {
                 warn!("Sending did not finish in time");
                 return None;
             }
         }
         if self.pos < self.idx_vec.len() {
-            let pkt = std::mem::replace(&mut self.pkt_vec[self.idx_vec[self.pos]], T::default());
+            let pkt = std::mem::take(&mut self.pkt_vec[self.idx_vec[self.pos]]);
             self.pos += 1;
             Some(pkt)
         } else {

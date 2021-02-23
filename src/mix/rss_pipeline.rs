@@ -215,7 +215,7 @@ fn process_pending<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
 ) {
     let mut new_pending = VecDeque::new();
     while let Some(req) = thread.pending_queue.pop_front() {
-        if let None = time.checked_sub(current_time()) {
+        if time.checked_sub(current_time()).is_none() {
             // time limit reached
             return;
         }
@@ -240,7 +240,7 @@ fn process_new<I, O, A, F: FnMut(I) -> ProcessResult<I, O, A>>(
     let poll_interval = Duration::from_millis(1);
     let mut idle_time = Duration::from_millis(0);
     loop {
-        if let None = deadline.checked_sub(current_time()) {
+        if deadline.checked_sub(current_time()).is_none() {
             // time limit reached
             return idle_time;
         }

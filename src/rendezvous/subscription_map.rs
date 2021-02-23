@@ -130,7 +130,7 @@ impl SubscriptionMap {
 
     pub fn drop_some(&self, deadline: Duration) {
         loop {
-            if let None = deadline.checked_sub(current_time()) {
+            if deadline.checked_sub(current_time()).is_none() {
                 return;
             }
             let drop_idx = self.drop_idx.fetch_add(1, Ordering::Relaxed);

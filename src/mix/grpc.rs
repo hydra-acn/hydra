@@ -107,17 +107,16 @@ impl Mix for Service {
                 }
             };
             pkt.validity_check(&*self.dir_client)?;
-            if is_client {
-                if self
+            if is_client
+                && self
                     .storage
                     .create_circuit(pkt.circuit_id, pkt.epoch_no, firebase_token.clone())
                     == false
-                {
-                    return Err(Status::new(
-                        Code::AlreadyExists,
-                        "Circuit id exists already",
-                    ));
-                }
+            {
+                return Err(Status::new(
+                    Code::AlreadyExists,
+                    "Circuit id exists already",
+                ));
             }
             self.setup_rx_queue
                 .enqueue(SetupPacketWithPrev::new(pkt, previous_hop));
