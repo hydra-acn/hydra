@@ -27,7 +27,7 @@ deploy_local() {
         port=`echo $dirport + $i | bc`
         echo -n "-> Starting mix on port $port ..."
         tmux new-window -d -t "=${session}" -n mix-$i
-        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port $threads --config $mixcfg -d $dirdom -p $dirport -c $cacrt $x25519" Enter
+        tmux send-keys -t "=${session}:=mix-$i" "target/$mode/mix $localhost:$port $dirdom --config $mixcfg -t $threads -p $dirport -c $cacrt $x25519" Enter
         echo " Done"
     done
     # Kill the "default" tmux window
@@ -70,7 +70,7 @@ deploy_testbed() {
         ssh $mix tmux new-session -d -s $session
         # start the engine :)
         # TODO avoid SPACE?
-        ssh $mix tmux send-keys -t "=${session}:" ".testbed/mix Space $addr:$port Space $threads Space --config Space $mixcfg Space -d Space $dirdom Space -p Space $dirport Space -c Space $cacrt Space $x25519" Enter
+        ssh $mix tmux send-keys -t "=${session}:" ".testbed/mix Space $addr:$port Space $dirdom Space --config Space $mixcfg Space -t Space $threads Space -p Space $dirport Space -c Space $cacrt Space $x25519" Enter
     done
 }
 
