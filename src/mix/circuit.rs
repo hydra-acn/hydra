@@ -394,7 +394,7 @@ impl Circuit {
             None => true,
         };
 
-        if need_dummy == false {
+        if !need_dummy {
             return None;
         }
 

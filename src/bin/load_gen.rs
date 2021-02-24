@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: bool) {
     let mut maybe_epoch = dir_client.next_epoch_info();
-    while let None = maybe_epoch {
+    while maybe_epoch.is_none() {
         warn!("Don't know the next epoch for setup, retrying in 5 seconds");
         thread::sleep(Duration::from_secs(5));
         maybe_epoch = dir_client.next_epoch_info();
@@ -120,7 +120,6 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
                 Some(vec) => vec.push(setup_pkt.into_inner()),
                 None => {
                     map.insert(*setup_pkt.next_hop(), vec![setup_pkt.into_inner()]);
-                    ()
                 }
             };
         });
@@ -137,7 +136,7 @@ async fn setup_loop(dir_client: Arc<DirClient>, n: usize, runs: usize, wait: boo
             let mut channel = channels
                 .get_channel(&dst)
                 .await
-                .expect(&format!("No connection to {}", dst));
+                .unwrap_or_else(|| panic!("No connection to {}", dst));
             channel
                 .stream_setup_circuit(tonic::Request::new(stream::iter(pkts.into_iter())))
                 .await
@@ -238,7 +237,7 @@ async fn run_epoch_communication(
     info!("Communication for epoch {} done", epoch_no);
 }
 
-fn epoch_stats(epoch: &EpochInfo, run: usize, clients: &Vec<Arc<Client>>) {
+fn epoch_stats(epoch: &EpochInfo, run: usize, clients: &[Arc<Client>]) {
     let mut avg_loss_rate = 0f64;
     let result_path = "load-gen-results.dat";
     let (file, is_new) = match Path::new(result_path).exists() {
@@ -388,7 +387,7 @@ impl Client {
         let mut channel = channels
             .get_channel(&self.entry_addr)
             .await
-            .expect(&format!("No connection to {}", self.entry_addr));
+            .unwrap_or_else(|| panic!("No connection to {}", self.entry_addr));
         let mut received = channel
             .send_and_late_poll(tonic::Request::new(poll_req))
             .await
@@ -398,7 +397,7 @@ impl Client {
         *self.expected_cell.write().unwrap() = Some(plain_cell);
         if run > 0 {
             self.check_nack(&mut received, run - 1);
-        } else if received.len() > 0 {
+        } else if !received.is_empty() {
             warn!("Late polled something, but did not expect it");
         }
     }
@@ -423,7 +422,7 @@ impl Client {
         let mut channel = channels
             .get_channel(&self.entry_addr)
             .await
-            .expect(&format!("No connection to {}", self.entry_addr));
+            .unwrap_or_else(|| panic!("No connection to {}", self.entry_addr));
         let mut received = channel
             .send_and_receive(tonic::Request::new(cell))
             .await
@@ -446,7 +445,7 @@ impl Client {
         let mut channel = channels
             .get_channel(&self.entry_addr)
             .await
-            .expect(&format!("No connection to {}", self.entry_addr));
+            .unwrap_or_else(|| panic!("No connection to {}", self.entry_addr));
         let mut received = channel
             .late_poll(tonic::Request::new(req))
             .await
@@ -475,10 +474,8 @@ impl Client {
                 debug!("{:?} Did not receive a cell back", self);
                 self.lost_cells.fetch_add(1, Ordering::Relaxed);
             }
-        } else {
-            if !cells.is_empty() {
-                debug!("{:?} Received {} cells instead of 0", self, cells.len());
-            }
+        } else if !cells.is_empty() {
+            debug!("{:?} Received {} cells instead of 0", self, cells.len());
         }
     }
 

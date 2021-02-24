@@ -188,20 +188,20 @@ impl<I: Send, O: Send, A: Send> Processor<I, O, A> {
         out
     }
 
-    /// Drop all new requests.
-    pub fn drop(&mut self) {
+    /// Clear all new requests.
+    pub fn clear(&mut self) {
         // TODO security: this still might result in an endless loop when DoSed -> rate limit on
         // gRPC side?
         self.threads.par_iter_mut().for_each(|t| {
-            while let Ok(_) = t.in_queue.try_recv() {
+            while t.in_queue.try_recv().is_ok() {
                 // drop
             }
         });
     }
 
-    /// Drop all new requests and requests that were requeued.
-    pub fn drop_all(&mut self) {
-        self.drop();
+    /// Clear all new requests and requests that were requeued.
+    pub fn clear_all(&mut self) {
+        self.clear();
         for t in self.threads.iter_mut() {
             t.pending_queue.clear();
         }

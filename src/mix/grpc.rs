@@ -53,13 +53,10 @@ impl State {
     fn late_poll_impl(&self, circuit_ids: &[CircuitId]) -> CellVector {
         let mut cell_vec = CellVector::default();
         for circuit_id in circuit_ids {
-            match self.storage.delete_circuit(&circuit_id) {
-                Some(vec) => {
-                    for c in vec.into_iter() {
-                        cell_vec.cells.push(c.into());
-                    }
+            if let Some(vec) = self.storage.delete_circuit(&circuit_id) {
+                for c in vec.into_iter() {
+                    cell_vec.cells.push(c.into());
                 }
-                None => (),
             }
         }
         cell_vec
@@ -75,10 +72,9 @@ impl Mix for Service {
         let firebase_token = get_firebase_token(&req);
         let pkt = req.into_inner();
         pkt.validity_check(&*self.dir_client)?;
-        if self
+        if !self
             .storage
             .create_circuit(pkt.circuit_id, pkt.epoch_no, firebase_token)
-            == false
         {
             return Err(Status::new(
                 Code::AlreadyExists,
@@ -108,10 +104,11 @@ impl Mix for Service {
             };
             pkt.validity_check(&*self.dir_client)?;
             if is_client
-                && self
-                    .storage
-                    .create_circuit(pkt.circuit_id, pkt.epoch_no, firebase_token.clone())
-                    == false
+                && !self.storage.create_circuit(
+                    pkt.circuit_id,
+                    pkt.epoch_no,
+                    firebase_token.clone(),
+                )
             {
                 return Err(Status::new(
                     Code::AlreadyExists,

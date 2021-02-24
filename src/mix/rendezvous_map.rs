@@ -15,7 +15,7 @@ pub struct RendezvousMap {
 /// Invariant: The map always has at least one rendezvous node.
 impl RendezvousMap {
     pub fn new(epoch: &EpochInfo) -> Result<Self, Error> {
-        if epoch.mixes.len() == 0 {
+        if epoch.mixes.is_empty() {
             return Err(Error::InputError(
                 "No rendezvous mixes available".to_string(),
             ));
@@ -52,6 +52,10 @@ impl RendezvousMap {
         })
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -63,9 +67,9 @@ impl RendezvousMap {
     /// Set `subscribe` to `true` for sending subscriptions, `false` for publish.
     pub fn rendezvous_address_for_index(&self, idx: usize, subscribe: bool) -> Option<SocketAddr> {
         self.map.get(idx).map(|a| match subscribe {
-            true => a.clone(),
+            true => *a,
             false => {
-                let mut with_fast_port = a.clone();
+                let mut with_fast_port = *a;
                 // TODO code don't hardcode +100
                 with_fast_port.set_port(a.port() + 100);
                 with_fast_port

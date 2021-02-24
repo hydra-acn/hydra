@@ -27,7 +27,7 @@ impl DummyCircuit {
         path: &[MixInfo],
     ) -> Result<(Self, PacketWithNextHop<SetupPacket>), Error> {
         let (circuit, setup_pkt) = Circuit::new(epoch_no, path, Vec::new(), None)?;
-        let mut first_hop = circuit.first_hop().clone();
+        let mut first_hop = *circuit.first_hop();
         // TODO code: don't hardcode +200
         first_hop.set_port(first_hop.port() + 200);
         let dummy = DummyCircuit {

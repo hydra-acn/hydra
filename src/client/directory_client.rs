@@ -176,11 +176,8 @@ impl Client {
     /// Return the smallest epoch number we know of. `None` if we don't know any epoch.
     pub fn smallest_epoch_no(&self) -> Option<EpochNo> {
         let epoch_map = self.epochs.read().expect("Lock failure");
-        for (epoch_no, _) in epoch_map.iter() {
-            // ordered map
-            return Some(*epoch_no);
-        }
-        None
+        // the epoch map is sorted by epoch number (key)
+        epoch_map.keys().next().copied()
     }
 
     /// Select one mix as entry guard, using the available mixes from epoch `epoch_no`.

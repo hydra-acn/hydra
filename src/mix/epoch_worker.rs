@@ -44,7 +44,7 @@ impl Worker {
         sync_tx: xbeam::Sender<SyncBeat>,
     ) -> Self {
         Worker {
-            running: running.clone(),
+            running,
             dir_client,
             grpc_state,
             setup_processor,
@@ -58,7 +58,7 @@ impl Worker {
     }
 
     fn shall_terminate(&self) -> bool {
-        self.running.load(atomic::Ordering::SeqCst) == false
+        !self.running.load(atomic::Ordering::SeqCst)
     }
 
     /// endless loop for processing the epochs, starting with the upcomming epoch (setup)
@@ -66,12 +66,9 @@ impl Worker {
         let first_epoch;
         // poll directory client till we get an answer
         loop {
-            match self.dir_client.next_epoch_info() {
-                Some(epoch) => {
-                    first_epoch = epoch;
-                    break;
-                }
-                None => (),
+            if let Some(epoch) = self.dir_client.next_epoch_info() {
+                first_epoch = epoch;
+                break;
             }
             if self.shall_terminate() {
                 return;
@@ -150,7 +147,7 @@ impl Worker {
             }
             next_round_start += interval;
 
-            if is_first == false {
+            if !is_first {
                 self.process_communication_round(&communication_epoch, round_no);
             } else {
                 info!(
@@ -200,7 +197,7 @@ impl Worker {
                         let f = |pkt| {
                             process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone(), sub_collector.clone())
                         };
-                        if do_send == false {
+                        if !do_send {
                             self.setup_processor.process_till(f, deadline);
                         } else if setup_layer < setup_epoch.path_length - 1 {
                             // one additional dummy circuit for all but the last layer
@@ -346,15 +343,14 @@ impl Worker {
                 // no out-of-sync dummies
                 continue;
             }
-            match circuit.pad(round_no, direction) {
-                Some(step) => match step {
+            if let Some(step) = circuit.pad(round_no, direction) {
+                match step {
                     NextCellStep::Relay(c) => self.cell_processor.pad(vec![c]),
                     NextCellStep::Rendezvous(c) => self.cell_processor.pad(vec![c]),
                     NextCellStep::Deliver(c) => self.cell_processor.alt_pad(vec![c]),
                     NextCellStep::Wait(_) => error!("Why should a dummy be out of sync?"),
                     NextCellStep::Drop => error!("Why should a dummy be dropped right away?"),
-                },
-                None => (),
+                }
             }
         }
 
@@ -365,9 +361,8 @@ impl Worker {
                     // no out-of-sync dummies
                     continue;
                 }
-                match dummy_circuit.pad(round_no) {
-                    Some(c) => self.cell_processor.pad(vec![c]),
-                    None => (),
+                if let Some(c) = dummy_circuit.pad(round_no) {
+                    self.cell_processor.pad(vec![c]);
                 }
             }
         }

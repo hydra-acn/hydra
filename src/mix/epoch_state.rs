@@ -105,25 +105,24 @@ impl EpochState {
     /// all fields and resizing the bloomfilter
     pub fn finalize_setup(state: &mut EpochSetupState) -> EpochState {
         let mut circuits_guard = state.circuits.write().expect("Lock poisoned");
-        let circuits = std::mem::replace(&mut *circuits_guard, CircuitMap::default());
+        let circuits = std::mem::take(&mut *circuits_guard);
 
         let mut circuit_id_guard = state.circuit_id_map.write().expect("Lock poisoned");
-        let circuit_id_map = std::mem::replace(&mut *circuit_id_guard, CircuitIdMap::default());
+        let circuit_id_map = std::mem::take(&mut *circuit_id_guard);
 
         let mut dummy_circuits_guard = state.dummy_circuits.write().expect("Lock poisoned");
-        let dummy_circuits =
-            std::mem::replace(&mut *dummy_circuits_guard, DummyCircuitMap::default());
+        let dummy_circuits = std::mem::take(&mut *dummy_circuits_guard);
 
         let mut bloom_guard = state.bloom.write().expect("Lock poisoned");
         *bloom_guard = create_bloomfilter(circuits.len());
 
         EpochState {
-            rendezvous_map: std::mem::replace(&mut state.rendezvous_map, Arc::default()),
-            sub_map: std::mem::replace(&mut state.sub_map, Arc::default()),
+            rendezvous_map: std::mem::take(&mut state.rendezvous_map),
+            sub_map: std::mem::take(&mut state.sub_map),
             circuits: Arc::new(circuits),
             dummy_circuits: Arc::new(dummy_circuits),
             circuit_id_map: Arc::new(circuit_id_map),
-            sub_collector: std::mem::replace(&mut state.sub_collector, Arc::default()),
+            sub_collector: std::mem::take(&mut state.sub_collector),
         }
     }
 
