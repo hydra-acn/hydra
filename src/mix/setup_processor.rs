@@ -12,9 +12,7 @@ use crate::tonic_mix::{SetupPacket, Subscription};
 use super::circuit::{Circuit, NextSetupStep};
 use super::directory_client;
 use super::dummy_circuit::DummyCircuit;
-use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap, DupFilter};
-use super::rendezvous_map::RendezvousMap;
-use super::sub_collector::SubCollector;
+use super::epoch_state::{DummyCircuitMap, EpochSetupState};
 
 crate::define_pipeline_types!(
     setup_t,
@@ -23,21 +21,16 @@ crate::define_pipeline_types!(
     PacketWithNextHop<Subscription>
 );
 
-// TODO code: refactor epoch state (only one struct, inside Arc and optionally RwLock) to make
-// parameters less ugly
 pub fn process_setup_pkt(
     pkt: SetupPacketWithPrev,
     dir_client: Arc<directory_client::Client>,
     epoch: &EpochInfo,
     sk: &Key,
     layer: u32,
-    rendezvous_map: Arc<RendezvousMap>,
-    circuit_id_map: Arc<RwLock<CircuitIdMap>>,
-    circuit_map: Arc<RwLock<CircuitMap>>,
-    dummy_circuit_map: Arc<RwLock<DummyCircuitMap>>,
-    bloom_bitmap: Arc<RwLock<DupFilter>>,
-    sub_collector: Arc<SubCollector>,
+    setup_state: &EpochSetupState,
 ) -> setup_t::Result {
+    let circuit_map = setup_state.circuits();
+
     let current_ttl = epoch.path_length - layer - 1;
     let pkt_ttl = pkt.ttl().expect("Expected to reject this in gRPC!?");
     // first of all, check if its the right place and time for this setup packet
@@ -82,18 +75,25 @@ pub fn process_setup_pkt(
         }
     }
 
-    let mut dup_filter = bloom_bitmap.write().expect("Lock poisoned");
+    let mut dup_filter = setup_state.bloom_bitmap().write().expect("Lock poisoned");
     if dup_filter.check_and_set(pkt.auth_tag()) {
         warn!("Dropping duplicate setup packet");
         return setup_t::Result::Drop;
     }
 
-    match Circuit::new(pkt, sk, rendezvous_map, layer, epoch.number_of_rounds - 1) {
+    match Circuit::new(
+        pkt,
+        sk,
+        setup_state.rendezvous_map().clone(),
+        layer,
+        epoch.number_of_rounds - 1,
+    ) {
         Ok((circuit, next_hop_info)) => {
             // insert mappings
             let upstream_id = circuit.upstream_id();
             {
-                let mut circuit_id_map_guard = circuit_id_map.write().expect("Lock poisoned");
+                let mut circuit_id_map_guard =
+                    setup_state.circuit_id_map().write().expect("Lock poisoned");
                 circuit_id_map_guard.insert(upstream_id, circuit.downstream_id());
             }
             {
@@ -103,7 +103,9 @@ pub fn process_setup_pkt(
             match next_hop_info {
                 NextSetupStep::Extend(extend) => setup_t::Result::Out(extend),
                 NextSetupStep::Rendezvous(tokens) => {
-                    sub_collector.collect_subscriptions(tokens, upstream_id);
+                    setup_state
+                        .sub_collector()
+                        .collect_subscriptions(tokens, upstream_id);
                     setup_t::Result::Drop
                 }
             }
@@ -115,7 +117,7 @@ pub fn process_setup_pkt(
             );
             if current_ttl > 0 {
                 let dummy_extend = create_dummy_circuit(
-                    dummy_circuit_map,
+                    setup_state.dummy_circuits(),
                     &*dir_client,
                     epoch.epoch_no,
                     layer,
@@ -132,7 +134,7 @@ pub fn process_setup_pkt(
 /// Panics on failure as dummy circuits are essential for anonymity.
 /// Returns the info necessary for circuit extension (next hop, setup packet).
 pub fn create_dummy_circuit(
-    dummy_circuit_map: Arc<RwLock<DummyCircuitMap>>,
+    dummy_circuit_map: &Arc<RwLock<DummyCircuitMap>>,
     dir_client: &directory_client::Client,
     epoch_no: EpochNo,
     layer: u32,

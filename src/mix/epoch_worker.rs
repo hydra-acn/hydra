@@ -188,26 +188,21 @@ impl Worker {
                             setup_layer, setup_epoch.epoch_no
                         );
                         let dir_client = &self.dir_client;
-                        let rendezvous_map = self.setup_state.rendezvous_map();
-                        let circuit_id_map = self.setup_state.circuit_id_map();
-                        let circuit_map = self.setup_state.circuits();
-                        let dummy_circuit_map = self.setup_state.dummy_circuits();
-                        let bloom_bitmap = self.setup_state.bloom_bitmap();
-                        let sub_collector = self.setup_state.sub_collector();
+                        let setup_state_ref = &self.setup_state;
                         let f = |pkt| {
-                            process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, rendezvous_map.clone(), circuit_id_map.clone(), circuit_map.clone(), dummy_circuit_map.clone(), bloom_bitmap.clone(), sub_collector.clone())
+                            process_setup_pkt(pkt, dir_client.clone(), setup_epoch, sk, setup_layer, setup_state_ref)
                         };
                         if !do_send {
                             self.setup_processor.process_till(f, deadline);
                         } else if setup_layer < setup_epoch.path_length - 1 {
                             // one additional dummy circuit for all but the last layer
-                            let dummy_extend = create_dummy_circuit(self.setup_state.dummy_circuits().clone(), &self.dir_client, setup_epoch.epoch_no, setup_layer, setup_epoch.path_length - setup_layer - 1);
+                            let dummy_extend = create_dummy_circuit(&self.setup_state.dummy_circuits(), &self.dir_client, setup_epoch.epoch_no, setup_layer, setup_epoch.path_length - setup_layer - 1);
                             self.setup_processor.pad(vec![dummy_extend]);
                             // send setup packets
                             self.setup_processor.send(Some(deadline));
                         } else {
                             // send collected subscriptions
-                            self.setup_processor.alt_pad(sub_collector.extract_final_subscriptions(setup_epoch.epoch_no, dir_client));
+                            self.setup_processor.alt_pad(self.setup_state.sub_collector().extract_final_subscriptions(setup_epoch.epoch_no, dir_client));
                             self.setup_processor.alt_send(Some(deadline));
                         }
                     },
@@ -315,10 +310,7 @@ impl Worker {
             ".. processing sub-round of round {}, layer {}, direction {:?}",
             round_no, layer, direction,
         );
-        let circuit_id_map = &*self.state.circuit_id_map();
-        let circuit_map = &*self.state.circuits();
-        let dummy_circuit_map = &*self.state.dummy_circuits();
-        let sub_collector = &*self.state.sub_collector();
+        let state_ref = &self.state;
         let f = |cell| {
             process_cell(
                 cell,
@@ -327,10 +319,7 @@ impl Worker {
                 layer,
                 max_layer,
                 direction,
-                circuit_id_map,
-                circuit_map,
-                dummy_circuit_map,
-                sub_collector,
+                state_ref,
             )
         };
         // TODO performance: duration should be passed by ref

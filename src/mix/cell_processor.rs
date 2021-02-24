@@ -5,8 +5,7 @@ use crate::net::cell::Cell;
 use crate::net::PacketWithNextHop;
 
 use super::circuit::{CellDirection, NextCellStep};
-use super::epoch_state::{CircuitIdMap, CircuitMap, DummyCircuitMap};
-use super::sub_collector::SubCollector;
+use super::epoch_state::EpochState;
 
 crate::define_pipeline_types!(cell_rss_t, Cell, PacketWithNextHop<Cell>, Cell);
 
@@ -29,11 +28,11 @@ pub fn process_cell(
     layer: u32,
     max_layer: u32,
     direction: CellDirection,
-    circuit_id_map: &CircuitIdMap,
-    circuits: &CircuitMap,
-    dummy_circuits: &DummyCircuitMap,
-    sub_collector: &SubCollector,
+    epoch_state: &EpochState,
 ) -> cell_rss_t::Result {
+    let circuits = &*epoch_state.circuits();
+    let sub_collector = &*epoch_state.sub_collector();
+
     if cell.round_no() != incomming_round_no {
         if let CellDirection::Upstream = direction {
             if cell.round_no() == PUBLISH_ROUND_NO && layer == max_layer {
@@ -64,12 +63,12 @@ pub fn process_cell(
             }
         }
         CellDirection::Downstream => {
-            if let Some(dummy_circuit) = dummy_circuits.get(&cell.circuit_id()) {
+            if let Some(dummy_circuit) = epoch_state.dummy_circuits().get(&cell.circuit_id()) {
                 dummy_circuit.receive_cell(cell);
                 return cell_rss_t::Result::Drop;
             }
 
-            if let Some(mapped_id) = circuit_id_map.get(&cell.circuit_id()) {
+            if let Some(mapped_id) = epoch_state.circuit_id_map().get(&cell.circuit_id()) {
                 if let Some(circuit) = circuits.get(&mapped_id) {
                     return circuit
                         .process_cell(cell, round_no, layer, direction, sub_collector)
