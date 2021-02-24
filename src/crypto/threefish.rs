@@ -54,9 +54,7 @@ impl Threefish2048 {
             Mode::Dec => {
                 tweak_ctrs = (tweak_src..tweak_src + 12).rev().collect();
                 // swap once beforehand for decryption
-                let tmp = left;
-                left = right;
-                right = tmp;
+                std::mem::swap(&mut left, &mut right);
             }
         }
 
@@ -84,9 +82,7 @@ impl Threefish2048 {
             }
 
             // step 3: swap left and right for next round
-            let tmp = left;
-            left = right;
-            right = tmp;
+            std::mem::swap(&mut left, &mut right);
         }
         Ok(())
     }

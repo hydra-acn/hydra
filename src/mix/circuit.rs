@@ -178,7 +178,7 @@ impl Circuit {
                 }
                 None => SocketAddr::new(IpAddr::V6(v6), port),
             };
-            let mut upstream_hop = next_setup_hop.clone();
+            let mut upstream_hop = next_setup_hop;
             // TODO code don't hardcode +200
             upstream_hop.set_port(port + 200);
             circuit.upstream_hop = Some(upstream_hop);
@@ -224,10 +224,7 @@ impl Circuit {
     }
 
     pub fn is_exit(&self) -> bool {
-        match self.upstream_hop {
-            Some(_) => false,
-            None => true,
-        }
+        self.upstream_hop.is_none()
     }
 
     pub fn process_cell(

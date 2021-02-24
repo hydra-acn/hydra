@@ -1,6 +1,5 @@
 //! Various definitions and helper functions
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
-use ctrlc;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

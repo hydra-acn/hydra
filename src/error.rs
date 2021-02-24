@@ -1,8 +1,5 @@
 //! Hydra errors
 
-use std::fmt;
-use tonic;
-
 #[derive(Debug, PartialEq)]
 pub enum Error {
     /// something in OpenSSL went wrong
@@ -21,8 +18,8 @@ pub enum Error {
 
 impl std::error::Error for Error {}
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::OpenSslError(msg) => write!(f, "OpenSSL error: {}", msg),
             Error::IoError(msg) => write!(f, "IO error: {}", msg),
@@ -81,7 +78,7 @@ impl std::convert::From<openssl::error::ErrorStack> for Error {
         for e in stack.errors() {
             msg.push_str(&format!("{}, ", e));
         }
-        msg.push_str("]");
+        msg.push(']');
         Error::OpenSslError(msg)
     }
 }

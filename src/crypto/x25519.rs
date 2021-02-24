@@ -34,7 +34,7 @@ pub fn generate_shared_secret(pk: &Key, sk: &Key) -> Result<Key, Error> {
     unsafe {
         let res = X25519(&mut (s_vec[0]) as *mut u8, sk.head_ptr(), pk.head_ptr());
         if res == 0 {
-            return Err(Error::ExternalError(format!("x25519 C call failed")));
+            return Err(Error::ExternalError("x25519 C call failed".to_string()));
         }
     }
     let s = Key::move_from_vec(s_vec);

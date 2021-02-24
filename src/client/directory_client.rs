@@ -86,13 +86,12 @@ impl Client {
         }
 
         // delete old epochs from our map (old = communication phase is over)
-        // for now: search the first epoch that is not old and split the map there
+        // for now: find the first epoch that is not old and split the map there
         // TODO nightly: drain_filter instead
         let current_time = current_time_in_secs();
         let maybe_keep_epoch_no = epoch_map
             .iter()
-            .skip_while(|(_, e)| e.communication_end_time() <= current_time)
-            .next()
+            .find(|(_, e)| e.communication_end_time() > current_time)
             .map(|(epoch_no, _)| *epoch_no);
 
         match maybe_keep_epoch_no {
@@ -242,7 +241,7 @@ impl Client {
             .collect();
 
         if let Some(guard_fp) = entry_guard {
-            if allow_dup == false {
+            if !allow_dup {
                 warn!("Using entry guards with custom path length is currently not recommended, you may have an unwanted duplicate on the path now")
             };
             let new_entry_ref = canditates.iter().find(|mix| mix.fingerprint == *guard_fp);
@@ -279,7 +278,6 @@ pub async fn run(client: Arc<Client>) {
                     warn!("Fetching directory failed: {}", e);
                     0
                 });
-                ()
             }
             Err(e) => {
                 warn!(

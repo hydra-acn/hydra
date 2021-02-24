@@ -142,9 +142,7 @@ impl TryFrom<Vec<u8>> for Cell {
         if vec.len() < CID_LEN + RNO_LEN {
             return Err(Self::Error::InputError("Vector too short".to_string()));
         }
-        let mut cell = Cell::default();
-        cell.0 = vec;
-        Ok(cell)
+        Ok(Cell { 0: vec })
     }
 }
 

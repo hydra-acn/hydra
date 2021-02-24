@@ -167,10 +167,7 @@ impl directory_server::Directory for Service {
         &self,
         req: Request<DirectoryRequest>,
     ) -> Result<Response<DirectoryReply>, Status> {
-        let nat = match req.metadata().get("testbed-nat") {
-            Some(_) => true,
-            None => false,
-        };
+        let nat = req.metadata().get("testbed-nat").is_some();
         let epoch_queue = rethrow_as_internal!(self.epochs.read(), "Acquiring a lock failed");
         let mut epoch_infos = Vec::new();
         let min_epoch_no = req.into_inner().min_epoch_no;

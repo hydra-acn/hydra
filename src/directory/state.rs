@@ -36,11 +36,11 @@ impl State {
         }
     }
 
-    pub fn config(self: &Self) -> &Config {
+    pub fn config(&self) -> &Config {
         &self.config
     }
 
-    pub fn update(self: &Self) {
+    pub fn update(&self) {
         let cfg = &self.config;
         let phase_duration = cfg.phase_duration();
 

@@ -119,10 +119,7 @@ impl Subscription {
     // TODO security: check for IP addr should be better (e.g. localhost); or use the real src
     // address instead
     pub fn is_valid(&self) -> bool {
-        let addr_check = match self.addr.len() {
-            4 | 16 => true,
-            _ => false,
-        };
+        let addr_check = matches!(self.addr.len(), 4 | 16);
         let port_check = self.port <= std::u16::MAX as u32;
         addr_check && port_check
     }

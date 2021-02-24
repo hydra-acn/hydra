@@ -43,13 +43,17 @@ impl Key {
     pub fn from_hex_str(hex: &str) -> Result<Self, Error> {
         match hex::decode(&hex) {
             Ok(vec) => Ok(Key { key: vec }),
-            Err(e) => return Err(Error::InputError(e.to_string())),
+            Err(e) => Err(Error::InputError(e.to_string())),
         }
     }
 
     /// const pointer to first byte, use at own risk
     pub fn head_ptr(&self) -> *const u8 {
         &(self.key[0]) as *const u8
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.key.is_empty()
     }
 
     /// return size in bytes

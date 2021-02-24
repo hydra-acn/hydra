@@ -10,7 +10,7 @@ pub fn init(log_external: bool) {
 
     let mut builder = ConfigBuilder::new();
     builder.set_time_format_str("%H:%M:%S%.6f");
-    if log_external == false {
+    if !log_external {
         builder
             .add_filter_allow_str("hydra")
             .add_filter_allow_str("mix")

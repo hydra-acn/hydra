@@ -26,10 +26,7 @@ impl Aes256Gcm {
         auth_data: Option<&[u8]>,
         tag: &mut [u8],
     ) -> Result<(), Error> {
-        let aad = match auth_data {
-            Some(data) => data,
-            None => &[],
-        };
+        let aad = auth_data.unwrap_or(&[]);
         // TODO this is by far not the most efficient implementation
         let ct = symm::encrypt_aead(
             symm::Cipher::aes_256_gcm(),
@@ -56,10 +53,7 @@ impl Aes256Gcm {
         auth_data: Option<&[u8]>,
         tag: &[u8],
     ) -> Result<(), Error> {
-        let aad = match auth_data {
-            Some(data) => data,
-            None => &[],
-        };
+        let aad = auth_data.unwrap_or(&[]);
         // TODO this is by far not the most efficient implementation
         let pt = symm::decrypt_aead(
             symm::Cipher::aes_256_gcm(),

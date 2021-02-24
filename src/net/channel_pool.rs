@@ -59,6 +59,7 @@ derive_grpc_channel!(RendezvousChannel);
 /// * refresh/keepalive (might be done by Tonic gRPC and std TCP anyway)?
 /// * check for failed channels
 /// * remove old channels that are not necessary anymore
+#[derive(Default)]
 pub struct ChannelPool<T: Channel + Send + Clone + 'static> {
     channels: Mutex<HashMap<SocketAddr, T>>,
 }
@@ -69,7 +70,7 @@ where
 {
     pub fn new() -> Self {
         ChannelPool::<T> {
-            channels: Mutex::new(HashMap::new()),
+            channels: Mutex::default(),
         }
     }
 
@@ -87,7 +88,6 @@ where
             match existing.get(dst) {
                 Some(c) => {
                     requested.insert(*dst, c.clone());
-                    ()
                 }
                 None => warn!("Expected to have a connection to {} by now", dst),
             }
@@ -131,7 +131,6 @@ async fn create_multiple_channels<T: Channel + Send + 'static>(
         match result {
             Ok(c) => {
                 channel_map.insert(dst, c);
-                ()
             }
             Err(e) => warn!("Setting up channel to {} failed: {}", dst, e),
         }
