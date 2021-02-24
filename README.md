@@ -6,7 +6,7 @@ Submodules and other related repositories can be found [here](https://github.com
 
 The main concepts/ideas of Hydra are published in the following conference paper:
 
-> Schatz, David; Rossberg, Michael; Schaefer, Guenter. Hydra: Practical Metadata Security for Contact Discovery,Messaging, and Dialing. ICISSP, 2021. Accepted and in press.
+> Schatz, David; Rossberg, Michael; Schaefer, Guenter. Hydra: Practical Metadata Security for Contact Discovery,Messaging, and Dialing. ICISSP, 2021.
 
 Apart from the concepts described in the paper, the prototype code lacks a lot of documentation at the moment. Some more details are specified in the `protobuf` submodule (as comments for the `gRPC` definitions).
 
