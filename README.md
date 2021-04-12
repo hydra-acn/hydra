@@ -20,9 +20,6 @@ Do not forget to update the submodules on a regular basis (after `clone` and aft
 git submodule update --init --recursive --remote --merge
 ```
 
-Note if you are viewing this on the `github` website:
-Links to the submodules do not seem to work from the website, but the command line will work.
-
 # Git conventions
 
 - Use descriptive commit messages, written in present tense (English!).
